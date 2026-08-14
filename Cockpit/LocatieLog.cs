@@ -174,9 +174,22 @@ public static class LocatieLog
                 case "vertrek":
                 {
                     var plek = Tekst(rij, "plek");
+                    if (plek.Length == 0)
+                    {
+                        continue;
+                    }
                     if (data.Bezoeken.LastOrDefault(b => b.Plek == plek && b.Vertrek is null)
                         is not { } lopend)
                     {
+                        // Vertrek zonder geregistreerde aankomst — 's ochtends van huis is dat
+                        // de regel, want een avondlijke aankomst-thuis-automatisering is er
+                        // meestal niet. Niet stilletjes weggooien maar als nulduur-bezoek
+                        // vastleggen: zo kent VertrokkenVanHuis() alsnog het vertrekuur en is
+                        // het signaal zichtbaar onder "Waar je was".
+                        data.Bezoeken.Add(new Bezoek
+                        {
+                            Plek = plek, Aankomst = moment, Vertrek = moment, Verwerkt = true,
+                        });
                         continue;
                     }
                     lopend.Vertrek = moment;
