@@ -685,15 +685,18 @@ function agendaKaarten(items) {
             <div class="titel">${esc(a.titel)}</div>
             <div class="meta">
               ${a.bron ? `<span class="badge">${esc(a.bron)}</span>` : ''}
-              ${a.locatie ? `<span>${esc(a.locatie)}</span>` : ''}
+              ${a.locatie && routeDoelen(a.locatie).length === 1
+                ? `<span>${esc(a.locatie)}</span>` : ''}
               ${a.nu ? '<span class="badge vandaag">bezig</span>' : ''}
             </div>
             ${!a.boekbaar && !a.locatie ? '' : `<div class="acties">
               ${a.locatie ? (() => {
                 const doelen = routeDoelen(a.locatie);
+                // Kort label (de naam vóór de komma); het volledige adres blijft het
+                // navigatiedoel in de link.
                 return doelen.map(d => `<a class="belknop" target="_blank" rel="noopener"
                   href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(d)}"
-                  >🧭 ${doelen.length > 1 ? esc(d) : 'Route'}</a>`).join(' ');
+                  >🧭 ${doelen.length > 1 ? esc(d.split(',')[0]) : 'Route'}</a>`).join(' ');
               })() : ''}
               ${a.boekbaar ? `<button data-boek="${esc(a.titel)}" data-boekmin="${a.minuten}"
                       data-klant="${esc(a.klant)}">Uren boeken</button>` : ''}

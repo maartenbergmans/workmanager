@@ -506,9 +506,9 @@ public class WmWebSync
             van = x.Item.HeleDag ? "hele" : x.Item.Start.ToLocalTime().ToString("HH:mm"),
             tot = x.Item.HeleDag ? "dag" : x.Item.Einde.ToLocalTime().ToString("HH:mm"),
             titel = x.Item.Titel,
-            // Ruim genoeg dat een meerdelige route ("A → B → C") heel doorkomt: de pagina
-            // splitst de locatie in losse routeknopjes per bestemming.
-            locatie = Kort(x.Item.Locatie, 90),
+            // Ruim genoeg dat een meerdelige lijst ("A → B + restaurant, adres") heel
+            // doorkomt: de pagina splitst de locatie in losse routeknopjes per bestemming.
+            locatie = Kort(x.Item.Locatie, 220),
             bron = x.Bron,
             nu = !x.Item.HeleDag && x.Item.Start <= nu && x.Item.Einde > nu,
             // Voor de knop "Uren boeken" op de kaart: duur afgerond op een kwartier, en de
