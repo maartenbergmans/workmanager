@@ -33,7 +33,6 @@ public class CockpitForm : Form
 
     private readonly ModernListView _berichten;
     private readonly ModernListView _taken;
-    private readonly ModernButton _horizonButton;
     private List<TaakRij> _taakRijen = new();
     private int? _takenHorizon = 2; // alleen taken met deadline binnen dit aantal dagen (null = alles)
     private bool _sorteerOpPlan; // takenlijst in de volgorde van de dagplanning i.p.v. deadline
@@ -1756,56 +1755,94 @@ public class CockpitForm : Form
         };
         _taken.ContextMenuStrip = takenMenu;
         _taken.SelectedIndexChanged += (_, _) => ToonTaakMail();
-        // Filterknop: alleen taken met een deadline binnen X dagen (klikken = doorschakelen).
-        _horizonButton = new ModernButton
+        // Alle weergave-instellingen (deadline-horizon, volgorde, extra rijen) achter één
+        // knop met vinkjes. Eerder stonden ze als vier losse knoppen tussen de actieknoppen
+        // en was niet te zien wat een actie was, wat een instelling, en wat er aan stond.
+        var weergaveMenu = new ContextMenuStrip();
+        Theme.Style(weergaveMenu);
+        var weergaveKnop = new ModernButton { Width = 200 };
+        var volgordeDeadlineItem = new ToolStripMenuItem("Volgorde: deadline");
+        var volgordePlanItem = new ToolStripMenuItem("Volgorde: dagplanning");
+        var afgevinkteItem = new ToolStripMenuItem("Afgevinkte tonen (laatste 2 weken)");
+        var geplandItem = new ToolStripMenuItem("Geplande en gesnoozde tonen");
+        var horizonItems = new List<(ToolStripMenuItem Item, int? Dagen)>();
+        foreach (var (label, dagen) in new (string, int?)[]
+                 {
+                     ("Deadline ≤ 2 dagen", 2),
+                     ("Deadline ≤ 7 dagen", 7),
+                     ("Deadline ≤ 14 dagen", 14),
+                     ("Alle deadlines", null),
+                 })
         {
-            Text = "Deadline ≤ 2 dagen", Width = 190,
-        };
-        _horizonButton.Click += (_, _) =>
-        {
-            _takenHorizon = _takenHorizon switch { null => 2, 2 => 7, 7 => 14, _ => null };
-            _horizonButton.Text = _takenHorizon is { } h ? $"Deadline ≤ {h} dagen" : "Deadline: alles";
-            VulTakenLijst();
-        };
-        // Afgevinkte taken van de laatste twee weken tonen — om iets terug te vinden of
-        // (via het vinkje uitzetten) terug op de lijst te zetten.
-        var afgevinkteKnop = new ModernButton
-        {
-            Text = "Afgevinkte", Width = 120,
-        };
-        afgevinkteKnop.Click += (_, _) =>
-        {
-            _toonAfgevinkte = !_toonAfgevinkte;
-            afgevinkteKnop.Text = _toonAfgevinkte ? "Afgevinkte ✓" : "Afgevinkte";
-            VulTakenLijst();
-        };
-        // Gesnoozde en nog-niet-gestarte taken onderaan tonen — dezelfde blik vooruit als
-        // "Gesnoozed/gepland tonen" in het venster Mijn taken.
-        var geplandKnop = new ModernButton
-        {
-            Text = "Gepland", Width = 110,
-        };
-        geplandKnop.Click += (_, _) =>
-        {
-            _toonGepland = !_toonGepland;
-            geplandKnop.Text = _toonGepland ? "Gepland ✓" : "Gepland";
-            VulTakenLijst();
-        };
+            var keuzeDagen = dagen;
+            var keuze = new ToolStripMenuItem(label);
+            keuze.Click += (_, _) =>
+            {
+                _takenHorizon = keuzeDagen;
+                WerkWeergaveKnopBij();
+                VulTakenLijst();
+            };
+            weergaveMenu.Items.Add(keuze);
+            horizonItems.Add((keuze, dagen));
+        }
+        weergaveMenu.Items.Add(new ToolStripSeparator());
         // Sorteerkeuze: op deadline (klassiek) of in de volgorde van de dagplanning.
-        var sorteerKnop = new ModernButton
+        volgordeDeadlineItem.Click += (_, _) =>
         {
-            Text = "Volgorde: deadline", Width = 175,
+            _sorteerOpPlan = false;
+            WerkWeergaveKnopBij();
+            VulTakenLijst();
         };
-        sorteerKnop.Click += (_, _) =>
+        volgordePlanItem.Click += (_, _) =>
         {
-            _sorteerOpPlan = !_sorteerOpPlan;
-            sorteerKnop.Text = _sorteerOpPlan ? "Volgorde: dagplanning" : "Volgorde: deadline";
-            if (_sorteerOpPlan && DagPlan.LaadVandaag() is null)
+            _sorteerOpPlan = true;
+            if (DagPlan.LaadVandaag() is null)
             {
                 Toast.Toon(this, "Nog geen dagplanning — maak er één via de knop Dagplanning", Fluent.Ster);
             }
+            WerkWeergaveKnopBij();
             VulTakenLijst();
         };
+        weergaveMenu.Items.Add(volgordeDeadlineItem);
+        weergaveMenu.Items.Add(volgordePlanItem);
+        weergaveMenu.Items.Add(new ToolStripSeparator());
+        // Afgevinkte taken van de laatste twee weken tonen — om iets terug te vinden of
+        // (via het vinkje uitzetten) terug op de lijst te zetten.
+        afgevinkteItem.Click += (_, _) =>
+        {
+            _toonAfgevinkte = !_toonAfgevinkte;
+            WerkWeergaveKnopBij();
+            VulTakenLijst();
+        };
+        weergaveMenu.Items.Add(afgevinkteItem);
+        // Gesnoozde en nog-niet-gestarte taken onderaan tonen — dezelfde blik vooruit als
+        // "Gesnoozed/gepland tonen" in het venster Mijn taken.
+        geplandItem.Click += (_, _) =>
+        {
+            _toonGepland = !_toonGepland;
+            WerkWeergaveKnopBij();
+            VulTakenLijst();
+        };
+        weergaveMenu.Items.Add(geplandItem);
+        // Vinkjes en knoptekst gelijk houden met de echte stand; de knop vat samen wat je
+        // nu ziet ("Weergave: ≤ 2 dgn", "· plan" bij dagplanvolgorde, "+" bij extra rijen).
+        void WerkWeergaveKnopBij()
+        {
+            foreach (var (item, dagen) in horizonItems)
+            {
+                item.Checked = _takenHorizon == dagen;
+            }
+            volgordeDeadlineItem.Checked = !_sorteerOpPlan;
+            volgordePlanItem.Checked = _sorteerOpPlan;
+            afgevinkteItem.Checked = _toonAfgevinkte;
+            geplandItem.Checked = _toonGepland;
+            weergaveKnop.Text = (_takenHorizon is { } h ? $"Weergave: ≤ {h} dgn" : "Weergave: alles")
+                + (_sorteerOpPlan ? " · plan" : "")
+                + (_toonAfgevinkte || _toonGepland ? " +" : "") + " ▾";
+        }
+        WerkWeergaveKnopBij();
+        weergaveKnop.Click += (_, _) =>
+            weergaveMenu.Show(weergaveKnop, new Point(0, weergaveKnop.Height + 4));
         // Wrappende knoppenbalk: past de rij niet meer (het takenpaneel is maar half zo
         // breed als het venster), dan komt er een tweede regel bij in plaats van dat de
         // links- en rechtsgedockte knoppen over elkaar heen schuiven.
@@ -1842,13 +1879,11 @@ public class CockpitForm : Form
             vooruit.ShowDialog(this);
             await VerversTakenAsync(); // naar voren gehaalde taken meteen in de lijst
         };
+        // Acties links (toevoegen, vooruitblik), de ene weergave-knop rechts daarvan.
         horizonPanel.Controls.Add(nieuweTaakKnop);
         horizonPanel.Controls.Add(nieuweTeamTaakKnop);
-        horizonPanel.Controls.Add(_horizonButton);
-        horizonPanel.Controls.Add(sorteerKnop);
-        horizonPanel.Controls.Add(afgevinkteKnop);
-        horizonPanel.Controls.Add(geplandKnop);
         horizonPanel.Controls.Add(anticipeerKnop);
+        horizonPanel.Controls.Add(weergaveKnop);
         _takenGroup = new ModernGroupBox
         {
             Text = "Open taken (afvinken via rechtsklik)", Dock = DockStyle.Fill,
