@@ -1,0 +1,825 @@
+{
+  "bron": "ah.be/producten/eerder-gekocht — alléén producten die Maarten zelf al besteld heeft (149 producten, uitgelezen op 2026-08-01), aangevuld met de handvol receptbasics uit ah-gerechten.json",
+  "producten": [
+    {
+      "naam": "Iglo Vissticks glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi417053/iglo-vissticks-glutenvrij",
+      "trefwoorden": [ "fishsticks", "vissticks", "visstick" ]
+    },
+    {
+      "naam": "AH Kruimige aardappelen",
+      "url": "https://www.ah.be/producten/product/wi123955/ah-kruimige-aardappelen",
+      "trefwoorden": [ "aardappelen", "aardappel", "kruimige aardappelen", "patatten" ]
+    },
+    {
+      "naam": "AH Roomboter ongezouten",
+      "url": "https://www.ah.be/producten/product/wi127487/ah-roomboter-ongezouten",
+      "trefwoorden": [ "boter", "roomboter" ]
+    },
+    {
+      "naam": "AH Parmigiano reggiano 32+ flakes",
+      "url": "https://www.ah.be/producten/product/wi560689/ah-parmigiano-reggiano-32-flakes",
+      "trefwoorden": [ "parmezaanse kaas", "parmezaan", "parmigiano", "geraspte kaas" ]
+    },
+    {
+      "naam": "AH Pijnboompitten",
+      "url": "https://www.ah.be/producten/product/wi415609/ah-pijnboompitten",
+      "trefwoorden": [ "pijnboompitten" ]
+    },
+    {
+      "naam": "AH Gele uien",
+      "url": "https://www.ah.be/producten/product/wi4083/ah-gele-uien",
+      "trefwoorden": [ "ui", "uien", "gele ui", "ajuin" ]
+    },
+    {
+      "naam": "AH Knoflook",
+      "url": "https://www.ah.be/producten/product/wi4160/ah-knoflook",
+      "trefwoorden": [ "knoflook", "look", "teentje knoflook" ]
+    },
+    {
+      "naam": "AH Rundergehakt",
+      "url": "https://www.ah.be/producten/product/wi4004/ah-rundergehakt",
+      "trefwoorden": [ "rundergehakt", "gehakt", "gehakt rund" ]
+    },
+    {
+      "naam": "AH Gehakt varken gekruid",
+      "url": "https://www.ah.be/producten/product/wi455666/ah-gehakt-varken-gekruid-bel",
+      "trefwoorden": [ "varkensgehakt", "gehakt varken", "gekruid gehakt" ]
+    },
+    {
+      "naam": "AH Tomaten passata gezeefd",
+      "url": "https://www.ah.be/producten/product/wi481844/ah-tomaten-passata-gezeefd",
+      "trefwoorden": [ "passata", "gezeefde tomaten", "tomatenpassata" ]
+    },
+    {
+      "naam": "AH Tomatenblokjes",
+      "url": "https://www.ah.be/producten/product/wi30851/ah-tomatenblokjes",
+      "trefwoorden": [ "tomatenblokjes", "tomaten in blik", "gepelde tomaten" ]
+    },
+    {
+      "naam": "AH Cherrytomaten",
+      "url": "https://www.ah.be/producten/product/wi4137/ah-cherrytomaten",
+      "trefwoorden": [ "cherrytomaatjes", "cherrytomaten", "kerstomaatjes" ]
+    },
+    {
+      "naam": "AH Kappertjes",
+      "url": "https://www.ah.be/producten/product/wi62825/ah-kappertjes",
+      "trefwoorden": [ "kappertjes", "kappers" ]
+    },
+    {
+      "naam": "AH Rucola",
+      "url": "https://www.ah.be/producten/product/wi111767/ah-rucola",
+      "trefwoorden": [ "rucola", "raket" ]
+    },
+    {
+      "naam": "AH Groene pesto",
+      "url": "https://www.ah.be/producten/product/wi170655/ah-groene-pesto",
+      "trefwoorden": [ "groene pesto", "pesto" ]
+    },
+    {
+      "naam": "AH Winterpeen",
+      "url": "https://www.ah.be/producten/product/wi4076/ah-winterpeen",
+      "trefwoorden": [ "wortel", "wortelen", "winterpeen", "peen" ]
+    },
+    {
+      "naam": "AH Maiskorrels fris en knapperig 3-pack",
+      "url": "https://www.ah.be/producten/product/wi509288/ah-maiskorrels-fris-en-knapperig-3-pack",
+      "trefwoorden": [ "mais", "maiskorrels", "maïs" ]
+    },
+    {
+      "naam": "Crodino Rosso 6-pack",
+      "url": "https://www.ah.be/producten/product/wi556824/crodino-rosso-6-pack",
+      "trefwoorden": [ "crodino", "aperitief" ]
+    },
+    {
+      "naam": "Crodino Biondo 6-pack",
+      "url": "https://www.ah.be/producten/product/wi1638/crodino-biondo-6-pack",
+      "trefwoorden": [ "crodino biondo" ]
+    },
+    {
+      "naam": "Schär Butterkeks petit beurre glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi199604/scha%CC%88r-butterkeks-petit-beurre-glutenvrij",
+      "trefwoorden": [ "koekjes", "petit beurre", "butterkeks" ]
+    },
+    {
+      "naam": "AH Reep witte chocolade",
+      "url": "https://www.ah.be/producten/product/wi435940/ah-reep-witte-chocolade",
+      "trefwoorden": [ "witte chocolade", "chocoladereep" ]
+    },
+    {
+      "naam": "AH Terra Amandeldrink ongezoet",
+      "url": "https://www.ah.be/producten/product/wi565766/ah-terra-amandeldrink-ongezoet",
+      "trefwoorden": [ "amandeldrink", "plantaardige melk", "amandelmelk" ]
+    },
+    {
+      "naam": "AH Mineraalwater koolzuurvrij 6-pack",
+      "url": "https://www.ah.be/producten/product/wi137776/ah-mineraalwater-koolzuurvrij-6-pack",
+      "trefwoorden": [ "water", "mineraalwater", "plat water" ]
+    },
+    {
+      "naam": "AH Speculoos crunchy pasta",
+      "url": "https://www.ah.be/producten/product/wi548234/ah-speculoos-crunchy-pasta",
+      "trefwoorden": [ "speculoospasta", "speculoosspread" ]
+    },
+    {
+      "naam": "AH Pindakaas naturel",
+      "url": "https://www.ah.be/producten/product/wi461685/ah-pindakaas-naturel",
+      "trefwoorden": [ "pindakaas" ]
+    },
+    {
+      "naam": "AH Terra Ongebrande notenmix",
+      "url": "https://www.ah.be/producten/product/wi460618/ah-terra-ongebrande-notenmix",
+      "trefwoorden": [ "noten", "notenmix" ]
+    },
+    {
+      "naam": "AH Biologisch Mango gedroogd",
+      "url": "https://www.ah.be/producten/product/wi470034/ah-biologisch-mango-gedroogd",
+      "trefwoorden": [ "gedroogde mango", "gedroogd fruit" ]
+    },
+    {
+      "naam": "AH BBQ scharrel kipfilethaasjes aan spies",
+      "url": "https://www.ah.be/producten/product/wi612617/ah-bbq-scharrel-kipfilethaasjes-aan-spies",
+      "trefwoorden": [ "kipspies", "brochette", "kipbrochette" ]
+    },
+    {
+      "naam": "AH BBQ zalmspies gemarineerd",
+      "url": "https://www.ah.be/producten/product/wi591482/ah-bbq-zalmspies-gemarineerd",
+      "trefwoorden": [ "zalmspies" ]
+    },
+    {
+      "naam": "AH BBQ garnalenspies knoflookmarinade",
+      "url": "https://www.ah.be/producten/product/wi611881/ah-bbq-garnalenspies-knoflookmarinade-bel",
+      "trefwoorden": [ "garnalenspies" ]
+    },
+    {
+      "naam": "AH BBQ schotel",
+      "url": "https://www.ah.be/producten/product/wi571455/ah-bbq-schotel-bel",
+      "trefwoorden": [ "bbq schotel", "barbecue", "bbq" ]
+    },
+    {
+      "naam": "AH BBQ scharrel kipworst Amerikaanse stijl",
+      "url": "https://www.ah.be/producten/product/wi591497/ah-bbq-scharrel-kipworst-amerikaanse-stijl",
+      "trefwoorden": [ "kipworst", "bbq worst" ]
+    },
+    {
+      "naam": "AH Chipolata mix",
+      "url": "https://www.ah.be/producten/product/wi386813/ah-chipolata-mix-bel",
+      "trefwoorden": [ "chipolata", "worstjes bbq" ]
+    },
+    {
+      "naam": "AH Grillbriketten",
+      "url": "https://www.ah.be/producten/product/wi99058/ah-grillbriketten",
+      "trefwoorden": [ "briketten", "houtskool", "grillbriketten" ]
+    },
+    {
+      "naam": "Fuze Tea Green ice tea mango chamomile 4-pack",
+      "url": "https://www.ah.be/producten/product/wi437911/fuze-tea-green-ice-tea-mango-chamomile-4-pack",
+      "trefwoorden": [ "ice tea", "ijsthee", "fuze tea" ]
+    },
+    {
+      "naam": "Lipton Ice tea green 4-pack",
+      "url": "https://www.ah.be/producten/product/wi496999/lipton-ice-tea-green-4-pack",
+      "trefwoorden": [ "lipton ice tea" ]
+    },
+    {
+      "naam": "AH Appelsap",
+      "url": "https://www.ah.be/producten/product/wi485568/ah-appelsap",
+      "trefwoorden": [ "appelsap", "fruitsap" ]
+    },
+    {
+      "naam": "AH Gebakken uitjes",
+      "url": "https://www.ah.be/producten/product/wi117611/ah-gebakken-uitjes",
+      "trefwoorden": [ "gebakken uitjes" ]
+    },
+    {
+      "naam": "AH Komkommer",
+      "url": "https://www.ah.be/producten/product/wi54074/ah-komkommer",
+      "trefwoorden": [ "komkommer" ]
+    },
+    {
+      "naam": "AH Extra lang lekker tijger bruin heel",
+      "url": "https://www.ah.be/producten/product/wi112339/ah-extra-lang-lekker-tijger-bruin-heel",
+      "trefwoorden": [ "brood", "bruin brood", "tijgerbrood" ]
+    },
+    {
+      "naam": "AH Extra lang lekker tijger bruin half",
+      "url": "https://www.ah.be/producten/product/wi53734/ah-extra-lang-lekker-tijger-bruin-half",
+      "trefwoorden": [ "half bruin brood" ]
+    },
+    {
+      "naam": "AH Tijger volkoren heel",
+      "url": "https://www.ah.be/producten/product/wi446412/ah-tijger-volkoren-heel",
+      "trefwoorden": [ "volkorenbrood", "volkoren brood" ]
+    },
+    {
+      "naam": "AH Liefde & Passie OerDesem zonne rogge gesneden",
+      "url": "https://www.ah.be/producten/product/wi578847/ah-liefde-en-passie-oerdesem-zonne-rogge-gesneden",
+      "trefwoorden": [ "roggebrood", "desembrood" ]
+    },
+    {
+      "naam": "Schär Meesterbakker vital glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi228421/scha%CC%88r-meesterbakker-vital-glutenvrij",
+      "trefwoorden": [ "glutenvrij brood", "meesterbakker" ]
+    },
+    {
+      "naam": "AH Glutenvrij Madeleine brood half",
+      "url": "https://www.ah.be/producten/product/wi589583/ah-glutenvrij-madeleine-brood-half",
+      "trefwoorden": [ "glutenvrij wit brood", "madeleine brood" ]
+    },
+    {
+      "naam": "Schär Mini baguette glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi228424/scha%CC%88r-mini-baguette-glutenvrij",
+      "trefwoorden": [ "baguette", "stokbrood", "pistolet" ]
+    },
+    {
+      "naam": "Schär Crackers glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi228406/scha%CC%88r-crackers-glutenvrij",
+      "trefwoorden": [ "crackers", "beschuit" ]
+    },
+    {
+      "naam": "Freee Plain white flour",
+      "url": "https://www.ah.be/producten/product/wi494146/freee-plain-white-flour",
+      "trefwoorden": [ "bloem", "glutenvrije bloem", "meel" ]
+    },
+    {
+      "naam": "AH Volkoren havermout fijne vlokken",
+      "url": "https://www.ah.be/producten/product/wi569985/ah-volkoren-havermout-fijne-vlokken",
+      "trefwoorden": [ "havermout", "haver" ]
+    },
+    {
+      "naam": "AH Tasty Tom trostomaten",
+      "url": "https://www.ah.be/producten/product/wi123864/ah-tasty-tom-trostomaten",
+      "trefwoorden": [ "tomaten", "tomaat", "trostomaten" ]
+    },
+    {
+      "naam": "AH Mini watermeloen",
+      "url": "https://www.ah.be/producten/product/wi221526/ah-mini-watermeloen",
+      "trefwoorden": [ "watermeloen", "meloen" ]
+    },
+    {
+      "naam": "AH Verse scharreleieren S M",
+      "url": "https://www.ah.be/producten/product/wi33658/ah-verse-scharreleieren-s-m",
+      "trefwoorden": [ "eieren", "ei", "scharreleieren" ]
+    },
+    {
+      "naam": "AH Verse scharreleieren M L",
+      "url": "https://www.ah.be/producten/product/wi1530/ah-verse-scharreleieren-m-l",
+      "trefwoorden": [ "grote eieren" ]
+    },
+    {
+      "naam": "AH Spekreepjes gerookt",
+      "url": "https://www.ah.be/producten/product/wi130250/ah-spekreepjes-gerookt",
+      "trefwoorden": [ "spek", "spekreepjes", "spekjes" ]
+    },
+    {
+      "naam": "AH Tortilla naturel wraps large 6 stuks",
+      "url": "https://www.ah.be/producten/product/wi140637/ah-tortilla-naturel-wraps-large-6-stuks",
+      "trefwoorden": [ "wraps", "tortilla" ]
+    },
+    {
+      "naam": "BFree Meergranen wraps glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi396114/bfree-meergranen-wraps-glutenvrij",
+      "trefwoorden": [ "glutenvrije wraps" ]
+    },
+    {
+      "naam": "Santa Maria Tortilla wraps corn & wheat 8x medium",
+      "url": "https://www.ah.be/producten/product/wi437570/santa-maria-tortilla-wraps-corn-en-wheat-8x-medium",
+      "trefwoorden": [ "kleine wraps" ]
+    },
+    {
+      "naam": "Santa Maria Kruidenmix taco",
+      "url": "https://www.ah.be/producten/product/wi417551/santa-maria-kruidenmix-taco",
+      "trefwoorden": [ "taco kruiden", "kruidenmix", "tacokruiden" ]
+    },
+    {
+      "naam": "AH Kipgehakt naturel",
+      "url": "https://www.ah.be/producten/product/wi436917/ah-kipgehakt-naturel",
+      "trefwoorden": [ "kipgehakt" ]
+    },
+    {
+      "naam": "AH Kipgehakt gekruid",
+      "url": "https://www.ah.be/producten/product/wi531853/ah-kipgehakt-gekruid",
+      "trefwoorden": [ "gekruid kipgehakt" ]
+    },
+    {
+      "naam": "AH Scharrel kipfilet 2 stuks",
+      "url": "https://www.ah.be/producten/product/wi533083/ah-scharrel-kipfilet-2-stuks",
+      "trefwoorden": [ "kipfilet", "kippenborst", "kip" ]
+    },
+    {
+      "naam": "AH Biologisch Kipfilet 1 stuk",
+      "url": "https://www.ah.be/producten/product/wi383518/ah-biologisch-kipfilet-1-stuk",
+      "trefwoorden": [ "biologische kipfilet" ]
+    },
+    {
+      "naam": "AH Scharrel kipbraadworst 4 stuks",
+      "url": "https://www.ah.be/producten/product/wi531852/ah-scharrel-kipbraadworst-4-stuks",
+      "trefwoorden": [ "kipbraadworst", "braadworst" ]
+    },
+    {
+      "naam": "Vegetarische Slager Braadwurst",
+      "url": "https://www.ah.be/producten/product/wi371073/vegetarische-slager-braadwurst",
+      "trefwoorden": [ "vegetarische worst", "braadwurst" ]
+    },
+    {
+      "naam": "AH Terra Plantaardige kipbraadworst",
+      "url": "https://www.ah.be/producten/product/wi564866/ah-terra-plantaardige-kipbraadworst",
+      "trefwoorden": [ "plantaardige kipworst" ]
+    },
+    {
+      "naam": "AH Terra Plantaardige smokey worstjes tomaat",
+      "url": "https://www.ah.be/producten/product/wi612630/ah-terra-plantaardige-smokey-worstjes-tomaat",
+      "trefwoorden": [ "plantaardige worstjes" ]
+    },
+    {
+      "naam": "AH Terra Plantaardige gehakt gebraden",
+      "url": "https://www.ah.be/producten/product/wi489282/ah-terra-plantaardige-gehakt-gebraden",
+      "trefwoorden": [ "vegetarisch gehakt", "plantaardig gehakt" ]
+    },
+    {
+      "naam": "AH Terra Plantaardige schnitzel",
+      "url": "https://www.ah.be/producten/product/wi564865/ah-terra-plantaardige-schnitzel",
+      "trefwoorden": [ "vegetarische schnitzel" ]
+    },
+    {
+      "naam": "AH Terra Groenteschnitzel",
+      "url": "https://www.ah.be/producten/product/wi565737/ah-terra-groenteschnitzel",
+      "trefwoorden": [ "groenteschnitzel" ]
+    },
+    {
+      "naam": "AH Terra Plantaardige krokante kipschnitzel",
+      "url": "https://www.ah.be/producten/product/wi563704/ah-terra-plantaardige-krokante-kipschnitzel",
+      "trefwoorden": [ "kipschnitzel" ]
+    },
+    {
+      "naam": "AH Chili kaasschnitzel",
+      "url": "https://www.ah.be/producten/product/wi558313/ah-chili-kaasschnitzel",
+      "trefwoorden": [ "kaasschnitzel", "schnitzel" ]
+    },
+    {
+      "naam": "AH Spinazie kleinverpakking",
+      "url": "https://www.ah.be/producten/product/wi395948/ah-spinazie-kleinverpakking",
+      "trefwoorden": [ "spinazie" ]
+    },
+    {
+      "naam": "Olav's Gerookte zalmfilet",
+      "url": "https://www.ah.be/producten/product/wi47285/olav-s-gerookte-zalmfilet",
+      "trefwoorden": [ "gerookte zalm", "zalm" ]
+    },
+    {
+      "naam": "AH Warmgerookte zalmfilet",
+      "url": "https://www.ah.be/producten/product/wi173876/ah-warmgerookte-zalmfilet",
+      "trefwoorden": [ "warmgerookte zalm" ]
+    },
+    {
+      "naam": "AH Zalmfilet",
+      "url": "https://www.ah.be/producten/product/wi121453/ah-zalmfilet",
+      "trefwoorden": [ "zalmfilet", "verse zalm" ]
+    },
+    {
+      "naam": "AH Tonijnsteak wit",
+      "url": "https://www.ah.be/producten/product/wi217240/ah-tonijnsteak-wit",
+      "trefwoorden": [ "tonijnsteak", "verse tonijn" ]
+    },
+    {
+      "naam": "AH Verse mosselen",
+      "url": "https://www.ah.be/producten/product/wi226968/ah-verse-mosselen",
+      "trefwoorden": [ "mosselen" ]
+    },
+    {
+      "naam": "Klaas Puul Hollandse garnalen",
+      "url": "https://www.ah.be/producten/product/wi161609/klaas-puul-hollandse-garnalen-bel",
+      "trefwoorden": [ "grijze garnalen", "hollandse garnalen" ]
+    },
+    {
+      "naam": "AH Grote roerbak garnalen knoflook",
+      "url": "https://www.ah.be/producten/product/wi489414/ah-grote-roerbak-garnalen-knoflook",
+      "trefwoorden": [ "garnalen", "scampi" ]
+    },
+    {
+      "naam": "Super Choice Garnalen L rauw ongepeld",
+      "url": "https://www.ah.be/producten/product/wi492794/super-choice-garnalen-l-rauw-ongepeld-bel",
+      "trefwoorden": [ "rauwe garnalen", "ongepelde garnalen" ]
+    },
+    {
+      "naam": "AH Vissticks",
+      "url": "https://www.ah.be/producten/product/wi467462/ah-vissticks",
+      "trefwoorden": [ "vissticks gewoon" ]
+    },
+    {
+      "naam": "AH Surimi sticks",
+      "url": "https://www.ah.be/producten/product/wi121457/ah-surimi-sticks",
+      "trefwoorden": [ "surimi", "krabsticks" ]
+    },
+    {
+      "naam": "Fish Tales Witte tonijn in olijfolie",
+      "url": "https://www.ah.be/producten/product/wi373983/fish-tales-witte-tonijn-in-olijfolie",
+      "trefwoorden": [ "tonijn", "tonijn in blik" ]
+    },
+    {
+      "naam": "AH Tonijn salade",
+      "url": "https://www.ah.be/producten/product/wi604891/ah-tonijn-salade",
+      "trefwoorden": [ "tonijnsalade" ]
+    },
+    {
+      "naam": "AH Surimi-krab salade",
+      "url": "https://www.ah.be/producten/product/wi604892/ah-surimi-krab-salade",
+      "trefwoorden": [ "krabsalade", "surimisalade" ]
+    },
+    {
+      "naam": "AH Excellent Forel salade",
+      "url": "https://www.ah.be/producten/product/wi605034/ah-excellent-forel-salade",
+      "trefwoorden": [ "forelsalade" ]
+    },
+    {
+      "naam": "AH Excellent Vitello tonnato salade",
+      "url": "https://www.ah.be/producten/product/wi605035/ah-excellent-vitello-tonnato-salade",
+      "trefwoorden": [ "vitello tonnato" ]
+    },
+    {
+      "naam": "AH Gerookte slagersachterham",
+      "url": "https://www.ah.be/producten/product/wi440331/ah-gerookte-slagersachterham",
+      "trefwoorden": [ "ham", "hesp", "achterham", "gekookte ham" ]
+    },
+    {
+      "naam": "AH Salami",
+      "url": "https://www.ah.be/producten/product/wi543385/ah-salami",
+      "trefwoorden": [ "salami" ]
+    },
+    {
+      "naam": "AH Kipgrillworst",
+      "url": "https://www.ah.be/producten/product/wi498024/ah-kipgrillworst",
+      "trefwoorden": [ "kipgrillworst", "grillworst" ]
+    },
+    {
+      "naam": "AH Italiaanse mozzarella di bufala campana",
+      "url": "https://www.ah.be/producten/product/wi462684/ah-italiaanse-mozzarella-di-bufala-campana",
+      "trefwoorden": [ "mozzarella", "buffelmozzarella" ]
+    },
+    {
+      "naam": "AH Mozzarella mini",
+      "url": "https://www.ah.be/producten/product/wi613284/ah-mozzarella-mini",
+      "trefwoorden": [ "mini mozzarella", "mozzarella bolletjes" ]
+    },
+    {
+      "naam": "AH Italiaanse grana padano 32+ flakes",
+      "url": "https://www.ah.be/producten/product/wi486713/ah-italiaanse-grana-padano-32-flakes",
+      "trefwoorden": [ "grana padano" ]
+    },
+    {
+      "naam": "AH Goudse belegen 48+ plakken",
+      "url": "https://www.ah.be/producten/product/wi2594/ah-goudse-belegen-48-plakken",
+      "trefwoorden": [ "kaas", "belegen kaas", "kaasplakken" ]
+    },
+    {
+      "naam": "AH Goudse extra belegen 48+ plakken",
+      "url": "https://www.ah.be/producten/product/wi2595/ah-goudse-extra-belegen-48-plakken",
+      "trefwoorden": [ "extra belegen kaas" ]
+    },
+    {
+      "naam": "Old Amsterdam Original 48+ plakken",
+      "url": "https://www.ah.be/producten/product/wi589888/old-amsterdam-original-48-plakken",
+      "trefwoorden": [ "old amsterdam", "oude kaas" ]
+    },
+    {
+      "naam": "Beemster Belegen 48+ plakken",
+      "url": "https://www.ah.be/producten/product/wi197942/beemster-belegen-48-plakken",
+      "trefwoorden": [ "beemster" ]
+    },
+    {
+      "naam": "AH Zaanlander Kaasblokjes oud 48+",
+      "url": "https://www.ah.be/producten/product/wi605134/ah-zaanlander-kaasblokjes-oud-48",
+      "trefwoorden": [ "kaasblokjes", "borrelkaas" ]
+    },
+    {
+      "naam": "AH Geraspte Franse emmentaler",
+      "url": "https://www.ah.be/producten/product/wi222047/ah-geraspte-franse-emmentaler-bel",
+      "trefwoorden": [ "geraspte emmentaler", "emmentaler", "geraspte gruyere" ]
+    },
+    {
+      "naam": "AH Franse roombrie 60+",
+      "url": "https://www.ah.be/producten/product/wi478021/ah-franse-roombrie-60",
+      "trefwoorden": [ "brie" ]
+    },
+    {
+      "naam": "AH Camembert",
+      "url": "https://www.ah.be/producten/product/wi477909/ah-camembert",
+      "trefwoorden": [ "camembert" ]
+    },
+    {
+      "naam": "Petrus Abdijkaas 50+",
+      "url": "https://www.ah.be/producten/product/wi483485/petrus-abdijkaas-50",
+      "trefwoorden": [ "abdijkaas", "petrus" ]
+    },
+    {
+      "naam": "Dodoni Feta",
+      "url": "https://www.ah.be/producten/product/wi558280/dodoni-feta",
+      "trefwoorden": [ "feta" ]
+    },
+    {
+      "naam": "AH Houdbare halfvolle melk",
+      "url": "https://www.ah.be/producten/product/wi450534/ah-houdbare-halfvolle-melk",
+      "trefwoorden": [ "melk", "halfvolle melk" ]
+    },
+    {
+      "naam": "De Zaanse Hoeve Halfvolle yoghurt",
+      "url": "https://www.ah.be/producten/product/wi438675/de-zaanse-hoeve-halfvolle-yoghurt",
+      "trefwoorden": [ "yoghurt", "halfvolle yoghurt" ]
+    },
+    {
+      "naam": "De Zaanse Hoeve Magere yoghurt",
+      "url": "https://www.ah.be/producten/product/wi1519/de-zaanse-hoeve-magere-yoghurt",
+      "trefwoorden": [ "magere yoghurt" ]
+    },
+    {
+      "naam": "AH Slagroom",
+      "url": "https://www.ah.be/producten/product/wi1498/ah-slagroom",
+      "trefwoorden": [ "slagroom", "room" ]
+    },
+    {
+      "naam": "AH Kookroom",
+      "url": "https://www.ah.be/producten/product/wi509631/ah-kookroom",
+      "trefwoorden": [ "kookroom" ]
+    },
+    {
+      "naam": "AH Kookzuivel",
+      "url": "https://www.ah.be/producten/product/wi509632/ah-kookzuivel",
+      "trefwoorden": [ "kookzuivel" ]
+    },
+    {
+      "naam": "Meggle Kruidenboter original",
+      "url": "https://www.ah.be/producten/product/wi222148/meggle-kruidenboter-original-bel",
+      "trefwoorden": [ "kruidenboter", "lookboter" ]
+    },
+    {
+      "naam": "AH Margarine",
+      "url": "https://www.ah.be/producten/product/wi136100/ah-margarine",
+      "trefwoorden": [ "margarine", "bakboter" ]
+    },
+    {
+      "naam": "AH Belgische mayonaise",
+      "url": "https://www.ah.be/producten/product/wi189298/ah-belgische-mayonaise",
+      "trefwoorden": [ "mayonaise", "mayo" ]
+    },
+    {
+      "naam": "Barilla Penne Rigate glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi482619/barilla-penne-rigate-glutenvrij",
+      "trefwoorden": [ "pasta", "penne", "spaghetti", "glutenvrije pasta" ]
+    },
+    {
+      "naam": "AH Farfalle",
+      "url": "https://www.ah.be/producten/product/wi543592/ah-farfalle",
+      "trefwoorden": [ "farfalle", "strikjes" ]
+    },
+    {
+      "naam": "AH Tortelloni verdi ricotta spinaci",
+      "url": "https://www.ah.be/producten/product/wi62699/ah-tortelloni-verdi-ricotta-spinaci",
+      "trefwoorden": [ "tortelloni", "verse pasta" ]
+    },
+    {
+      "naam": "AH Verse ravioli formaggio e pomodoro",
+      "url": "https://www.ah.be/producten/product/wi59296/ah-verse-ravioli-formaggio-e-pomodoro",
+      "trefwoorden": [ "ravioli" ]
+    },
+    {
+      "naam": "AH Terra Plantaardig ravioli agli spinaci",
+      "url": "https://www.ah.be/producten/product/wi525360/ah-terra-plantaardig-ravioli-agli-spinaci",
+      "trefwoorden": [ "vegetarische ravioli" ]
+    },
+    {
+      "naam": "AH Pasta Pestosaus",
+      "url": "https://www.ah.be/producten/product/wi160917/ah-pasta-pestosaus",
+      "trefwoorden": [ "pestosaus", "pastasaus" ]
+    },
+    {
+      "naam": "AH Pizzadeeg tomatensaus",
+      "url": "https://www.ah.be/producten/product/wi134027/ah-pizzadeeg-tomatensaus",
+      "trefwoorden": [ "pizzadeeg", "pizzabodem" ]
+    },
+    {
+      "naam": "Dr. Oetker Ristorante pizza mozzarella glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi401987/dr-oetker-ristorante-pizza-mozzarella-glutenvrij",
+      "trefwoorden": [ "pizza", "diepvriespizza" ]
+    },
+    {
+      "naam": "AH Pizza krokante Hawaii",
+      "url": "https://www.ah.be/producten/product/wi465686/ah-pizza-krokante-hawaii",
+      "trefwoorden": [ "pizza hawaii" ]
+    },
+    {
+      "naam": "Belviva Belgische frieten",
+      "url": "https://www.ah.be/producten/product/wi558409/belviva-belgische-frieten-bel",
+      "trefwoorden": [ "frieten", "friet", "diepvriesfriet" ]
+    },
+    {
+      "naam": "Belviva Klassieke oven airfryer frieten M",
+      "url": "https://www.ah.be/producten/product/wi510336/belviva-klassieke-oven-airfryer-frieten-m-bel",
+      "trefwoorden": [ "ovenfrieten", "airfryer frieten" ]
+    },
+    {
+      "naam": "AH Courgette",
+      "url": "https://www.ah.be/producten/product/wi4164/ah-courgette",
+      "trefwoorden": [ "courgette" ]
+    },
+    {
+      "naam": "AH Biologisch Veldsla",
+      "url": "https://www.ah.be/producten/product/wi611859/ah-biologisch-veldsla",
+      "trefwoorden": [ "veldsla", "sla", "salade" ]
+    },
+    {
+      "naam": "AH Bleekselderij",
+      "url": "https://www.ah.be/producten/product/wi4178/ah-bleekselderij",
+      "trefwoorden": [ "bleekselderij", "selder", "selderij" ]
+    },
+    {
+      "naam": "AH Witte champignons",
+      "url": "https://www.ah.be/producten/product/wi67842/ah-witte-champignons",
+      "trefwoorden": [ "champignons", "paddenstoelen" ]
+    },
+    {
+      "naam": "AH Avocado",
+      "url": "https://www.ah.be/producten/product/wi169797/ah-avocado",
+      "trefwoorden": [ "avocado" ]
+    },
+    {
+      "naam": "AH Zongedroogde tomaten jullienne",
+      "url": "https://www.ah.be/producten/product/wi416509/ah-zongedroogde-tomaten-jullienne",
+      "trefwoorden": [ "zongedroogde tomaten" ]
+    },
+    {
+      "naam": "AH Zwarte olijven plakjes",
+      "url": "https://www.ah.be/producten/product/wi123560/ah-zwarte-olijven-plakjes",
+      "trefwoorden": [ "olijven", "zwarte olijven" ]
+    },
+    {
+      "naam": "AH Terra Kikkererwten",
+      "url": "https://www.ah.be/producten/product/wi167874/ah-terra-kikkererwten",
+      "trefwoorden": [ "kikkererwten" ]
+    },
+    {
+      "naam": "AH Terra Kidneybonen",
+      "url": "https://www.ah.be/producten/product/wi30428/ah-terra-kidneybonen",
+      "trefwoorden": [ "kidneybonen", "rode bonen" ]
+    },
+    {
+      "naam": "AH Appelmoes 0% suiker toegevoegd",
+      "url": "https://www.ah.be/producten/product/wi811/ah-appelmoes-0-suiker-toegevoegd",
+      "trefwoorden": [ "appelmoes", "appelcompote" ]
+    },
+    {
+      "naam": "AH Ananasschijven op sap",
+      "url": "https://www.ah.be/producten/product/wi857/ah-ananasschijven-op-sap",
+      "trefwoorden": [ "ananas", "ananasschijven" ]
+    },
+    {
+      "naam": "Pink Lady appels schaal",
+      "url": "https://www.ah.be/producten/product/wi455010/pink-lady-schaal",
+      "trefwoorden": [ "appels", "appel", "pink lady" ]
+    },
+    {
+      "naam": "AH Conference peren bak",
+      "url": "https://www.ah.be/producten/product/wi383655/ah-conference-bak",
+      "trefwoorden": [ "peren", "peer", "conference" ]
+    },
+    {
+      "naam": "AH Mandarijnen",
+      "url": "https://www.ah.be/producten/product/wi94782/ah-mandarijnen",
+      "trefwoorden": [ "mandarijnen", "mandarijn", "clementines" ]
+    },
+    {
+      "naam": "AH Blauwe bessen",
+      "url": "https://www.ah.be/producten/product/wi143235/ah-blauwe-bessen",
+      "trefwoorden": [ "blauwe bessen", "bosbessen" ]
+    },
+    {
+      "naam": "AH Mango",
+      "url": "https://www.ah.be/producten/product/wi93224/ah-mango",
+      "trefwoorden": [ "mango" ]
+    },
+    {
+      "naam": "AH Rozijnen zongedroogd",
+      "url": "https://www.ah.be/producten/product/wi396924/ah-rozijnen-zongedroogd",
+      "trefwoorden": [ "rozijnen" ]
+    },
+    {
+      "naam": "AH Ribbelchips paprika",
+      "url": "https://www.ah.be/producten/product/wi448476/ah-ribbelchips-paprika",
+      "trefwoorden": [ "chips", "paprikachips", "ribbelchips" ]
+    },
+    {
+      "naam": "AH Tortilla chips naturel",
+      "url": "https://www.ah.be/producten/product/wi449006/ah-tortilla-chips-naturel",
+      "trefwoorden": [ "tortillachips", "nachos" ]
+    },
+    {
+      "naam": "AH Gezouten pinda's",
+      "url": "https://www.ah.be/producten/product/wi467589/ah-gezouten-pinda-s",
+      "trefwoorden": [ "pinda's", "pindas", "gezouten pinda" ]
+    },
+    {
+      "naam": "AH Protein maiswafels",
+      "url": "https://www.ah.be/producten/product/wi509517/ah-protein-maiswafels",
+      "trefwoorden": [ "maiswafels", "proteïnewafels" ]
+    },
+    {
+      "naam": "Frisia Twistermallows",
+      "url": "https://www.ah.be/producten/product/wi514785/frisia-twistermallows",
+      "trefwoorden": [ "marshmallows", "spekjes snoep" ]
+    },
+    {
+      "naam": "Bear Fruit rolls aardbei",
+      "url": "https://www.ah.be/producten/product/wi397507/bear-fruit-rolls-aardbei",
+      "trefwoorden": [ "fruit rolls", "fruitsnack" ]
+    },
+    {
+      "naam": "AH Zaans huisje pure chocolade",
+      "url": "https://www.ah.be/producten/product/wi480029/ah-zaans-huisje-pure-chocolade",
+      "trefwoorden": [ "pure chocolade", "chocolade" ]
+    },
+    {
+      "naam": "Tony's Chocolonely Reep puur amandel zeezout",
+      "url": "https://www.ah.be/producten/product/wi384653/tony-s-chocolonely-reep-puur-amandel-zeezout",
+      "trefwoorden": [ "tony's", "tony chocolonely" ]
+    },
+    {
+      "naam": "AH Havercracker chocolade",
+      "url": "https://www.ah.be/producten/product/wi575002/ah-havercracker-chocolade",
+      "trefwoorden": [ "havercracker" ]
+    },
+    {
+      "naam": "AH Glutenvrij Koekjes citroen",
+      "url": "https://www.ah.be/producten/product/wi587595/ah-glutenvrij-koekjes-citroen",
+      "trefwoorden": [ "glutenvrije koekjes", "citroenkoekjes" ]
+    },
+    {
+      "naam": "Schär Madeleines glutenvrij",
+      "url": "https://www.ah.be/producten/product/wi494108/scha%CC%88r-madeleines-glutenvrij",
+      "trefwoorden": [ "madeleines" ]
+    },
+    {
+      "naam": "AH Eierwafels met poedersuiker",
+      "url": "https://www.ah.be/producten/product/wi57238/ah-eierwafels-met-poedersuiker",
+      "trefwoorden": [ "eierwafels", "wafels" ]
+    },
+    {
+      "naam": "AH Luikse wafels",
+      "url": "https://www.ah.be/producten/product/wi162652/ah-luikse-wafels",
+      "trefwoorden": [ "luikse wafels" ]
+    },
+    {
+      "naam": "AH Koffiewafels",
+      "url": "https://www.ah.be/producten/product/wi127294/ah-koffiewafels",
+      "trefwoorden": [ "koffiewafels" ]
+    },
+    {
+      "naam": "Lotus Mini frangipane",
+      "url": "https://www.ah.be/producten/product/wi368876/lotus-mini-frangipane-bel",
+      "trefwoorden": [ "frangipane", "lotus" ]
+    },
+    {
+      "naam": "AH Muffin vanille",
+      "url": "https://www.ah.be/producten/product/wi493181/ah-muffin-vanille",
+      "trefwoorden": [ "muffin", "vanillemuffin" ]
+    },
+    {
+      "naam": "AH Muffin choco",
+      "url": "https://www.ah.be/producten/product/wi493182/ah-muffin-choco",
+      "trefwoorden": [ "chocomuffin" ]
+    },
+    {
+      "naam": "AH Roomboter cupcake naturel",
+      "url": "https://www.ah.be/producten/product/wi493179/ah-roomboter-cupcake-naturel",
+      "trefwoorden": [ "cupcake", "cake" ]
+    },
+    {
+      "naam": "AH 99% fruitijs tropical",
+      "url": "https://www.ah.be/producten/product/wi515704/ah-99-fruitijs-tropical",
+      "trefwoorden": [ "fruitijs", "ijs" ]
+    },
+    {
+      "naam": "AH 99% fruitijs watermeloen appel munt",
+      "url": "https://www.ah.be/producten/product/wi557065/ah-99-fruitijs-watermeloen-appel-munt",
+      "trefwoorden": [ "waterijs" ]
+    },
+    {
+      "naam": "IJsboerke Leonidas manon glacé roomijspralines",
+      "url": "https://www.ah.be/producten/product/wi576316/ijsboerke-leonidas-manon-glace%CC%81-roomijspralines-bel",
+      "trefwoorden": [ "roomijs", "ijspralines", "manon" ]
+    },
+    {
+      "naam": "AH Kruiden kamille",
+      "url": "https://www.ah.be/producten/product/wi106661/ah-kruiden-kamille",
+      "trefwoorden": [ "kamille", "thee" ]
+    },
+    {
+      "naam": "AH Classic vaatwastablet",
+      "url": "https://www.ah.be/producten/product/wi479596/ah-classic-vaatwastablet",
+      "trefwoorden": [ "vaatwastabletten", "vaatwas" ]
+    },
+    {
+      "naam": "Care Tandenstokers dun",
+      "url": "https://www.ah.be/producten/product/wi207315/care-tandenstokers-dun",
+      "trefwoorden": [ "tandenstokers" ]
+    }
+  ]
+}

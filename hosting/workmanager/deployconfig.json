@@ -1,0 +1,16 @@
+{
+	"default": {
+		"skippaths": {
+			"app": ["DEPLOY.md", "SIRI-SHORTCUT.md", "LOCATIE-SHORTCUT.md", "deploy.bat", "deployconfig.json"],
+			"local": [".git", ".idea"],
+			"remote": [],
+			"hosting": [".composer", ".subversion", ".webhosting", "cgi-bin", "data", "logs", "php", "subsites", "tmp", ".bash_history", ".bashrc", ".crontab", ".wget-hsts", ".viminfo"]
+		},
+		"requiredremotepaths": [],
+		"sftp": {
+			"server": "ssh.urbanit.be",
+			"username": "urbanitbe"
+		},
+		"basepath": "subsites/workmanager.urbanit.be/"
+	}
+}

@@ -1,0 +1,12 @@
+# Build-uitvoer
+bin/
+obj/
+publish/
+.vs/
+*.user
+
+# Lokale Claude Code-instellingen
+.claude/settings.local.json
+
+# Live geheimen van workmanager.urbanit.be (db-wachtwoord + webtokens) — blijft lokaal
+hosting/workmanager/config.php
