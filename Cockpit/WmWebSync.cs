@@ -480,25 +480,35 @@ public class WmWebSync
         var vandaag = DateOnly.FromDateTime(DateTime.Now);
         var nu = DateTimeOffset.Now;
 
-        // Eigen agenda plus de CED-afspraken van vandaag en morgen; Hilkes agenda blijft
-        // hier bewust buiten — dit is het werkbeeld.
+        // Eigen agenda voor het hele gecachte venster (twee weken vooruit) plus de
+        // CED-afspraken; de pagina toont vandaag/morgen meteen en de rest uitklapbaar.
+        // Hilkes agenda blijft hier bewust buiten — dit is het werkbeeld.
+        var tot = vandaag.AddDays(14);
         var items = cache.Eigen.Select(i => (Item: i, Bron: ""))
             .Concat(cache.Ced
                 .Where(p => DateOnly.TryParse(p.Key, out var dag) &&
-                            (dag == vandaag || dag == vandaag.AddDays(1)))
+                            dag >= vandaag && dag <= tot)
                 .SelectMany(p => p.Value.Select(i => (Item: i, Bron: "CED"))))
             .Where(x => DateOnly.FromDateTime(x.Item.Start.LocalDateTime) is var dag &&
-                        (dag == vandaag || dag == vandaag.AddDays(1)))
+                        dag >= vandaag && dag <= tot)
             .OrderBy(x => x.Item.Start)
-            .Take(30);
+            .Take(120);
 
+        var nlBe = System.Globalization.CultureInfo.GetCultureInfo("nl-BE");
         return items.Select(x => (object)new
         {
-            dag = DateOnly.FromDateTime(x.Item.Start.LocalDateTime) == vandaag ? "Vandaag" : "Morgen",
+            dag = DateOnly.FromDateTime(x.Item.Start.LocalDateTime) switch
+            {
+                var d when d == vandaag => "Vandaag",
+                var d when d == vandaag.AddDays(1) => "Morgen",
+                var d => d.ToDateTime(TimeOnly.MinValue).ToString("dddd d MMMM", nlBe),
+            },
             van = x.Item.HeleDag ? "hele" : x.Item.Start.ToLocalTime().ToString("HH:mm"),
             tot = x.Item.HeleDag ? "dag" : x.Item.Einde.ToLocalTime().ToString("HH:mm"),
             titel = x.Item.Titel,
-            locatie = Kort(x.Item.Locatie, 40),
+            // Ruim genoeg dat een meerdelige route ("A → B → C") heel doorkomt: de pagina
+            // splitst de locatie in losse routeknopjes per bestemming.
+            locatie = Kort(x.Item.Locatie, 90),
             bron = x.Bron,
             nu = !x.Item.HeleDag && x.Item.Start <= nu && x.Item.Einde > nu,
             // Voor de knop "Uren boeken" op de kaart: duur afgerond op een kwartier, en de

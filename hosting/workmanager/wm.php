@@ -482,6 +482,7 @@ const api = (actie, opties) =>
 let snapshot = null;
 let tab = 'taken';
 let laterOpen = false;             // "Later"-lijst uitgeklapt
+let agendaLater = false;           // agenda: dagen ná morgen uitgeklapt
 let antwoordOp = '';               // bericht-id waarvoor het antwoordvak openstaat
 let antwoordTekst = '';            // wat er in dat vak staat
 let zoek = '';                     // filter op de takenlijst
@@ -640,11 +641,38 @@ function tekenLater() {
       </div>`).join(''));
 }
 
+// Een locatie als "Le Crotoy → Sierville (± 430 km)" of "Rouen (25 min) + Parc de Clères"
+// is geen geldig Maps-doel. Daarom: haakjes (rijtijden e.d.) eruit, splitsen op → en +,
+// en per bestemming een eigen routeknopje — de totale route hoeft niet.
+function routeDoelen(locatie) {
+  return locatie.replace(/\([^)]*\)/g, ' ')
+    .split(/→|\+/)
+    .map(d => d.trim().replace(/\s+/g, ' '))
+    .filter(d => d.length > 1);
+}
+
 function tekenAgenda() {
   const items = snapshot?.agenda || [];
   if (!items.length) {
     return '<div class="leeg">Geen afspraken vandaag en morgen</div>';
   }
+  // Vandaag en morgen altijd tonen; de dagen daarna (de pc synct twee weken vooruit)
+  // achter een uitklapknop zodat de lijst kort blijft.
+  const dichtbij = items.filter(a => a.dag === 'Vandaag' || a.dag === 'Morgen');
+  const later = items.filter(a => a.dag !== 'Vandaag' && a.dag !== 'Morgen');
+  let html = agendaKaarten(dichtbij);
+  if (later.length) {
+    html += `<div class="acties" style="margin:10px 4px">
+      <button data-agendalater>📅 ${agendaLater ? 'Latere dagen verbergen'
+        : `Latere dagen tonen (${later.length})`}</button></div>`;
+    if (agendaLater) {
+      html += agendaKaarten(later);
+    }
+  }
+  return html;
+}
+
+function agendaKaarten(items) {
   let vorigeDag = '';
   return items.map(a => {
     const kop = a.dag !== vorigeDag ? `<div class="kop">${esc(a.dag)}</div>` : '';
@@ -661,9 +689,12 @@ function tekenAgenda() {
               ${a.nu ? '<span class="badge vandaag">bezig</span>' : ''}
             </div>
             ${!a.boekbaar && !a.locatie ? '' : `<div class="acties">
-              ${a.locatie ? `<a class="belknop" target="_blank" rel="noopener"
-                href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.locatie)}"
-                >🧭 Route</a>` : ''}
+              ${a.locatie ? (() => {
+                const doelen = routeDoelen(a.locatie);
+                return doelen.map(d => `<a class="belknop" target="_blank" rel="noopener"
+                  href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(d)}"
+                  >🧭 ${doelen.length > 1 ? esc(d) : 'Route'}</a>`).join(' ');
+              })() : ''}
               ${a.boekbaar ? `<button data-boek="${esc(a.titel)}" data-boekmin="${a.minuten}"
                       data-klant="${esc(a.klant)}">Uren boeken</button>` : ''}
             </div>`}
@@ -924,6 +955,8 @@ function teken() {
     : tekenUren());
   el.querySelectorAll('[data-af]').forEach(b =>
     b.onclick = () => stuur({ soort: 'taak_klaar', id: b.dataset.af }, b.dataset.af, 'Afgevinkt'));
+  el.querySelectorAll('[data-agendalater]').forEach(b =>
+    b.onclick = () => { agendaLater = !agendaLater; teken(); });
   el.querySelectorAll('[data-snooze]').forEach(b =>
     b.onclick = () => stuur(
       { soort: 'taak_snooze', id: b.dataset.snooze, uren: +b.dataset.uren },
