@@ -710,20 +710,94 @@ function maakBlokken(tekst) {
   return blokken.filter(b => b.inhoud.length);
 }
 
-// Maakt straatadressen in een tekstregel tikbaar naar Google Maps. Herkent
-// "2bis Rue Jules Brûle, Saint-Valery-sur-Somme" en varianten met Avenue/Place/….
+// Bekende plekken uit de reisgids (naam zoals hij in de teksten staat → coördinaten,
+// uit dezelfde OpenStreetMap-geocoding als de My Maps-kaart). Elke vermelding wordt
+// zo tikbaar naar Google Maps, óók zonder straatadres.
+const PLEKKEN = {
+  'Le Crotoy': '50.2166,1.6240', 'Pointe du Hourdel': '50.2148,1.5648',
+  'Parc du Marquenterre': '50.2599,1.5714', 'Saint-Valery-sur-Somme': '50.1887,1.6279',
+  'Cayeux-sur-Mer': '50.1792,1.4934', 'Baie de Somme': '50.2166,1.6240',
+  'Sierville': '49.5898,1.0359', 'Gros-Horloge': '49.4415,1.0913',
+  'Place du Vieux-Marché': '49.4433,1.0882', 'Parc de Clères': '49.5975,1.1073',
+  'Biotropica': '49.3042,1.2124', "Historial Jeanne d'Arc": '49.4405,1.0959',
+  'Jardin des Plantes': '49.4177,1.0703', 'Aître Saint-Maclou': '49.4403,1.0998',
+  'Rouen': '49.4431,1.0993', 'Veules-les-Roses': '49.8722,0.7991',
+  'Dieppe': '49.9229,1.0777', 'Estran': '49.9306,1.0837',
+  'Palais Bénédictine': '49.7590,0.3676', 'Fécamp': '49.7579,0.3746',
+  'Saint-Valery-en-Caux': '49.8664,0.7268', 'Étretat': '49.7075,0.2032',
+  'Coco Plage': '48.2120,-0.1293', 'Sillé-le-Guillaume': '48.1984,-0.1257',
+  "L'Arche de la Nature": '47.9976,0.2555', 'Cité Plantagenêt': '48.0088,0.1972',
+  "Abbaye de l'Épau": '48.0138,0.2709', 'Château de Carrouges': '48.5333,-0.1417',
+  'Alençon': '48.4306,0.0931', 'Musée des 24 Heures': '47.9571,0.2090',
+  'Les Atlantides': '47.9882,0.2258', 'Carré Plantagenêt': '48.0069,0.1990',
+  'Île aux Planches': '47.9987,0.1877', 'Le Mans': '48.0061,0.1996',
+  'Île MoulinSart': '47.8981,0.1268', 'Moulin Cyprien': '47.8981,0.1268',
+  'Fillé-sur-Sarthe': '47.8981,0.1268', 'Espace Faïence': '47.8145,-0.0881',
+  'Malicorne': '47.8145,-0.0881', 'Carnuta': '47.7905,0.4134', 'Jupilles': '47.7905,0.4134',
+  'Château de Villandry': '47.3406,0.5146', 'Villandry': '47.3406,0.5146',
+  "Château d'Azay-le-Rideau": '47.2590,0.4658', 'Azay-le-Rideau': '47.2590,0.4658',
+  'Place Plumereau': '47.3946,0.6817', 'Tours': '47.3946,0.6817',
+  'La Vallée des Singes': '46.2408,0.2900', 'Romagne': '46.2408,0.2900',
+  'Planète des Crocodiles': '46.4501,0.6637', 'Chauvigny': '46.5695,0.6439',
+  'Abbaye de Saint-Savin': '46.5648,0.8660', 'Futuroscope': '46.6704,0.3701',
+  'Notre-Dame-la-Grande': '46.5803,0.3402', 'Poitiers': '46.5802,0.3404',
+  'Lac de Saint-Cyr': '46.7261,0.4671', 'Donjon van Niort': '46.3259,-0.4648',
+  "DéfiPlanet": '46.4413,0.5470', 'Domaine de Dienné': '46.4413,0.5470',
+  'Dienné': '46.4413,0.5470', 'Tour Saint-Nicolas': '46.1558,-1.1533',
+  'Tour de la Chaîne': '46.1567,-1.1527', 'Tour de la Lanterne': '46.1558,-1.1571',
+  'Aquarium La Rochelle': '46.1525,-1.1501', 'Les Halles': '46.1614,-1.1482',
+  'Musée Maritime': '46.1506,-1.1507', 'Ernest le Glacier': '46.1566,-1.1545',
+  'Les Minimes': '46.1450,-1.1660', 'La Rochelle': '46.1591,-1.1520',
+  'Saint-Martin-de-Ré': '46.2017,-1.3682', 'Loix': '46.2240,-1.4365',
+  'La Cible': '46.1999,-1.3560', 'Phare des Baleines': '46.2442,-1.5611',
+  'La Flotte': '46.1829,-1.3184', 'Écomusée du Sel': '46.2240,-1.4365',
+  'La Martinière': '46.2053,-1.3685', 'Fort Boyard': '45.9996,-1.2139',
+  'Croisières Inter-Îles': '46.1556,-1.1498', "Île d'Aix": '46.0122,-1.1738',
+  'Fouras': '45.9884,-1.0936', 'Corderie Royale': '45.9396,-0.9556',
+  'pont transbordeur': '45.9174,-0.9610', 'Accro-Mâts': '45.9396,-0.9556',
+  "Musée des Commerces d'Autrefois": '45.9403,-0.9629', 'Marais Poitevin': '46.3221,-0.5861',
+  'Coulon': '46.3221,-0.5861', 'Les Boucholeurs': '46.0545,-1.0862',
+  'Angoulins': '46.1047,-1.1053', 'Châtelaillon-Plage': '46.0723,-1.0885',
+  'Châtelaillon': '46.0723,-1.0885', 'Camping 2 Plages & Océan': '46.0887,-1.0974',
+  'Place du Martroi': '47.9024,1.9040', 'Orléans': '47.9024,1.9040',
+  'Chartres': '48.4475,1.4879', 'Parc Astérix': '49.1348,2.5734',
+  'Compiègne': '49.4179,2.8261', 'Brasschaat': '51.2917,4.4921',
+  'Hygge': '49.4437,1.0896', 'Cosy Lunch': '49.4395,1.0951',
+  'La Ciboulette': '48.0056,0.1948', 'Hyperbols': '48.0015,0.1988',
+  "L'Africaine": '48.0071,0.1982', 'Crêperie Bilien': '47.3958,0.6898',
+  'Oh le Bistro': '46.5788,0.3386', "No Gluten Lover's": '46.1682,-1.1421',
+  'Le Saint Mart': '46.2053,-1.3685', 'Raw Coco': '46.1589,-1.1515',
+  'Le Marydiane': '45.9332,-0.9600', 'Les Pincettes': '46.1614,-1.1583',
+  'Au coin des Augustines': '50.1881,1.6317',
+};
+const PLEK_LOOKUP = {};
+for (const [naam, coord] of Object.entries(PLEKKEN)) {
+  PLEK_LOOKUP[naam.toLowerCase()] = coord;
+}
+// Straatadressen (Rue/Avenue/…) én bekende pleknamen in één zoekpatroon; langste
+// namen eerst zodat "Aquarium La Rochelle" wint van "La Rochelle".
+const LINK_RE = new RegExp(
+  String.raw`(?:\d+\s?(?:bis|ter)?\s+)?(?:Rue|Avenue|Boulevard|Place|Quai|Allée|Chemin|Impasse)\s+[^,;.:()\n—·]{2,45}(?:,\s*(?:\d{5}\s+)?[A-ZÀ-ÿ][^,;.:()\n—·]{2,30})?`
+  + '|(?<![\\p{L}])(?:' + Object.keys(PLEKKEN)
+    .sort((a, b) => b.length - a.length)
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]"))
+    .join('|') + ')(?![\\p{L}])', 'gu');
+
+// Maakt straatadressen én bekende plekken in een tekstregel tikbaar naar Google
+// Maps. Bekende plekken navigeren op exacte coördinaten, adressen op de tekst.
 // De rest van de regel wordt gewoon ge-escaped.
 function linkifyAdres(regel) {
-  const re = /(\d+\s?(?:bis|ter)?\s+)?(Rue|Avenue|Boulevard|Place|Quai|Allée|Chemin|Impasse)\s+[^,;.:()\n—·]{2,45}(,\s*(?:\d{5}\s+)?[A-ZÀ-ÿ][^,;.:()\n—·]{2,30})?/g;
   let uit = '';
   let vorig = 0;
   let m;
-  while ((m = re.exec(regel)) !== null) {
-    const adres = m[0].trim();
+  LINK_RE.lastIndex = 0;
+  while ((m = LINK_RE.exec(regel)) !== null) {
+    const stuk = m[0].trim();
     uit += esc(regel.slice(vorig, m.index));
+    const coord = PLEK_LOOKUP[stuk.toLowerCase().replace(/’/g, "'")];
     uit += `<a class="adres" target="_blank" rel="noopener" ` +
-      `href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(adres)}"` +
-      `>${esc(adres)}</a>`;
+      `href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(coord || stuk)}"` +
+      `>${esc(stuk)}</a>`;
     vorig = m.index + m[0].length;
   }
   return uit + esc(regel.slice(vorig));
