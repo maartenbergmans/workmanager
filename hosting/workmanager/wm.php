@@ -702,11 +702,17 @@ function agendaKaarten(items) {
                 ${open ? 'Tekst verbergen' : '📖 Volledige tekst'}</button>` : ''}
               ${a.locatie ? (() => {
                 const doelen = routeDoelen(a.locatie);
-                // Kort label (de naam vóór de komma); het volledige adres blijft het
-                // navigatiedoel in de link.
-                return doelen.map(d => `<a class="belknop" target="_blank" rel="noopener"
-                  href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(d)}"
-                  >🧭 ${doelen.length > 1 ? esc(d.split(',')[0]) : 'Route'}</a>`).join(' ');
+                // Begint een bestemming met een emoji (🛏 overnachting, 🍴 restaurant, …)
+                // dan wordt dát het knopicoon; anders het kompas. Kort label = de naam vóór
+                // de komma; het volledige adres (zonder emoji) blijft het navigatiedoel.
+                return doelen.map(d => {
+                  const em = d.match(/^(\p{Extended_Pictographic}+)\s*/u);
+                  const icoon = em ? em[1] : '🧭';
+                  const doel = em ? d.slice(em[0].length) : d;
+                  return `<a class="belknop" target="_blank" rel="noopener"
+                    href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(doel)}"
+                    >${icoon} ${doelen.length > 1 ? esc(doel.split(',')[0]) : 'Route'}</a>`;
+                }).join(' ');
               })() : ''}
               ${a.boekbaar ? `<button data-boek="${esc(a.titel)}" data-boekmin="${a.minuten}"
                       data-klant="${esc(a.klant)}">Uren boeken</button>` : ''}
