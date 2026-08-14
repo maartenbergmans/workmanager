@@ -381,6 +381,11 @@ section.aan { display: block; }
 }
 /* Adres in de tekst: tikbaar naar Google Maps. */
 .adres { color: var(--accent); text-decoration: underline; }
+/* Regels in de volledige tekst: uren vet met hangende inspringing, bullets ingesprongen. */
+.volledig .regel { margin: 4px 0; }
+.volledig .tijdregel { margin: 5px 0; padding-left: 3.4em; text-indent: -3.4em; }
+.volledig .tijdregel b { color: var(--tekst); }
+.volledig .bulletregel { margin: 5px 0; padding-left: 1.15em; text-indent: -1.15em; }
 .antwoord { margin-top: 9px; }
 .timer {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; margin-bottom: 9px;
@@ -724,6 +729,20 @@ function linkifyAdres(regel) {
   return uit + esc(regel.slice(vorig));
 }
 
+// Eén tekstregel opmaken: uurregels ("9u00 …") krijgen het uur vet met hangende
+// inspringing, bulletregels ("• …") springen in, de rest wordt een gewone alinea.
+// Adressen worden overal tikbaar (linkifyAdres doet ook het escapen).
+function opmaakRegel(regel) {
+  const uur = regel.match(/^(\d{1,2}u\d{2})\s+(.*)$/);
+  if (uur) {
+    return `<div class="tijdregel"><b>${esc(uur[1])}</b> ${linkifyAdres(uur[2])}</div>`;
+  }
+  if (regel.startsWith('• ')) {
+    return `<div class="bulletregel">• ${linkifyAdres(regel.slice(2))}</div>`;
+  }
+  return `<div class="regel">${linkifyAdres(regel)}</div>`;
+}
+
 function agendaKaarten(items) {
   let vorigeDag = '';
   return items.map(a => {
@@ -749,7 +768,7 @@ function agendaKaarten(items) {
               return `<div class="blokkop" data-blok="${esc(bloksleutel)}">
                   ${blokOpen ? '▾' : '▸'} ${esc(b.kop)}</div>`
                 + (blokOpen
-                  ? `<div class="volledig">${b.inhoud.map(linkifyAdres).join('<br>')}</div>` : '');
+                  ? `<div class="volledig">${b.inhoud.map(opmaakRegel).join('')}</div>` : '');
             }).join('') : ''}
             ${!a.boekbaar && !a.locatie && !a.omschrijving ? '' : `<div class="acties">
               ${a.omschrijving ? `<button data-agtekst="${esc(sleutel)}">
