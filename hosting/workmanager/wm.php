@@ -483,6 +483,7 @@ let snapshot = null;
 let tab = 'taken';
 let laterOpen = false;             // "Later"-lijst uitgeklapt
 let agendaLater = false;           // agenda: dagen ná morgen uitgeklapt
+const agendaOpen = new Set();      // afspraken waarvan de volledige tekst getoond wordt
 let antwoordOp = '';               // bericht-id waarvoor het antwoordvak openstaat
 let antwoordTekst = '';            // wat er in dat vak staat
 let zoek = '';                     // filter op de takenlijst
@@ -677,6 +678,8 @@ function agendaKaarten(items) {
   return items.map(a => {
     const kop = a.dag !== vorigeDag ? `<div class="kop">${esc(a.dag)}</div>` : '';
     vorigeDag = a.dag;
+    const sleutel = `${a.dag}|${a.titel}`;
+    const open = agendaOpen.has(sleutel);
     return kop + `
       <div class="kaart ${a.nu ? 'nu' : ''}">
         <div class="rij">
@@ -689,7 +692,11 @@ function agendaKaarten(items) {
                 ? `<span>${esc(a.locatie)}</span>` : ''}
               ${a.nu ? '<span class="badge vandaag">bezig</span>' : ''}
             </div>
-            ${!a.boekbaar && !a.locatie ? '' : `<div class="acties">
+            ${open && a.omschrijving
+              ? `<div class="fragment">${esc(a.omschrijving).replace(/\n/g, '<br>')}</div>` : ''}
+            ${!a.boekbaar && !a.locatie && !a.omschrijving ? '' : `<div class="acties">
+              ${a.omschrijving ? `<button data-agtekst="${esc(sleutel)}">
+                ${open ? 'Tekst verbergen' : '📖 Volledige tekst'}</button>` : ''}
               ${a.locatie ? (() => {
                 const doelen = routeDoelen(a.locatie);
                 // Kort label (de naam vóór de komma); het volledige adres blijft het
@@ -960,6 +967,12 @@ function teken() {
     b.onclick = () => stuur({ soort: 'taak_klaar', id: b.dataset.af }, b.dataset.af, 'Afgevinkt'));
   el.querySelectorAll('[data-agendalater]').forEach(b =>
     b.onclick = () => { agendaLater = !agendaLater; teken(); });
+  el.querySelectorAll('[data-agtekst]').forEach(b =>
+    b.onclick = () => {
+      const sleutel = b.dataset.agtekst;
+      if (agendaOpen.has(sleutel)) { agendaOpen.delete(sleutel); } else { agendaOpen.add(sleutel); }
+      teken();
+    });
   el.querySelectorAll('[data-snooze]').forEach(b =>
     b.onclick = () => stuur(
       { soort: 'taak_snooze', id: b.dataset.snooze, uren: +b.dataset.uren },

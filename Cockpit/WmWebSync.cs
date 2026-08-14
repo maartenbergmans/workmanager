@@ -509,6 +509,11 @@ public class WmWebSync
             // Ruim genoeg dat een meerdelige lijst ("A → B + restaurant, adres") heel
             // doorkomt: de pagina splitst de locatie in losse routeknopjes per bestemming.
             locatie = Kort(x.Item.Locatie, 220),
+            // De volledige tekst van de afspraak (dagplannen, reisgids): op de pagina
+            // uitklapbaar achter "Volledige tekst". Regeleindes blijven behouden;
+            // alleen extreem lange teksten worden afgekapt.
+            omschrijving = x.Item.Omschrijving.Trim() is { Length: > 6000 } lang
+                ? lang[..6000] + "…" : x.Item.Omschrijving.Trim(),
             bron = x.Bron,
             nu = !x.Item.HeleDag && x.Item.Start <= nu && x.Item.Einde > nu,
             // Voor de knop "Uren boeken" op de kaart: duur afgerond op een kwartier, en de
