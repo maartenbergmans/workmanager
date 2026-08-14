@@ -371,6 +371,9 @@ section.aan { display: block; }
 .fragment {
   font-size: 13px; color: var(--grijs); margin-top: 7px; max-height: 3.9em; overflow: hidden;
 }
+/* Zoals .fragment maar zonder hoogtebegrenzing: voor de volledige afspraaktekst
+   (dagplannen/reisgids) die je bewust openklapt en dan ook echt wilt lezen. */
+.volledig { font-size: 13px; color: var(--grijs); margin-top: 7px; overflow-wrap: anywhere; }
 .antwoord { margin-top: 9px; }
 .timer {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; margin-bottom: 9px;
@@ -693,7 +696,7 @@ function agendaKaarten(items) {
               ${a.nu ? '<span class="badge vandaag">bezig</span>' : ''}
             </div>
             ${open && a.omschrijving
-              ? `<div class="fragment">${esc(a.omschrijving).replace(/\n/g, '<br>')}</div>` : ''}
+              ? `<div class="volledig">${esc(a.omschrijving).replace(/\n/g, '<br>')}</div>` : ''}
             ${!a.boekbaar && !a.locatie && !a.omschrijving ? '' : `<div class="acties">
               ${a.omschrijving ? `<button data-agtekst="${esc(sleutel)}">
                 ${open ? 'Tekst verbergen' : '📖 Volledige tekst'}</button>` : ''}
