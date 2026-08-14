@@ -373,7 +373,14 @@ section.aan { display: block; }
 }
 /* Zoals .fragment maar zonder hoogtebegrenzing: voor de volledige afspraaktekst
    (dagplannen/reisgids) die je bewust openklapt en dan ook echt wilt lezen. */
-.volledig { font-size: 13px; color: var(--grijs); margin-top: 7px; overflow-wrap: anywhere; }
+.volledig { font-size: 13px; color: var(--grijs); margin-top: 4px; overflow-wrap: anywhere; }
+/* Blokkop binnen de volledige tekst: per sectie (HET PLAN, VERHALEN, …) open te tikken. */
+.blokkop {
+  margin-top: 8px; padding: 7px 10px; border-radius: 9px; background: var(--kaart2);
+  border: 1px solid var(--rand); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+/* Adres in de tekst: tikbaar naar Google Maps. */
+.adres { color: var(--accent); text-decoration: underline; }
 .antwoord { margin-top: 9px; }
 .timer {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; margin-bottom: 9px;
@@ -487,6 +494,7 @@ let tab = 'taken';
 let laterOpen = false;             // "Later"-lijst uitgeklapt
 let agendaLater = false;           // agenda: dagen ná morgen uitgeklapt
 const agendaOpen = new Set();      // afspraken waarvan de volledige tekst getoond wordt
+const agendaBlokOpen = new Set();  // opengeklapte blokken binnen zo'n volledige tekst
 let antwoordOp = '';               // bericht-id waarvoor het antwoordvak openstaat
 let antwoordTekst = '';            // wat er in dat vak staat
 let zoek = '';                     // filter op de takenlijst
@@ -676,6 +684,46 @@ function tekenAgenda() {
   return html;
 }
 
+// Knipt een afspraaktekst in blokken op de HOOFDLETTER-koppen (HET PLAN, TIP,
+// VERHALEN VOOR ONDERWEG, GLUTENVRIJ, …) zodat elk blok apart open te tikken is.
+function maakBlokken(tekst) {
+  const blokken = [];
+  let blok = null;
+  for (const regel of tekst.split('\n')) {
+    const m = regel.match(/^([A-ZÀ-Þ][A-ZÀ-Þ0-9 &'’’\-]{2,})(?=[:—(]|$)/);
+    const isKop = m && m[1].replace(/[^A-ZÀ-Þ]/g, '').length >= 3;
+    if (isKop) {
+      blok = { kop: m[1].trim(), inhoud: [] };
+      const rest = regel.slice(m[1].length).replace(/^[\s:—]+/, '');
+      if (rest.trim()) { blok.inhoud.push(rest); }
+      blokken.push(blok);
+    } else if (regel.trim()) {
+      if (!blok) { blok = { kop: 'INFO', inhoud: [] }; blokken.push(blok); }
+      blok.inhoud.push(regel);
+    }
+  }
+  return blokken.filter(b => b.inhoud.length);
+}
+
+// Maakt straatadressen in een tekstregel tikbaar naar Google Maps. Herkent
+// "2bis Rue Jules Brûle, Saint-Valery-sur-Somme" en varianten met Avenue/Place/….
+// De rest van de regel wordt gewoon ge-escaped.
+function linkifyAdres(regel) {
+  const re = /(\d+\s?(?:bis|ter)?\s+)?(Rue|Avenue|Boulevard|Place|Quai|Allée|Chemin|Impasse)\s+[^,;.:()\n—·]{2,45}(,\s*(?:\d{5}\s+)?[A-ZÀ-ÿ][^,;.:()\n—·]{2,30})?/g;
+  let uit = '';
+  let vorig = 0;
+  let m;
+  while ((m = re.exec(regel)) !== null) {
+    const adres = m[0].trim();
+    uit += esc(regel.slice(vorig, m.index));
+    uit += `<a class="adres" target="_blank" rel="noopener" ` +
+      `href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(adres)}"` +
+      `>${esc(adres)}</a>`;
+    vorig = m.index + m[0].length;
+  }
+  return uit + esc(regel.slice(vorig));
+}
+
 function agendaKaarten(items) {
   let vorigeDag = '';
   return items.map(a => {
@@ -695,8 +743,14 @@ function agendaKaarten(items) {
                 ? `<span>${esc(a.locatie)}</span>` : ''}
               ${a.nu ? '<span class="badge vandaag">bezig</span>' : ''}
             </div>
-            ${open && a.omschrijving
-              ? `<div class="volledig">${esc(a.omschrijving).replace(/\n/g, '<br>')}</div>` : ''}
+            ${open && a.omschrijving ? maakBlokken(a.omschrijving).map((b, i) => {
+              const bloksleutel = `${sleutel}#${i}`;
+              const blokOpen = agendaBlokOpen.has(bloksleutel);
+              return `<div class="blokkop" data-blok="${esc(bloksleutel)}">
+                  ${blokOpen ? '▾' : '▸'} ${esc(b.kop)}</div>`
+                + (blokOpen
+                  ? `<div class="volledig">${b.inhoud.map(linkifyAdres).join('<br>')}</div>` : '');
+            }).join('') : ''}
             ${!a.boekbaar && !a.locatie && !a.omschrijving ? '' : `<div class="acties">
               ${a.omschrijving ? `<button data-agtekst="${esc(sleutel)}">
                 ${open ? 'Tekst verbergen' : '📖 Volledige tekst'}</button>` : ''}
@@ -980,6 +1034,12 @@ function teken() {
     b.onclick = () => {
       const sleutel = b.dataset.agtekst;
       if (agendaOpen.has(sleutel)) { agendaOpen.delete(sleutel); } else { agendaOpen.add(sleutel); }
+      teken();
+    });
+  el.querySelectorAll('[data-blok]').forEach(b =>
+    b.onclick = () => {
+      const sleutel = b.dataset.blok;
+      if (agendaBlokOpen.has(sleutel)) { agendaBlokOpen.delete(sleutel); } else { agendaBlokOpen.add(sleutel); }
       teken();
     });
   el.querySelectorAll('[data-snooze]').forEach(b =>
