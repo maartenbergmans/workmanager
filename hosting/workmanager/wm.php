@@ -773,6 +773,10 @@ const PLEKKEN = {
   'Le Marydiane': '45.9332,-0.9600', 'Les Pincettes': '46.1614,-1.1583',
   'Au coin des Augustines': '50.1881,1.6317',
   'Crêperie de la Cressonnière': '49.8697,0.8007',
+  'Parking aan de bron': '49.8690,0.8025',
+  'Vélorail de Chauvigny': '46.5652,0.6368', 'Vélorail': '46.5652,0.6368',
+  'Les Géants du Ciel': '46.5690,0.6491', 'Géants du Ciel': '46.5690,0.6491',
+  'Civaux': '46.4501,0.6637',
 };
 const PLEK_LOOKUP = {};
 for (const [naam, coord] of Object.entries(PLEKKEN)) {
@@ -841,7 +845,7 @@ function weerVoor(dagLabel, dagItems) {
   let coord = null;
   for (const a of dagItems) {
     for (const d of routeDoelen(a.locatie || '')) {
-      const kaal = d.replace(/^\p{Extended_Pictographic}+\s*/u, '');
+      const kaal = d.replace(/^(?:\p{Extended_Pictographic}|️)+\s*/u, '');
       coord = PLEK_LOOKUP[kaal.toLowerCase().replace(/’/g, "'")] || coord;
       if (coord) { break; }
     }
@@ -921,7 +925,8 @@ function agendaKaarten(items) {
                 // dan wordt dát het knopicoon; anders het kompas. Kort label = de naam vóór
                 // de komma; het volledige adres (zonder emoji) blijft het navigatiedoel.
                 return doelen.map(d => {
-                  const em = d.match(/^(\p{Extended_Pictographic}+)\s*/u);
+                  // ️ = variatieselector die bij emoji als 🅿️ meekomt.
+                  const em = d.match(/^((?:\p{Extended_Pictographic}|️)+)\s*/u);
                   const icoon = em ? em[1] : '🧭';
                   const doel = em ? d.slice(em[0].length) : d;
                   return `<a class="belknop" target="_blank" rel="noopener"
