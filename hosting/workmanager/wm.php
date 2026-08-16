@@ -495,7 +495,7 @@ const api = (actie, opties) =>
   fetch(`wm.php?actie=${actie}&token=${encodeURIComponent(TOKEN)}`, opties).then(r => r.json());
 
 let snapshot = null;
-let tab = 'taken';
+let tab = 'agenda';
 let laterOpen = false;             // "Later"-lijst uitgeklapt
 let agendaLater = false;           // agenda: dagen ná morgen uitgeklapt
 const agendaOpen = new Set();      // afspraken waarvan de volledige tekst getoond wordt
