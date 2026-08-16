@@ -6991,6 +6991,10 @@ public class CockpitForm : Form
         }
         OutlookClient.Instance.ForceerHerlaad();
         TeamsClient.Instance.ForceerHerlaad();
+        // Ook de CED-agendacache weg: een in Office 365 verwijderde of verzette afspraak
+        // bleef anders tot een halfuur staan (de dagcache gold nog). Volledige sync moet
+        // álles opnieuw ophalen, ook de agenda.
+        _cedCache.Clear();
         Toast.Toon(this, $"Volledige synchronisatie gestart ({hersteld} verborgen mail(s) hersteld)",
             Fluent.Sync);
         await VerversAsync();
