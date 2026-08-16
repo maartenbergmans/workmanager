@@ -930,8 +930,11 @@ function agendaKaarten(items) {
                   const em = d.match(/^((?:\p{Extended_Pictographic}|️)+)\s*/u);
                   const icoon = em ? em[1] : '🧭';
                   const doel = em ? d.slice(em[0].length) : d;
+                  // Bekende plek? Dan op exacte coördinaten navigeren in plaats van op de
+                  // (soms Nederlandstalige) tekst, waar Maps iets anders van kan maken.
+                  const coord = PLEK_LOOKUP[doel.toLowerCase().replace(/’/g, "'")];
                   return `<a class="belknop" target="_blank" rel="noopener"
-                    href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(doel)}"
+                    href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(coord || doel)}"
                     >${icoon} ${doelen.length > 1 ? esc(doel.split(',')[0]) : 'Route'}</a>`;
                 }).join(' ');
               })() : ''}
