@@ -381,6 +381,8 @@ section.aan { display: block; }
 }
 /* Adres in de tekst: tikbaar naar Google Maps. */
 .adres { color: var(--accent); text-decoration: underline; }
+/* Weer in de dagkop van de agenda ("☀️ 24°/15°"). */
+.kop .weer { float: right; font-weight: 400; color: var(--grijs); }
 /* Regels in de volledige tekst: uren vet met hangende inspringing, bullets ingesprongen. */
 .volledig .regel { margin: 4px 0; }
 .volledig .tijdregel { margin: 5px 0; padding-left: 3.4em; text-indent: -3.4em; }
@@ -673,10 +675,11 @@ function tekenAgenda() {
   if (!items.length) {
     return '<div class="leeg">Geen afspraken vandaag en morgen</div>';
   }
-  // Vandaag en morgen altijd tonen; de dagen daarna (de pc synct twee weken vooruit)
-  // achter een uitklapknop zodat de lijst kort blijft.
-  const dichtbij = items.filter(a => a.dag === 'Vandaag' || a.dag === 'Morgen');
-  const later = items.filter(a => a.dag !== 'Vandaag' && a.dag !== 'Morgen');
+  // De eerste drie dagen (vandaag, morgen, overmorgen) altijd tonen; de dagen
+  // daarna (de pc synct twee weken vooruit) achter een uitklapknop.
+  const dichtbijDagen = new Set([...new Set(items.map(a => a.dag))].slice(0, 3));
+  const dichtbij = items.filter(a => dichtbijDagen.has(a.dag));
+  const later = items.filter(a => !dichtbijDagen.has(a.dag));
   let html = agendaKaarten(dichtbij);
   if (later.length) {
     html += `<div class="acties" style="margin:10px 4px">
@@ -769,6 +772,7 @@ const PLEKKEN = {
   'Le Saint Mart': '46.2053,-1.3685', 'Raw Coco': '46.1589,-1.1515',
   'Le Marydiane': '45.9332,-0.9600', 'Les Pincettes': '46.1614,-1.1583',
   'Au coin des Augustines': '50.1881,1.6317',
+  'Crêperie de la Cressonnière': '49.8697,0.8007',
 };
 const PLEK_LOOKUP = {};
 for (const [naam, coord] of Object.entries(PLEKKEN)) {
@@ -803,6 +807,67 @@ function linkifyAdres(regel) {
   return uit + esc(regel.slice(vorig));
 }
 
+// ---- Weer per agendadag (open-meteo, gratis en zonder sleutel) ----
+// De dagkop krijgt "☀️ 24°/15°" voor de plek van die dag: de eerste bestemming
+// in de afspraken van die dag die in de plekkenlijst voorkomt.
+const weerCache = {};
+
+function dagDatum(dagLabel) {
+  const nu = new Date();
+  if (dagLabel === 'Vandaag') { return nu; }
+  if (dagLabel === 'Morgen') { return new Date(nu.getTime() + 864e5); }
+  const maanden = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli',
+    'augustus', 'september', 'oktober', 'november', 'december'];
+  const m = dagLabel.match(/(\d{1,2}) (\p{L}+)/u);
+  if (!m || maanden.indexOf(m[2].toLowerCase()) < 0) { return null; }
+  const d = new Date(nu.getFullYear(), maanden.indexOf(m[2].toLowerCase()), +m[1]);
+  if (d.getTime() < nu.getTime() - 2 * 864e5) { d.setFullYear(d.getFullYear() + 1); }
+  return d;
+}
+
+function weerIcoon(code) {
+  if (code === 0) { return '☀️'; }
+  if (code <= 2) { return '🌤'; }
+  if (code === 3) { return '☁️'; }
+  if (code <= 48) { return '🌫'; }
+  if (code <= 57 || (code >= 80 && code <= 82)) { return '🌦'; }
+  if (code <= 67) { return '🌧'; }
+  if (code <= 77 || code === 85 || code === 86) { return '❄️'; }
+  return '⛈';
+}
+
+function weerVoor(dagLabel, dagItems) {
+  const datum = dagDatum(dagLabel);
+  let coord = null;
+  for (const a of dagItems) {
+    for (const d of routeDoelen(a.locatie || '')) {
+      const kaal = d.replace(/^\p{Extended_Pictographic}+\s*/u, '');
+      coord = PLEK_LOOKUP[kaal.toLowerCase().replace(/’/g, "'")] || coord;
+      if (coord) { break; }
+    }
+    if (coord) { break; }
+  }
+  if (!datum || !coord) { return ''; }
+  const iso = `${datum.getFullYear()}-${String(datum.getMonth() + 1).padStart(2, '0')}` +
+    `-${String(datum.getDate()).padStart(2, '0')}`;
+  const key = `${coord}|${iso}`;
+  if (key in weerCache) { return weerCache[key] || ''; }
+  weerCache[key] = ''; // markeer als bezig, zodat we maar één keer fetchen
+  const [lat, lon] = coord.split(',');
+  fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto` +
+      `&start_date=${iso}&end_date=${iso}`)
+    .then(r => r.json())
+    .then(d => {
+      if (!d.daily || !d.daily.time || !d.daily.time.length) { return; }
+      weerCache[key] = `${weerIcoon(d.daily.weather_code[0])} ` +
+        `${Math.round(d.daily.temperature_2m_max[0])}°/${Math.round(d.daily.temperature_2m_min[0])}°`;
+      teken();
+    })
+    .catch(() => { delete weerCache[key]; });
+  return '';
+}
+
 // Eén tekstregel opmaken: uurregels ("9u00 …") krijgen het uur vet met hangende
 // inspringing, bulletregels ("• …") springen in, de rest wordt een gewone alinea.
 // Adressen worden overal tikbaar (linkifyAdres doet ook het escapen).
@@ -820,7 +885,10 @@ function opmaakRegel(regel) {
 function agendaKaarten(items) {
   let vorigeDag = '';
   return items.map(a => {
-    const kop = a.dag !== vorigeDag ? `<div class="kop">${esc(a.dag)}</div>` : '';
+    const weer = a.dag !== vorigeDag ? weerVoor(a.dag, items.filter(x => x.dag === a.dag)) : '';
+    const kop = a.dag !== vorigeDag
+      ? `<div class="kop">${esc(a.dag)}${weer ? `<span class="weer">${weer}</span>` : ''}</div>`
+      : '';
     vorigeDag = a.dag;
     const sleutel = `${a.dag}|${a.titel}`;
     const open = agendaOpen.has(sleutel);
