@@ -577,8 +577,8 @@ public sealed class BureaubladCleanerForm : Form
         ("Hilke 2026", @"G:\Mijn Drive\administratie\hilke\2026"),
         ("Lisa 2026", @"G:\Mijn Drive\administratie\lisa\2026"),
         ("Emilia 2026", @"G:\Mijn Drive\administratie\emilia\2026"),
-        ("Bermacon", @"G:\Mijn Drive\UrbanIT\Aqurat\UrbanIT - Bermacon - Vianext\bermacon"),
-        ("Urbanit", @"G:\Mijn Drive\UrbanIT\Aqurat\UrbanIT - Bermacon - Vianext\urbanit"),
+        ("Bermacon", @"G:\Gedeelde drives\UrbanIT\Aqurat\UrbanIT - Bermacon - Vianext\bermacon"),
+        ("Urbanit", @"G:\Gedeelde drives\UrbanIT\Aqurat\UrbanIT - Bermacon - Vianext\urbanit"),
     };
 
     private void KopieerNaarDrive(string label, string map)

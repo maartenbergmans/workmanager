@@ -372,11 +372,11 @@ public class CockpitForm : Form
                 ("PhpStorm — laurapp-frontend", () => ClientLauncher.StartPhpStorm(wsl + "laurapp-frontend"), null),
                 ("PhpStorm — herstel-calculator", () => ClientLauncher.StartPhpStorm(wsl + "lauryssens-herstel-calculator"), null),
                 ("Claude — glascalculator (Drive)", () => ClientLauncher.StartClaude(
-                    @"G:\Mijn Drive\UrbanIT\Lauryssens\glascalculator"),
-                    @"G:\Mijn Drive\UrbanIT\Lauryssens\glascalculator"),
+                    @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
+                    @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
                 ("Map — glascalculator (Drive)", () => System.Diagnostics.Process.Start(
                     new System.Diagnostics.ProcessStartInfo(
-                        @"G:\Mijn Drive\UrbanIT\Lauryssens\glascalculator") { UseShellExecute = true }), null),
+                        @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator") { UseShellExecute = true }), null),
             }),
             // WorkManager zelf als "klant": zo krijgt hij dezelfde eigen knop in de brede
             // werkbalk als de echte klanten, mét 🟢-lampje, git-status en sluiten-item.
@@ -528,7 +528,7 @@ public class CockpitForm : Form
             ("Emilia 2026", @"G:\Mijn Drive\administratie\emilia\2026"),
             ("—", ""),
             ("Bermacon", @"G:\Mijn Drive\Bermacon"),
-            ("UrbanIT", @"G:\Mijn Drive\UrbanIT"),
+            ("UrbanIT", @"G:\Gedeelde drives\UrbanIT"),
             ("Aqurat", @"G:\Gedeelde drives\Aqurat"),
         })
         {

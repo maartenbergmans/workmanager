@@ -671,7 +671,12 @@ function routeDoelen(locatie) {
 }
 
 function tekenAgenda() {
-  const items = snapshot?.agenda || [];
+  // Verlopen dagen wegfilteren op de telefoonklok: als de pc sliep en het snapshot
+  // nog van gisteren is, blijven de oude dagen anders staan (met een fout dagkopje).
+  const nu = new Date();
+  const vandaagIso = `${nu.getFullYear()}-${String(nu.getMonth() + 1).padStart(2, '0')}` +
+    `-${String(nu.getDate()).padStart(2, '0')}`;
+  const items = (snapshot?.agenda || []).filter(a => !a.datum || a.datum >= vandaagIso);
   if (!items.length) {
     return '<div class="leeg">Geen afspraken vandaag en morgen</div>';
   }
@@ -842,7 +847,9 @@ function weerIcoon(code) {
 }
 
 function weerVoor(dagLabel, dagItems) {
-  const datum = dagDatum(dagLabel);
+  // De echte datum uit het snapshot gaat voor; het dagkopje ontleden is de terugval.
+  const isoUitItems = dagItems.find(a => a.datum)?.datum;
+  const datum = isoUitItems ? new Date(`${isoUitItems}T12:00:00`) : dagDatum(dagLabel);
   let coord = null;
   for (const a of dagItems) {
     for (const d of routeDoelen(a.locatie || '')) {

@@ -320,7 +320,7 @@ public class WmWebSync
         ("laurapp-claude", "Claude — laurapp-backend", "Lauryssens",
             () => ClientLauncher.StartClaude(Wsl + "laurapp-backend")),
         ("glascalculator-claude", "Claude — glascalculator", "Lauryssens",
-            () => ClientLauncher.StartClaude(@"G:\Mijn Drive\UrbanIT\Lauryssens\glascalculator")),
+            () => ClientLauncher.StartClaude(@"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator")),
         ("wm-claude", "Claude — WorkManager zelf", "UrbanIT",
             () => ClientLauncher.StartClaude(@"C:\Data\Projecten\Workmanager")),
     };
@@ -503,6 +503,9 @@ public class WmWebSync
                 var d when d == vandaag.AddDays(1) => "Morgen",
                 var d => d.ToDateTime(TimeOnly.MinValue).ToString("dddd d MMMM", nlBe),
             },
+            // Echte datum erbij: de pagina filtert hiermee zelf verlopen dagen weg (op de
+            // telefoonklok), ook wanneer de pc sliep en het snapshot van gisteren is.
+            datum = DateOnly.FromDateTime(x.Item.Start.LocalDateTime).ToString("yyyy-MM-dd"),
             van = x.Item.HeleDag ? "hele" : x.Item.Start.ToLocalTime().ToString("HH:mm"),
             tot = x.Item.HeleDag ? "dag" : x.Item.Einde.ToLocalTime().ToString("HH:mm"),
             titel = x.Item.Titel,
