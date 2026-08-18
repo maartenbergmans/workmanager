@@ -1212,12 +1212,24 @@ public sealed class OutlookClient : IDisposable
             // rijen toont: opent OWA de mail schermvullend (of hertekent de lijst even),
             // dan is de hele lijst weg en zegt een ontbrekende rij niets — dat gaf eerder
             // een vals "ok" waarna de mail gewoon in de inbox bleef staan.
+            // De toets "rij verhuisd naar Verwerkt/Archief" is waardeloos wanneer afzender of
+            // onderwerp zelf zo'n woord bevat (bv. "RE: archief-folder"): de mail leek dan al
+            // verwerkt vóór er ook maar één keer geklikt was, en bleef zo eeuwig in het
+            // postvak terugkomen. Dan telt alleen nog: rij weg uit de lijst.
+            var eigenTekstLijktVerwerkt = System.Text.RegularExpressions.Regex.IsMatch(
+                $"{van} {onderwerp}", @"\b(archief|archive|verwerkt)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var rijVerwerktToets = eigenTekstLijktVerwerkt
+                ? "false"
+                : """
+                  /\b(archief|archive|verwerkt)\b/i.test(
+                      (rij.getAttribute('aria-label') || '') + ' ' + rij.textContent)
+                  """;
             var klaarExpr =
                 $$"""
                 (function () {
                     const rij = {{vindRijExpr}};
-                    if (rij) return /\b(archief|archive|verwerkt)\b/i.test(
-                        (rij.getAttribute('aria-label') || '') + ' ' + rij.textContent);
+                    if (rij) return {{rijVerwerktToets}};
                     return document.querySelectorAll('[data-convid], [role="option"]').length > 0;
                 })()
                 """;
@@ -1256,8 +1268,10 @@ public sealed class OutlookClient : IDisposable
             }
             // Definitieve dubbelcheck: vers naar Postvak IN en daar controleren dat de
             // mail écht weg is. Alleen dat telt — de checks hierboven kijken naar een
-            // DOM die door de archiveeractie zelf in beweging is.
-            if (stand == "ok")
+            // DOM die door de archiveeractie zelf in beweging is. Ook na een onbevestigde
+            // klik ("niet-verdwenen") hierheen: in de zoekweergave blijft een gearchiveerde
+            // mail gewoon zichtbaar, dus alleen het Postvak IN geeft het echte antwoord.
+            if (stand is "ok" or "niet-verdwenen")
             {
                 _web!.CoreWebView2!.Navigate("https://outlook.office.com/mail/");
                 for (var i = 0; i < 30; i++)
@@ -1269,10 +1283,8 @@ public sealed class OutlookClient : IDisposable
                     }
                 }
                 await Task.Delay(2500, ct); // lijst laten renderen
-                if (await JsAsync($$"""(function () { return !!({{vindRijExpr}}); })()""") == "true")
-                {
-                    stand = "niet-verdwenen";
-                }
+                stand = await JsAsync($$"""(function () { return !!({{vindRijExpr}}); })()""") == "true"
+                    ? "niet-verdwenen" : "ok";
                 _laatstHerladen = DateTimeOffset.Now;
             }
             stand = $"{{\"stap\":\"{stand}\",\"van\":{vanJs}}}";
