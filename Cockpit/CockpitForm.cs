@@ -2526,6 +2526,16 @@ public class CockpitForm : Form
             VulBerichtenLijst(snapshot, fouten);
         }
 
+        // Eerst kijken of er überhaupt internet is: zonder verbinding zou elke bron met een
+        // eigen cryptische fout in de lijst komen. Dan liever één duidelijke regel, en de
+        // laatst opgehaalde berichten gewoon laten staan tot de verbinding terug is.
+        if (!await Internet.CheckAsync())
+        {
+            fouten.Add("📡 Geen internetverbinding — de lijst toont de laatst opgehaalde berichten");
+            ToonTussenstand();
+            return;
+        }
+
         // De drie trage bronnen meteen op weg sturen in plaats van ze om de beurt af te
         // wachten: Gmail zit op IMAP, Teams en Outlook op een verborgen browser. Ze storen
         // elkaar niet (elk zijn eigen sessie en slot), dus de ophaalbeurt duurt voortaan

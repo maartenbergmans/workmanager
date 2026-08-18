@@ -74,6 +74,13 @@ public static class BronGezondheid
             var s = Van(bron);
             s.LaatsteFout = DateTimeOffset.Now;
             s.LaatsteFoutTekst = melding.Length > 160 ? melding[..160] + "…" : melding;
+            // Geen internet: dan ligt het niet aan de bron. De fout blijft zichtbaar in het
+            // overzicht, maar spreekt het foutbudget niet aan — anders staat na een korte
+            // storing elke bron een halfuur gepauzeerd terwijl er niets mis mee is.
+            if (Internet.Offline)
+            {
+                return false;
+            }
             s.OpRij++;
             s.FoutenVandaag++;
             // Pas na vijf mislukkingen op rij pauzeren, en dan oplopend: 5, 15, 30 minuten.

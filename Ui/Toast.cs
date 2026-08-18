@@ -81,9 +81,18 @@ public sealed class Toast : Control
     /// "details…" die pas dan de volledige fout toont. Vervangt blokkerende MessageBoxen
     /// voor fouten waar je niet per se meteen iets mee moet.
     /// </summary>
-    public static void Fout(Form eigenaar, string kort, string details) =>
+    public static void Fout(Form eigenaar, string kort, string details)
+    {
+        // Zonder internetverbinding is de echte oorzaak meestal niet de fout zelf: dan
+        // meldt de toast dát, met de oorspronkelijke fout achter "details…".
+        if (Internet.Offline)
+        {
+            details = $"{kort}\r\n\r\n{details}";
+            kort = "Geen internetverbinding";
+        }
         Maak(eigenaar, $"⚠ {kort}", "", () => MessageBox.Show(eigenaar, details,
             "WorkManager", MessageBoxButtons.OK, MessageBoxIcon.Warning), "details…", blijvend: false);
+    }
 
     /// <summary>Toont een melding met een klikbare "Ongedaan maken"-actie.</summary>
     public static void ToonUndo(Form eigenaar, string tekst, Action onUndo, string glyph = "") =>
