@@ -4485,7 +4485,7 @@ public class CockpitForm : Form
         }
         _plekVoorstelGetoond = true;
         Toast.ToonActie(this,
-            $"Je was {cluster.Aantal}× op een plek zonder naam", "Plek benoemen…",
+            $"Je kwam op {cluster.Dagen} dagen op dezelfde plek zonder naam", "Plek benoemen…",
             () => VraagPlekNaam(cluster.Lat, cluster.Lon), Fluent.Globe);
     }
 

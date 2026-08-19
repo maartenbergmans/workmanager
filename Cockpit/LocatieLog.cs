@@ -333,23 +333,28 @@ public static class LocatieLog
     public static List<string> Plekken() => Laad().Plekken.Select(p => p.Naam).ToList();
 
     /// <summary>
-    /// Coördinaten die de laatste week minstens drie keer terugkwamen zonder naam en niet
-    /// bij een bekende (of bewust genegeerde) plek horen: een kandidaat om te benoemen.
+    /// Een plek waar je de laatste week op minstens drie aparte dagen kwam zonder naam, en
+    /// die niet bij een bekende (of bewust genegeerde) plek hoort: een kandidaat om te
+    /// benoemen. Bewust op aantal dágen, niet op aantal pings: één doorlopend verblijf (bv.
+    /// een vakantieplek) levert honderden punten maar is geen plek om te benoemen — een plek
+    /// waar je op verschillende dagen terugkomt wél. Geeft ook dat aantal dagen terug.
     /// </summary>
-    public static (double Lat, double Lon, int Aantal)? NaamloosCluster()
+    public static (double Lat, double Lon, int Dagen)? NaamloosCluster()
     {
         var data = Laad();
-        var naamloos = data.Punten.Where(p => p.Plek.Length == 0).ToList();
+        var grens = DateTimeOffset.Now.AddDays(-7);
+        var naamloos = data.Punten.Where(p => p.Plek.Length == 0 && p.Moment >= grens).ToList();
         foreach (var punt in naamloos)
         {
             var buurt = naamloos
                 .Where(q => MeterTussen(punt.Lat, punt.Lon, q.Lat, q.Lon) <= PlekStraalMeter)
                 .ToList();
-            if (buurt.Count >= 3 &&
+            var dagen = buurt.Select(b => b.Moment.LocalDateTime.Date).Distinct().Count();
+            if (dagen >= 3 &&
                 !data.Plekken.Concat(data.Genegeerd).Any(p =>
                     MeterTussen(punt.Lat, punt.Lon, p.Lat, p.Lon) <= PlekStraalMeter))
             {
-                return (buurt.Average(b => b.Lat), buurt.Average(b => b.Lon), buurt.Count);
+                return (buurt.Average(b => b.Lat), buurt.Average(b => b.Lon), dagen);
             }
         }
         return null;
