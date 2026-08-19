@@ -6,9 +6,11 @@ namespace WorkManager;
 /// Vult Microsoft-aanmeldschermen (login.microsoftonline.com en het ADFS-scherm van CED)
 /// automatisch in met de centrale <see cref="CedLogin"/>: e-mailadres, wachtwoord en de
 /// "Aangemeld blijven?"-vraag (ja). Op het MFA-scherm klikt de assistent van de standaard
-/// push-goedkeuring ("keur goed in de Authenticator-app") door naar het codeinvoerscherm,
-/// want Maarten gebruikt WinOTP (codes); de code zelf blijft handwerk — er wordt nooit een
-/// 2FA-geheim uitgelezen. Het wachtwoord wordt per pagina maar één keer geprobeerd; meldt
+/// push-goedkeuring ("keur goed in de Authenticator-app") door naar het codeinvoerscherm;
+/// staat er een TOTP-seed ingesteld, dan berekent hij de actuele code (RFC 6238), vult die
+/// in en bevestigt — anders blijft de code handwerk. De seed staat DPAPI-versleuteld bij
+/// <see cref="CedLogin"/> en verlaat C# nooit; enkel de 6 cijfers gaan naar de pagina. Het
+/// wachtwoord wordt per pagina maar één keer geprobeerd; meldt
 /// het scherm een fout wachtwoord, dan stopt het invullen blijvend (zie
 /// <see cref="CedLogin.MarkeerGeweigerd"/>) en verschijnt er één melding — daarna is
 /// handmatig inloggen aan zet tot er een nieuw wachtwoord bewaard is.
@@ -25,6 +27,10 @@ public static class MicrosoftLogin
     {
         var email = JsonSerializer.Serialize(CedLogin.Email);
         var wachtwoord = JsonSerializer.Serialize(CedLogin.Wachtwoord());
+        // De seed blijft in C#; alleen de 6 actuele cijfers gaan naar de pagina. Per ronde
+        // opnieuw berekend, dus altijd de code die nu geldig is.
+        var seed = CedLogin.TotpGeheim();
+        var mfaCode = JsonSerializer.Serialize(seed.Length > 0 ? Totp.Genereer(seed) : "");
         return $$"""
             (() => {
                 // Fouttekst bij het wachtwoordveld = geweigerd: meteen stoppen met invullen.
@@ -80,12 +86,24 @@ public static class MicrosoftLogin
                     if (el) { el.click(); return true; }
                     return false;
                 };
-                // 1. Staat het codeveld er al? Dan is het scherm klaar en typt Maarten de code.
+                // 1. Staat het codeveld er? Met een seed vullen we de code in en bevestigen we
+                //    meteen — per codewaarde één keer (voorkomt herhaald indienen bij een
+                //    fout/klokverschil; na 30 s doorrollen mag een verse code wél opnieuw).
                 const otc = document.querySelector(
                     '#idTxtBx_SAOTCC_OTC, input[name=otc], input[autocomplete="one-time-code"]');
                 if (otc && zichtbaar(otc)) {
+                    const code = {{mfaCode}};
+                    if (code.length > 0 && window.__wmMfaCode !== code) {
+                        window.__wmMfaCode = code;
+                        otc.value = code;
+                        vuur(otc);
+                        document.querySelector(
+                            '#idSubmit_SAOTCC_Continue, #idSIButton9, input[type=submit], button[type=submit]')
+                            ?.click();
+                        return 'mfa-ingevuld';
+                    }
                     if (!window.__wmOtcFocus) { window.__wmOtcFocus = true; otc.focus(); }
-                    return 'code-klaar';
+                    return 'code-klaar'; // geen seed, of deze code al ingediend
                 }
                 // 2. Toont Microsoft de lijst met methoden, kies dan de authenticator-code
                 //    (niet sms/telefoon/e-mail — die willen we bewust niet).
@@ -123,50 +141,34 @@ public static class MicrosoftLogin
             "(vraag Claude om het bij te werken).", duurMs: 15000);
     }
 
-    private static string _laatsteGekopieerdeCode = "";
+    private static bool _codeGemeld;
 
     /// <summary>
-    /// Verwerkt één login-stap én zet, zodra het codeinvoerscherm klaar staat en er een
-    /// TOTP-seed ingesteld is, de actuele code op het klembord — zodat Maarten enkel nog
-    /// hoeft te plakken. Zonder seed blijft de code volledig handwerk. Herkopieert netjes
-    /// wanneer de code na 30 s doorrolt.
+    /// Verwerkt één login-stap. Vulde <see cref="VulScript"/> net de MFA-code in en bevestigde
+    /// die (met een ingestelde seed), dan volgt één korte melding. Zonder seed blijft de code
+    /// handwerk; er wordt nooit een geheim uitgelezen — enkel de zelf berekende code ingevuld.
     /// </summary>
     public static void NaLoginStap(string jsResultaat, Form? eigenaar)
     {
         Verwerk(jsResultaat);
-        if (jsResultaat != "\"code-klaar\"")
+        if (jsResultaat != "\"mfa-ingevuld\"")
         {
-            _laatsteGekopieerdeCode = "";
+            _codeGemeld = false; // scherm verlaten: klaar voor een volgende aanmelding
             return;
         }
-        var geheim = CedLogin.TotpGeheim();
-        if (geheim.Length == 0)
+        if (_codeGemeld)
         {
-            return; // geen seed bewaard: de code blijft handwerk
+            return; // deze aanmelding al gemeld
         }
-        var code = Totp.Genereer(geheim);
-        if (code.Length == 0 || code == _laatsteGekopieerdeCode)
-        {
-            return; // ongeldige seed, of deze code al gekopieerd
-        }
-        _laatsteGekopieerdeCode = code;
-        try
-        {
-            Clipboard.SetText(code);
-        }
-        catch
-        {
-            return; // klembord even bezet: volgende ronde opnieuw
-        }
-        var melding = $"MFA-code {code} gekopieerd — plak met Ctrl+V ({Totp.SecondenGeldig()} s geldig)";
+        _codeGemeld = true;
+        const string Melding = "🔐 MFA-code automatisch ingevuld en bevestigd";
         if (eigenaar is { IsDisposed: false })
         {
-            Toast.Toon(eigenaar, melding, "🔐");
+            Toast.Toon(eigenaar, Melding, "🔐");
         }
         else
         {
-            // Verborgen sessies (Outlook/Teams zonder eigen zichtbaar venster): tray-ballon.
-            TrayMelding.Toon("MFA-code op het klembord", melding, duurMs: 20000);
+            TrayMelding.Toon("MFA", Melding, duurMs: 15000);
         }
     }
 }
