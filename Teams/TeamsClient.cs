@@ -251,7 +251,7 @@ public sealed class TeamsClient : IDisposable
                 ct.ThrowIfCancellationRequested();
                 await Task.Delay(500, ct);
                 // E-mail en wachtwoord vullen we in; alleen de MFA-stap blijft handwerk.
-                MicrosoftLogin.Verwerk(await JsAsync(MicrosoftLogin.VulScript()));
+                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), _venster);
                 if (await IsIngelogdAsync())
                 {
                     File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));

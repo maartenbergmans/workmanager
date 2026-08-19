@@ -257,7 +257,7 @@ public class InvoiceApprovalForm : Form
                 }
                 // Wachtwoordstap: de centrale CED-login vult hem in.
                 var ms = await RunScriptStringAsync(MicrosoftLogin.VulScript());
-                MicrosoftLogin.Verwerk($"\"{ms}\"");
+                MicrosoftLogin.NaLoginStap($"\"{ms}\"", this);
                 if (ms == "wachtwoord" && gelogd.Add("wachtwoord"))
                 {
                     Log("Wachtwoord ingevuld — alleen de MFA-stap is nog handwerk.");

@@ -131,7 +131,7 @@ public static class MicrosoftLogin
     /// hoeft te plakken. Zonder seed blijft de code volledig handwerk. Herkopieert netjes
     /// wanneer de code na 30 s doorrolt.
     /// </summary>
-    public static void NaLoginStap(string jsResultaat, Form eigenaar)
+    public static void NaLoginStap(string jsResultaat, Form? eigenaar)
     {
         Verwerk(jsResultaat);
         if (jsResultaat != "\"code-klaar\"")
@@ -158,10 +158,15 @@ public static class MicrosoftLogin
         {
             return; // klembord even bezet: volgende ronde opnieuw
         }
-        if (!eigenaar.IsDisposed)
+        var melding = $"MFA-code {code} gekopieerd — plak met Ctrl+V ({Totp.SecondenGeldig()} s geldig)";
+        if (eigenaar is { IsDisposed: false })
         {
-            Toast.Toon(eigenaar,
-                $"MFA-code {code} gekopieerd — plak met Ctrl+V ({Totp.SecondenGeldig()} s geldig)", "🔐");
+            Toast.Toon(eigenaar, melding, "🔐");
+        }
+        else
+        {
+            // Verborgen sessies (Outlook/Teams zonder eigen zichtbaar venster): tray-ballon.
+            TrayMelding.Toon("MFA-code op het klembord", melding, duurMs: 20000);
         }
     }
 }
