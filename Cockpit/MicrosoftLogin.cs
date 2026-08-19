@@ -64,12 +64,19 @@ public static class MicrosoftLogin
                         ?.click();
                     return 'email';
                 }
-                // "Aangemeld blijven?" → Ja: dat scheelt heraanmeldingen. Alleen op het echte
-                // KMSI-scherm (herkenbaar aan de checkbox), nooit blind ergens op klikken.
-                if (document.querySelector('#KmsiCheckboxField') &&
-                    document.querySelector('#idSIButton9')) {
-                    document.querySelector('#idSIButton9').click();
-                    return 'ja';
+                // "Aangemeld blijven?" → Ja: dat scheelt heraanmeldingen én is de korte
+                // bevestiging die vlak ná de MFA-code verschijnt. Alleen op dát scherm klikken
+                // (checkbox óf de kenmerkende tekst), nooit blind ergens op — de "Ja/Yes"-knop
+                // is de primaire knop (#idSIButton9), met een tekst-fallback.
+                const paginaTekst = (document.body?.innerText || '').toLowerCase();
+                const isKmsi = document.querySelector('#KmsiCheckboxField') ||
+                    /aangemeld blijven|stay signed in|rester connecté|angemeldet bleiben/.test(paginaTekst);
+                if (isKmsi) {
+                    const ja = document.querySelector('#idSIButton9') ||
+                        [...document.querySelectorAll('input[type=submit], button')].find(b =>
+                            zichtbaar(b) && /^(ja|yes|oui|ja, blijven)/i.test(
+                                ((b.value || '') + ' ' + (b.textContent || '')).trim()));
+                    if (ja) { ja.click(); return 'ja'; }
                 }
                 // MFA: Microsoft opent standaard op "keur de aanmelding goed in de Authenticator-
                 // app" (push). Maarten gebruikt WinOTP, dat codes maakt — dus doorschakelen naar
