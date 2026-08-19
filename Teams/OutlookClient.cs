@@ -227,6 +227,7 @@ public sealed class OutlookClient : IDisposable
                 if (await IsIngelogdAsync())
                 {
                     File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                    MfaTijd.Noteer("outlook"); // een echte interactieve MFA-aanmelding
                     Aangemeld = true;
                     // Vers aangemeld: een eerdere foutpauze mag niet blijven blokkeren.
                     BronGezondheid.Hervat("Outlook");

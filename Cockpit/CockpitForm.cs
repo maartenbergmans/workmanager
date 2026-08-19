@@ -629,6 +629,7 @@ public class CockpitForm : Form
             try
             {
                 await TeamsClient.Instance.KoppelAsync(_cts.Token);
+                _teamsKoppelButton.Visible = false; // meteen weg, niet wachten op de sync
                 Toast.Toon(this, "Teams aangemeld", Fluent.Check);
                 await VerversAsync();
             }
@@ -650,6 +651,7 @@ public class CockpitForm : Form
             try
             {
                 await OutlookClient.Instance.KoppelAsync(_cts.Token);
+                _outlookKoppelButton.Visible = false; // meteen weg, niet wachten op de sync
                 Toast.Toon(this, "Outlook (CED) aangemeld", Fluent.Check);
                 await VerversAsync();
             }
@@ -873,51 +875,25 @@ public class CockpitForm : Form
         // hoeven geen vaste plek in de (overvolle) werkbalk.
         var meerMenu = new ContextMenuStrip();
         Theme.Style(meerMenu);
-        var regelsMenuItem = new ToolStripMenuItem("Archiveerregels…");
-        regelsMenuItem.Click += (_, _) => regelsKnop.PerformClick();
-        meerMenu.Items.Add(regelsMenuItem);
-        var usageMenuItem = new ToolStripMenuItem("Claude-usage…");
-        usageMenuItem.Click += (_, _) => usageKnop.PerformClick();
-        meerMenu.Items.Add(usageMenuItem);
-        // Vaste ingangen naar TopDesk en DevOps, ook wanneer de werkbalkknoppen verborgen zijn.
-        var topdeskMenuItem = new ToolStripMenuItem("TopDesk-tickets…");
-        topdeskMenuItem.Click += (_, _) => _openTopdesk();
-        meerMenu.Items.Add(topdeskMenuItem);
-        var devopsMenuItem = new ToolStripMenuItem("Azure DevOps…");
-        devopsMenuItem.Click += (_, _) => _openDevOps();
-        meerMenu.Items.Add(devopsMenuItem);
-        // Alle overige tray-vensters: de cockpit is de vaste werkplek, dus elke functie
-        // moet hier ook bereikbaar zijn zonder naar het tray-menu te hoeven.
-        meerMenu.Items.Add(new ToolStripSeparator());
-        foreach (var (label, naam) in new[]
-                 {
-                     ("Dagstart…", "dagstart"),
-                     ("Mijn taken…", "mijntaken"),
-                     ("Bureaublad opruimen…", "bureaublad"),
-                     ("AH-bestelling…", "ah"),
-                     ("Wacht op antwoord…", "followup"),
-                     ("VIP-lijst…", "vip"),
-                     ("Verjaardagen & cadeaus…", "verjaardagen"),
-                     ("WorkManager online…", "webversie"),
-                 })
+        // Gegroepeerd en per groep alfabetisch, zodat je een functie meteen terugvindt.
+        // Kleine helpers houden het toevoegen kort en de groepen leesbaar.
+        ToolStripMenuItem Venster(string label, string naam)
         {
-            var venster = naam;
-            var vensterItem = new ToolStripMenuItem(label);
-            vensterItem.Click += (_, _) => _openVenster(venster);
-            meerMenu.Items.Add(vensterItem);
+            var it = new ToolStripMenuItem(label);
+            it.Click += (_, _) => _openVenster(naam);
+            return it;
         }
-        var mailVensterMenuItem = new ToolStripMenuItem("Mail beantwoorden (Gmail)…");
-        mailVensterMenuItem.Click += (_, _) => _openMail();
-        meerMenu.Items.Add(mailVensterMenuItem);
-        var facturenMenuItem = new ToolStripMenuItem("Facturen goedkeuren (ISPnext)…");
-        facturenMenuItem.Click += (_, _) => _openInvoices();
-        meerMenu.Items.Add(facturenMenuItem);
-        var teamMenuItem = new ToolStripMenuItem("Taken team…");
-        teamMenuItem.Click += (_, _) => _openTeamTasks();
-        meerMenu.Items.Add(teamMenuItem);
-        meerMenu.Items.Add(new ToolStripSeparator());
-        // Kleurenschema ook hier (naast het traymenu): je kiest het meestal terwijl je in
-        // de cockpit zit te kijken.
+        ToolStripMenuItem Actie(string label, Action doe)
+        {
+            var it = new ToolStripMenuItem(label);
+            it.Click += (_, _) => doe();
+            return it;
+        }
+        static ToolStripMenuItem Kop(string label) =>
+            new(label) { Enabled = false }; // niet-klikbaar groepskopje
+
+        // Kleurenschema-submenu (naast het traymenu): meestal kies je het terwijl je in de
+        // cockpit zit te kijken.
         var themaMenuItem = new ToolStripMenuItem("Kleurenschema");
         foreach (var palet in Themas.Alle)
         {
@@ -936,7 +912,38 @@ public class CockpitForm : Form
                 keuze.Checked = keuze.Text!.StartsWith(Theme.Palet.Naam + " —", StringComparison.Ordinal);
             }
         };
-        meerMenu.Items.Add(themaMenuItem);
+
+        // De cockpit is de vaste werkplek: elke functie moet hier bereikbaar zijn. Vier
+        // duidelijke groepen in plaats van één lange, ongeordende lijst.
+        meerMenu.Items.AddRange(new ToolStripItem[]
+        {
+            Kop("Taken & werk"),
+            Venster("Dagstart…", "dagstart"),
+            Venster("Mijn taken…", "mijntaken"),
+            Actie("Taken team…", () => _openTeamTasks()),
+            Venster("Wacht op antwoord…", "followup"),
+            new ToolStripSeparator(),
+
+            Kop("CED / Microsoft"),
+            Actie("Azure DevOps…", () => _openDevOps()),
+            Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
+            Actie("Mail beantwoorden (Gmail)…", () => _openMail()),
+            Actie("TopDesk-tickets…", () => _openTopdesk()),
+            new ToolStripSeparator(),
+
+            Kop("Privé & huishouden"),
+            Venster("AH-bestelling…", "ah"),
+            Venster("Bureaublad opruimen…", "bureaublad"),
+            Venster("Verjaardagen & cadeaus…", "verjaardagen"),
+            Venster("VIP-lijst…", "vip"),
+            new ToolStripSeparator(),
+
+            Kop("Instellingen & extra"),
+            Actie("Archiveerregels…", () => regelsKnop.PerformClick()),
+            Actie("Claude-usage…", () => usageKnop.PerformClick()),
+            themaMenuItem,
+            Venster("WorkManager online…", "webversie"),
+        });
         var meerKnop = new ModernButton { Text = "⋯", Width = 44 };
         meerKnop.Click += (_, _) => meerMenu.Show(meerKnop, new Point(0, meerKnop.Height + 4));
         toolbar.Controls.Add(meerKnop);
@@ -978,10 +985,12 @@ public class CockpitForm : Form
         toolbar.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         toolbar.Padding = new Padding(10, 9, 10, 7);
         toolbar.SetFlowBreak(driveKnop, true);
-        // De aanmeldknoppen pas tonen als de eerste ophaalbeurt de sessiestatus echt kent
-        // (anders flitsen ze bij elke start even in beeld terwijl de sessies nog opstarten).
-        _teamsKoppelButton.Visible = false;
-        _outlookKoppelButton.Visible = false;
+        // De aanmeldknoppen normaal pas tonen als de eerste ophaalbeurt de sessiestatus echt
+        // kent (anders flitsen ze bij elke start even in beeld terwijl de sessies opstarten).
+        // Uitzondering: is het CED-24u-MFA-venster al verlopen, dan tonen we de knop meteen
+        // bij het opstarten — dan weet je zeker dat er opnieuw aangemeld moet worden.
+        _teamsKoppelButton.Visible = TeamsClient.OoitGekoppeld && MfaTijd.Verlopen("teams");
+        _outlookKoppelButton.Visible = OutlookClient.OoitGekoppeld && MfaTijd.Verlopen("outlook");
 
         // Boven: berichten
         _berichten = new ModernListView

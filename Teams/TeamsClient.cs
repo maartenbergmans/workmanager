@@ -255,6 +255,7 @@ public sealed class TeamsClient : IDisposable
                 if (await IsIngelogdAsync())
                 {
                     File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                    MfaTijd.Noteer("teams"); // een echte interactieve MFA-aanmelding
                     Aangemeld = true;
                     // Vers aangemeld: een eerdere foutpauze mag niet blijven blokkeren.
                     BronGezondheid.Hervat("Teams");
