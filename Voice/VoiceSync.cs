@@ -314,6 +314,12 @@ public class VoiceSync
         var mijnGewijzigd = false;
         var teamGewijzigd = false;
         var teArchiveren = new List<MailBericht>();
+        // De context is een snapshot van vóór de Claude-rondreis; bijhouden wát er wijzigt,
+        // zodat we straks alleen die wijzigingen op de verse stand van schijf toepassen.
+        var mijnNieuw = new List<MijnTaak>();
+        var mijnAangepast = new List<MijnTaak>();
+        var teamNieuw = new List<TeamTaak>();
+        var teamAangepast = new List<TeamTaak>();
 
         foreach (var actie in acties.EnumerateArray())
         {
@@ -345,11 +351,13 @@ public class VoiceSync
                     {
                         deadline = d;
                     }
-                    context.MijnData.Taken.Add(new MijnTaak
+                    var nieuwe = new MijnTaak
                     {
                         Tekst = omschrijving, Categorie = categorie,
                         Prioriteit = Prioriteit(), Deadline = deadline,
-                    });
+                    };
+                    context.MijnData.Taken.Add(nieuwe);
+                    mijnNieuw.Add(nieuwe);
                     mijnGewijzigd = true;
                     meldingen.Add($"Taak ({categorie}): {omschrijving}");
                     break;
@@ -365,10 +373,12 @@ public class VoiceSync
                     lid = context.TeamData.Leden.FirstOrDefault(l =>
                             string.Equals(l, lid, StringComparison.OrdinalIgnoreCase))
                         ?? context.TeamData.Leden.FirstOrDefault() ?? lid;
-                    context.TeamData.Taken.Add(new TeamTaak
+                    var nieuweTeam = new TeamTaak
                     {
                         Lid = lid, Tekst = omschrijving, Prioriteit = Prioriteit(),
-                    });
+                    };
+                    context.TeamData.Taken.Add(nieuweTeam);
+                    teamNieuw.Add(nieuweTeam);
                     teamGewijzigd = true;
                     meldingen.Add($"Teamtaak voor {lid}: {omschrijving}");
                     break;
@@ -382,6 +392,7 @@ public class VoiceSync
                     }
                     taak.Klaar = true;
                     taak.KlaarOp = DateTimeOffset.Now;
+                    mijnAangepast.Add(taak);
                     mijnGewijzigd = true;
                     meldingen.Add($"Afgevinkt: {taak.Tekst}");
                     break;
@@ -395,6 +406,7 @@ public class VoiceSync
                     }
                     taak.Klaar = true;
                     taak.KlaarOp = DateTimeOffset.Now;
+                    teamAangepast.Add(taak);
                     teamGewijzigd = true;
                     meldingen.Add($"Teamtaak afgevinkt ({taak.Lid}): {taak.Tekst}");
                     break;
@@ -407,6 +419,7 @@ public class VoiceSync
                         break;
                     }
                     taak.SnoozeTot = new DateTimeOffset(tot.ToDateTime(TimeOnly.MinValue));
+                    mijnAangepast.Add(taak);
                     mijnGewijzigd = true;
                     meldingen.Add($"Gesnoozed tot {tot:dd/MM}: {taak.Tekst}");
                     break;
@@ -423,13 +436,38 @@ public class VoiceSync
             }
         }
 
+        // Niet de snapshot terugschrijven maar de wijzigingen op een verse stand toepassen:
+        // tussen het laden van de context en hier zit een Claude-rondreis, en in die tijd
+        // kan er op de pc van alles gebeurd zijn (bv. een weektaak afgevinkt) dat de oude
+        // snapshot stil zou terugdraaien.
         if (mijnGewijzigd)
         {
-            MijnTaakStore.Save(context.MijnData);
+            var vers = MijnTaakStore.Load();
+            vers.Taken.AddRange(mijnNieuw);
+            foreach (var wijziging in mijnAangepast)
+            {
+                if (vers.Taken.FirstOrDefault(t => t.Id == wijziging.Id) is { } doel)
+                {
+                    doel.Klaar = wijziging.Klaar;
+                    doel.KlaarOp = wijziging.KlaarOp;
+                    doel.SnoozeTot = wijziging.SnoozeTot;
+                }
+            }
+            MijnTaakStore.Save(vers);
         }
         if (teamGewijzigd)
         {
-            TeamTaskStore.Save(context.TeamData);
+            var vers = TeamTaskStore.Load();
+            vers.Taken.AddRange(teamNieuw);
+            foreach (var wijziging in teamAangepast)
+            {
+                if (vers.Taken.FirstOrDefault(t => t.Id == wijziging.Id) is { } doel)
+                {
+                    doel.Klaar = wijziging.Klaar;
+                    doel.KlaarOp = wijziging.KlaarOp;
+                }
+            }
+            TeamTaskStore.Save(vers);
         }
         if (teArchiveren.Count > 0)
         {

@@ -931,9 +931,13 @@ public class WmWebSync
             var voorstellen = await ClaudeTaken.GenereerAsync(tekst, data.Categorieen, afbreken.Token);
             if (voorstellen.Count > 0)
             {
+                // Vers laden vóór het bewaren: de Claude-call hierboven kan tot 90 s duren,
+                // en de oude snapshot terugschrijven zou alles wat intussen op de pc
+                // gebeurde (bv. een afgevinkte taak) stil terugdraaien.
+                var vers = MijnTaakStore.Load();
                 foreach (var v in voorstellen)
                 {
-                    data.Taken.Add(new MijnTaak
+                    vers.Taken.Add(new MijnTaak
                     {
                         Tekst = v.Tekst,
                         Categorie = v.Categorie,
@@ -941,7 +945,7 @@ public class WmWebSync
                         Deadline = v.Deadline,
                     });
                 }
-                MijnTaakStore.Save(data);
+                MijnTaakStore.Save(vers);
                 var eerste = voorstellen[0];
                 var extra = eerste.Deadline is { } d ? $", deadline {d:d MMM}" : "";
                 return voorstellen.Count == 1
@@ -954,12 +958,14 @@ public class WmWebSync
             // Claude niet bereikbaar of onbruikbaar antwoord: gewoon de ruwe zin opslaan.
         }
 
-        data.Taken.Add(new MijnTaak
+        // Ook hier vers laden: de mislukte Claude-poging hierboven kan lang geduurd hebben.
+        var reserve = MijnTaakStore.Load();
+        reserve.Taken.Add(new MijnTaak
         {
             Tekst = tekst,
-            Categorie = data.Categorieen.FirstOrDefault() ?? "",
+            Categorie = reserve.Categorieen.FirstOrDefault() ?? "",
         });
-        MijnTaakStore.Save(data);
+        MijnTaakStore.Save(reserve);
         return $"\"{Kort(tekst, 50)}\" staat in Mijn taken.";
     }
 
