@@ -34,6 +34,12 @@ public sealed class CedLogin
 
     public string WachtwoordVersleuteld { get; set; } = "";
 
+    /// <summary>
+    /// DPAPI-versleutelde TOTP-seed (base32) voor het MFA-scherm. Leeg = niet ingesteld;
+    /// dan blijft de code volledig handwerk. Wordt nooit uit een andere app gehaald.
+    /// </summary>
+    public string TotpGeheimVersleuteld { get; set; } = "";
+
     /// <summary>Wanneer het wachtwoord voor het laatst geweigerd werd; leeg = alles oké.</summary>
     public string GeweigerdOp { get; set; } = "";
 
@@ -56,6 +62,20 @@ public sealed class CedLogin
             : Convert.ToBase64String(ProtectedData.Protect(
                 Encoding.UTF8.GetBytes(wachtwoord), null, DataProtectionScope.CurrentUser));
         s.GeweigerdOp = "";
+        s.Save();
+    }
+
+    /// <summary>De TOTP-seed (base32), of "" als er geen ingesteld is.</summary>
+    public static string TotpGeheim() => Decrypt(Load().TotpGeheimVersleuteld);
+
+    /// <summary>Bewaart (of wist) de TOTP-seed, DPAPI-versleuteld.</summary>
+    public static void ZetTotpGeheim(string base32Geheim)
+    {
+        var s = Load();
+        s.TotpGeheimVersleuteld = string.IsNullOrWhiteSpace(base32Geheim)
+            ? ""
+            : Convert.ToBase64String(ProtectedData.Protect(
+                Encoding.UTF8.GetBytes(base32Geheim.Trim()), null, DataProtectionScope.CurrentUser));
         s.Save();
     }
 

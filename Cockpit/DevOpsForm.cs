@@ -203,8 +203,8 @@ public class DevOpsForm : Form
             {
                 for (var i = 0; i < 40 && !IsDisposed && _web.CoreWebView2 is not null; i++)
                 {
-                    MicrosoftLogin.Verwerk(
-                        await _web.CoreWebView2.ExecuteScriptAsync(MicrosoftLogin.VulScript()));
+                    MicrosoftLogin.NaLoginStap(
+                        await _web.CoreWebView2.ExecuteScriptAsync(MicrosoftLogin.VulScript()), this);
                     await Task.Delay(800);
                     if (!(_web.CoreWebView2?.Source ?? "").Contains("login.",
                             StringComparison.OrdinalIgnoreCase))

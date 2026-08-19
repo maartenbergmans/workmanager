@@ -122,4 +122,46 @@ public static class MicrosoftLogin
             "Automatisch invullen staat uit tot er een nieuw wachtwoord bewaard is " +
             "(vraag Claude om het bij te werken).", duurMs: 15000);
     }
+
+    private static string _laatsteGekopieerdeCode = "";
+
+    /// <summary>
+    /// Verwerkt één login-stap én zet, zodra het codeinvoerscherm klaar staat en er een
+    /// TOTP-seed ingesteld is, de actuele code op het klembord — zodat Maarten enkel nog
+    /// hoeft te plakken. Zonder seed blijft de code volledig handwerk. Herkopieert netjes
+    /// wanneer de code na 30 s doorrolt.
+    /// </summary>
+    public static void NaLoginStap(string jsResultaat, Form eigenaar)
+    {
+        Verwerk(jsResultaat);
+        if (jsResultaat != "\"code-klaar\"")
+        {
+            _laatsteGekopieerdeCode = "";
+            return;
+        }
+        var geheim = CedLogin.TotpGeheim();
+        if (geheim.Length == 0)
+        {
+            return; // geen seed bewaard: de code blijft handwerk
+        }
+        var code = Totp.Genereer(geheim);
+        if (code.Length == 0 || code == _laatsteGekopieerdeCode)
+        {
+            return; // ongeldige seed, of deze code al gekopieerd
+        }
+        _laatsteGekopieerdeCode = code;
+        try
+        {
+            Clipboard.SetText(code);
+        }
+        catch
+        {
+            return; // klembord even bezet: volgende ronde opnieuw
+        }
+        if (!eigenaar.IsDisposed)
+        {
+            Toast.Toon(eigenaar,
+                $"MFA-code {code} gekopieerd — plak met Ctrl+V ({Totp.SecondenGeldig()} s geldig)", "🔐");
+        }
+    }
 }
