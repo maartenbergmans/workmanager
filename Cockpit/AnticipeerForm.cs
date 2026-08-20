@@ -59,6 +59,9 @@ public sealed class AnticipeerForm : Form
 
         var menu = new ContextMenuStrip();
         Theme.Style(menu);
+        var afvinkItem = new ToolStripMenuItem("Afvinken (klaar)");
+        afvinkItem.Click += (_, _) => Afvinken();
+        menu.Items.Add(afvinkItem);
         var nuItem = new ToolStripMenuItem("Nu oppakken (meteen tonen)");
         nuItem.Click += (_, _) => NuOppakken();
         menu.Items.Add(nuItem);
@@ -94,6 +97,11 @@ public sealed class AnticipeerForm : Form
                 : "Wat komt eraan — volgende 5 taken";
             Vul();
         };
+        var afvinkKnop = new ModernButton
+        {
+            Text = "Afvinken", Width = 120, Glyph = Fluent.Checkbox,
+        };
+        afvinkKnop.Click += (_, _) => Afvinken();
         var nuKnop = new ModernButton
         {
             Text = "Nu oppakken", Width = 150, Kind = ButtonKind.Accent, Glyph = Fluent.Check,
@@ -108,6 +116,7 @@ public sealed class AnticipeerForm : Form
         bewerkKnop.Click += async (_, _) => await BewerkenAsync();
         knoppen.Controls.Add(sluit);
         knoppen.Controls.Add(nuKnop);
+        knoppen.Controls.Add(afvinkKnop);
         knoppen.Controls.Add(verzetKnop);
         knoppen.Controls.Add(bewerkKnop);
         knoppen.Controls.Add(_modusKnop);
@@ -220,6 +229,24 @@ public sealed class AnticipeerForm : Form
     private MijnTaak? Geselecteerd() =>
         _lijst.SelectedItems.Count > 0 ? _lijst.SelectedItems[0].Tag as MijnTaak : null;
 
+    /// <summary>Vinkt de geselecteerde taak meteen af (met undo), zonder de cockpit nodig te hebben.</summary>
+    private void Afvinken()
+    {
+        if (Geselecteerd() is not { } taak)
+        {
+            return;
+        }
+        taak.Klaar = true;
+        taak.KlaarOp = DateTimeOffset.Now;
+        Bewaar();
+        Toast.ToonUndo(this, $"Afgevinkt: {Kort(taak.Tekst)}", () =>
+        {
+            taak.Klaar = false;
+            taak.KlaarOp = null;
+            Bewaar();
+        }, Fluent.Check);
+    }
+
     /// <summary>Haalt de taak naar vandaag: startdatum en snooze eraf, zodat hij meteen meedoet.</summary>
     private void NuOppakken()
     {
@@ -329,6 +356,8 @@ public sealed class AnticipeerForm : Form
                 doel.Startdatum = taak.Startdatum;
                 doel.SnoozeTot = taak.SnoozeTot;
                 doel.Deadline = taak.Deadline;
+                doel.Klaar = taak.Klaar;
+                doel.KlaarOp = taak.KlaarOp;
             }
         }
         MijnTaakStore.Save(opSchijf);

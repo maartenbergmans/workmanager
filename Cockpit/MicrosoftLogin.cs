@@ -23,14 +23,21 @@ public static class MicrosoftLogin
     /// Script voor in de loginpagina. Resultaat: "fout" (wachtwoord geweigerd), "wachtwoord",
     /// "email" of "ja" (iets ingevuld/aangeklikt), "wacht" (al geprobeerd), "niets".
     /// </summary>
-    public static string VulScript()
+    /// <summary>Vult de Microsoft-schermen met het standaard CED-account (maarten.bergmans).</summary>
+    public static string VulScript() =>
+        VulScript(CedLogin.Email, CedLogin.Wachtwoord(), CedLogin.TotpGeheim());
+
+    /// <summary>
+    /// Zelfde script, maar met een opgegeven identiteit — voor accounts die niet het
+    /// standaard CED-account zijn (bv. TopDesk met mber-admin@cedcloud.com en zijn eigen
+    /// TOTP-seed). De seed blijft in C#; alleen de 6 cijfers gaan naar de pagina.
+    /// </summary>
+    public static string VulScript(string emailAdres, string wachtwoordKlaar, string totpSeed)
     {
-        var email = JsonSerializer.Serialize(CedLogin.Email);
-        var wachtwoord = JsonSerializer.Serialize(CedLogin.Wachtwoord());
-        // De seed blijft in C#; alleen de 6 actuele cijfers gaan naar de pagina. Per ronde
-        // opnieuw berekend, dus altijd de code die nu geldig is.
-        var seed = CedLogin.TotpGeheim();
-        var mfaCode = JsonSerializer.Serialize(seed.Length > 0 ? Totp.Genereer(seed) : "");
+        var email = JsonSerializer.Serialize(emailAdres);
+        var wachtwoord = JsonSerializer.Serialize(wachtwoordKlaar);
+        // Per ronde opnieuw berekend, dus altijd de code die nu geldig is.
+        var mfaCode = JsonSerializer.Serialize(totpSeed.Length > 0 ? Totp.Genereer(totpSeed) : "");
         return $$"""
             (() => {
                 // Fouttekst bij het wachtwoordveld = geweigerd: meteen stoppen met invullen.

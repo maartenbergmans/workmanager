@@ -27,11 +27,22 @@ public sealed class TopdeskSettings
     public string Gebruikersnaam { get; set; } = "";
     public string WachtwoordVersleuteld { get; set; } = "";
 
+    /// <summary>DPAPI-versleutelde TOTP-seed (base32) voor de Microsoft-SSO-MFA van dit
+    /// aparte admin-account (mber-admin@cedcloud.com). Leeg = geen auto-MFA.</summary>
+    public string TotpGeheimVersleuteld { get; set; } = "";
+
     [JsonIgnore]
     public string Wachtwoord
     {
         get => Decrypt(WachtwoordVersleuteld);
         set => WachtwoordVersleuteld = Encrypt(value);
+    }
+
+    [JsonIgnore]
+    public string TotpGeheim
+    {
+        get => Decrypt(TotpGeheimVersleuteld);
+        set => TotpGeheimVersleuteld = Encrypt(value);
     }
 
     [JsonIgnore]

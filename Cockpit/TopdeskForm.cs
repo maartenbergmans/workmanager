@@ -247,6 +247,15 @@ public class TopdeskForm : Form
             return;
         }
         var bron = _web.CoreWebView2.Source ?? "";
+        // Single sign-on: belandt TopDesk op de Microsoft-aanmeldpagina, dan vult de gedeelde
+        // assistent die in — maar met het aparte admin-account (mber-admin@cedcloud.com) en
+        // diens eigen TOTP-seed, niet het gewone CED-account.
+        if (bron.Contains("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) ||
+            bron.Contains("login.live.com", StringComparison.OrdinalIgnoreCase))
+        {
+            await SsoLoginAssistAsync();
+            return;
+        }
         if (!bron.Contains("topdesk", StringComparison.OrdinalIgnoreCase))
         {
             return;
@@ -270,6 +279,49 @@ public class TopdeskForm : Form
     }
 
     // ---------- Login-assistent ----------
+
+    private bool _ssoBusy;
+
+    /// <summary>
+    /// Vult de Microsoft-SSO-schermen (e-mail, wachtwoord, MFA-code) automatisch in met het
+    /// TopDesk-admin-account. Dezelfde flow als bij Outlook/Teams/DevOps, alleen met een
+    /// andere identiteit. MFA-code komt uit de eigen TOTP-seed; is die er niet, dan typ je
+    /// de code zelf. Een geweigerd wachtwoord raakt bewust niet het gewone CED-account.
+    /// </summary>
+    private async Task SsoLoginAssistAsync()
+    {
+        if (_ssoBusy || !_settings.Compleet)
+        {
+            return;
+        }
+        _ssoBusy = true;
+        try
+        {
+            for (var i = 0; i < 40 && !IsDisposed && _web.CoreWebView2 is not null; i++)
+            {
+                var r = await _web.CoreWebView2.ExecuteScriptAsync(MicrosoftLogin.VulScript(
+                    _settings.Gebruikersnaam, _settings.Wachtwoord, _settings.TotpGeheim));
+                if (r == "\"mfa-ingevuld\"")
+                {
+                    Log("MFA-code automatisch ingevuld op het SSO-scherm.");
+                }
+                else if (r == "\"fout\"")
+                {
+                    Log("SSO-wachtwoord geweigerd — log deze keer handmatig in in de browser rechts.");
+                    break;
+                }
+                await Task.Delay(800);
+                if (!(_web.CoreWebView2?.Source ?? "").Contains("login.", StringComparison.OrdinalIgnoreCase))
+                {
+                    break; // van het aanmelddomein af: ingelogd of doorgestuurd
+                }
+            }
+        }
+        finally
+        {
+            _ssoBusy = false;
+        }
+    }
 
     /// <summary>
     /// Vult op de "Log in as Operator"-pagina gebruikersnaam en wachtwoord in en klikt op
