@@ -266,8 +266,10 @@ public static class ClientLauncher
             // Daarna een interactieve shell zodat de uitvoer blijft staan.
             // Bewust wsl.exe rechtstreeks (niet via wt.exe): Windows Terminal splitst zijn
             // commandoregel op ';' en zou het script in stukken hakken.
+            // -e (niet --): zonder -e wikkelt wsl.exe het script nog in de loginshell en
+            // expandeert die $c al (leeg) vóór de binnenste bash draait — eval doet dan niets.
             var script = $"read -e -i '{commando}' -p '> ' c ; eval $c ; exec bash -i";
-            Start(false, "wsl.exe", $"-d {distro} --cd \"{linux}\" -- bash -i -c \"{script}\"");
+            Start(false, "wsl.exe", $"-d {distro} --cd \"{linux}\" -e bash -i -c \"{script}\"");
         }
         else
         {
