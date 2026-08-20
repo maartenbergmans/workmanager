@@ -7885,7 +7885,11 @@ public class CockpitForm : Form
             // Vooruitblik-rijen ("Start vr 7 aug", "Mail terug…") horen bij de gekozen
             // dag onder Meetings en vallen buiten het deadline-horizonfilter — anders
             // verdwijnen ze meteen weer (deadline te ver weg of geen deadline).
+            // Dossierpunten (📁 Openstaand …) hebben bewust geen deadline maar horen wél
+            // altijd zichtbaar te zijn: zo kloppen "Open taken" en de "▶ NU"-aanwijzer met
+            // wat je in de lijst ziet (ze staan als een blok onderaan).
             .Where(r => r.Bron is "Later" or "Snooze" ||
+                r.Tekst.StartsWith(DossierPunten.TaakPrefix, StringComparison.Ordinal) ||
                 grens is null || (r.Deadline is { } dl && dl <= grens))
             // Een lopende storing gaat vóór alles — ongeacht de gekozen sortering.
             .OrderBy(r => r.Tekst.StartsWith(AlarmMails.TaakPrefix, StringComparison.Ordinal) ? 0 : 1)
@@ -7928,10 +7932,14 @@ public class CockpitForm : Form
                 }
             }
             // De bronkolom in de kleur van de klant: één blik volstaat om te zien of iets
-            // van CED, Aqurat, RadiologyPartners, Urban IT of privé is.
-            var bronTekst = rij.Lokaal is { Categorie.Length: > 0 } lokaal ? lokaal.Categorie : rij.Bron;
+            // van CED, Aqurat, RadiologyPartners, Urban IT of privé is. Dossierpunten krijgen
+            // hun eigen "Dossier"-label (gedempt), zodat het blok onderaan herkenbaar is.
+            var isDossier = rij.Tekst.StartsWith(DossierPunten.TaakPrefix, StringComparison.Ordinal);
+            var bronTekst = isDossier
+                ? "Dossier"
+                : rij.Lokaal is { Categorie.Length: > 0 } lokaal ? lokaal.Categorie : rij.Bron;
             var bronCel = item.SubItems.Add(bronTekst);
-            bronCel.ForeColor = rij.Bron is "Later" or "Snooze"
+            bronCel.ForeColor = rij.Bron is "Later" or "Snooze" || isDossier
                 ? Theme.Muted
                 : Theme.VoorKlant(bronTekst);
             _taken.Items.Add(item);
