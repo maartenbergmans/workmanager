@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Alleen voor System.Windows.Automation (UIA): de Windows App-aanmeldflow. -->
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>WorkManager</AssemblyName>
@@ -11,6 +13,13 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\workmanager.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UseWPF (nodig voor UIA in WindowsAppLogin) haalt deze impliciete usings weg
+         omdat WPF-namespaces ermee botsen; WorkManager gebruikt ze overal. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\workmanager.ico" />

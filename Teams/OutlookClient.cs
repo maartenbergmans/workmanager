@@ -2141,11 +2141,17 @@ public sealed class OutlookClient : IDisposable
                         if (!body) { window.__wmMail = { tekst: '', html: '' }; return; }
                         const kloon = body.cloneNode(true);
                         // De gele "Externe Mail"-banner van het CED-tenant verbergen: puur
-                        // ruis in elke externe mail.
-                        for (const el of [...kloon.querySelectorAll('div, table, tr, td, p')]) {
-                            const t = el.textContent || '';
-                            if (t.length < 700 && /externe mail/i.test(t) &&
-                                /ext[ée]rieur|support/i.test(t)) {
+                        // ruis in elke externe mail. Alleen de diepste treffer(s) weghalen:
+                        // bij een korte mail matcht anders ook de wrapper-div die banner én
+                        // inhoud bevat, en bleef er alleen een leeg style-blok over.
+                        const bannerKandidaten = [...kloon.querySelectorAll('div, table, tr, td, p')]
+                            .filter(el => {
+                                const t = el.textContent || '';
+                                return t.length < 700 && /externe mail/i.test(t) &&
+                                    /ext[ée]rieur|support/i.test(t);
+                            });
+                        for (const el of bannerKandidaten) {
+                            if (!bannerKandidaten.some(o => o !== el && el.contains(o))) {
                                 el.remove();
                             }
                         }

@@ -1384,7 +1384,10 @@ public class MailReplyForm : Form
 
     internal static string BouwWeergave(MailBericht mail, bool terugNaarCcOverzicht = false)
     {
-        var body = string.IsNullOrWhiteSpace(mail.Html)
+        // HTML zonder leesbare inhoud (bv. alleen een <style>-blok, zoals wanneer een
+        // scraper de echte body kwijtraakte) zou een lege kaart opleveren terwijl de
+        // platte tekst er wél is: dan die tonen.
+        var body = string.IsNullOrWhiteSpace(mail.Html) || HtmlZonderInhoud(mail.Html)
             ? "<pre style=\"white-space:pre-wrap;font-family:inherit;font-size:13px;margin:0\">" +
               EncodeMetLinks(mail.Tekst) + "</pre>"
             : mail.Html;
@@ -1448,6 +1451,24 @@ public class MailReplyForm : Form
             Datum = mail.Datum,
             Tekst = mail.Tekst.Length > 100_000 ? mail.Tekst[..100_000] + "\n[… ingekort …]" : mail.Tekst,
         });
+    }
+
+    /// <summary>
+    /// True als de HTML na het strippen van style/script en tags geen tekst overhoudt —
+    /// en ook geen afbeelding bevat (een mail die alléén uit een beeld bestaat is prima).
+    /// </summary>
+    private static bool HtmlZonderInhoud(string html)
+    {
+        var zonderStyle = System.Text.RegularExpressions.Regex.Replace(html,
+            @"<(style|script)[^>]*>.*?</\1\s*>", "",
+            System.Text.RegularExpressions.RegexOptions.Singleline |
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (zonderStyle.Contains("<img", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        var kaal = System.Text.RegularExpressions.Regex.Replace(zonderStyle, "<[^>]+>", " ");
+        return WebUtility.HtmlDecode(kaal).Trim().Length == 0;
     }
 
     /// <summary>

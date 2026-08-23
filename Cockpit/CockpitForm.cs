@@ -519,11 +519,42 @@ public class CockpitForm : Form
             projectenMenu.Show(projectenKnop, new Point(0, projectenKnop.Height + 4));
         // Breed venster: de klantknoppen naast elkaar; smal venster: alleen "Projecten ▾".
         _projectenHoofdknop = projectenKnop;
-        // CED is geen dev-project maar wel een dagelijkse werkplek: een gewone knop naar
-        // de Azure-portal (admin-account), direct naast de Lauryssens-klantknop.
-        var cedKnop = new ModernButton { Text = "CED", Glyph = Fluent.Globe };
-        cedKnop.KrimpNaarInhoud();
-        cedKnop.Click += (_, _) => OpenExtern("https://portal.azure.com/");
+        // CED is geen dev-project maar wel een dagelijkse werkplek: een dropdown naast de
+        // Lauryssens-klantknop met de Azure-portal en de Windows App (AVD), waarbij
+        // WorkManager de Microsoft-aanmelding voor het gekozen account invult.
+        var cedMenu = new ContextMenuStrip();
+        Theme.Style(cedMenu);
+        var azurePortalItem = new ToolStripMenuItem("Azure-portal…");
+        azurePortalItem.Click += (_, _) => OpenExtern("https://portal.azure.com/");
+        cedMenu.Items.Add(azurePortalItem);
+        cedMenu.Items.Add(new ToolStripSeparator());
+        var windowsAppItems = new List<ToolStripMenuItem>();
+        foreach (var account in new[] { CedLogin.TopdeskGebruiker, CedLogin.Email })
+        {
+            var mi = new ToolStripMenuItem($"Windows App — {account}");
+            mi.Click += async (_, _) =>
+            {
+                Toast.Toon(this, $"Windows App starten, aanmelden als {account}…", Fluent.Globe);
+                try
+                {
+                    Toast.Toon(this, await WindowsAppLogin.StartEnMeldAanAsync(account, _cts.Token),
+                        Fluent.Globe);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cockpit gesloten tijdens het aanmelden.
+                }
+                catch (Exception ex)
+                {
+                    Toast.Toon(this, $"Windows App-aanmelding mislukt: {ex.Message}", Fluent.Globe);
+                }
+            };
+            cedMenu.Items.Add(mi);
+            windowsAppItems.Add(mi);
+        }
+        var cedKnop = new ModernButton { Text = "CED ▾", Glyph = Fluent.Globe };
+        cedKnop.KrimpNaarInhoud(dropdown: true);
+        cedKnop.Click += (_, _) => cedMenu.Show(cedKnop, new Point(0, cedKnop.Height + 4));
         foreach (var (knop, klantLabel, _) in _projectKnoppen)
         {
             toolbar.Controls.Add(knop);
@@ -955,6 +986,10 @@ public class CockpitForm : Form
 
             Kop("CED / Microsoft"),
             Actie("Azure-portal (CED)…", () => OpenExtern("https://portal.azure.com/")),
+            Actie($"Windows App — {CedLogin.TopdeskGebruiker}…",
+                () => windowsAppItems[0].PerformClick()),
+            Actie($"Windows App — {CedLogin.Email}…",
+                () => windowsAppItems[1].PerformClick()),
             Actie("Azure DevOps…", () => _openDevOps()),
             Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
             Actie("Mail beantwoorden (Gmail)…", () => _openMail()),

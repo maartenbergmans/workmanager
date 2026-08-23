@@ -404,7 +404,10 @@ public class TrayAppContext : ApplicationContext
         var thema = new ToolStripMenuItem("Kleurenschema");
         foreach (var palet in Themas.Alle)
         {
-            var keuze = new ToolStripMenuItem(palet.Naam) { ToolTipText = palet.Omschrijving };
+            // Omschrijving ín de tekst (zoals in het cockpit-⋯-menu), niet als tooltip:
+            // de tooltip popte pal onder de cursor en ving de klik af — vooral op het
+            // onderste item, waar je het langst naartoe beweegt.
+            var keuze = new ToolStripMenuItem($"{palet.Naam} — {palet.Omschrijving}");
             keuze.Click += (_, _) => Theme.ZetThema(palet);
             thema.DropDownItems.Add(keuze);
         }
@@ -412,7 +415,7 @@ public class TrayAppContext : ApplicationContext
         {
             foreach (ToolStripMenuItem keuze in thema.DropDownItems)
             {
-                keuze.Checked = keuze.Text == Theme.Palet.Naam;
+                keuze.Checked = keuze.Text!.StartsWith(Theme.Palet.Naam + " —", StringComparison.Ordinal);
             }
         };
         menu.Items.Add(thema);
