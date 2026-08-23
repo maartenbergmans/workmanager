@@ -81,6 +81,9 @@ public static class WindowsAppLogin
         var stilTeller = 0;
         var dialoogPolls = 0;
         var dialoogHerstarts = 0;
+        // Wordt gezet zodra een wachtwoordscherm een ánder account toont dan het doel:
+        // dan stoppen we onmiddellijk (nooit een wachtwoord bij het verkeerde account).
+        var verkeerdAccount = "";
 
         for (var beurt = 0; beurt < 200; beurt++) // ~5 min: genoeg voor handmatige MFA
         {
@@ -100,7 +103,8 @@ public static class WindowsAppLogin
                     if (dialoogPolls > 2)
                     {
                         actie = HandelDialoogAf(dialoog, email, dialoogPolls,
-                            ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp);
+                            ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp,
+                            ref verkeerdAccount);
                     }
                 }
                 catch (ElementNotAvailableException)
@@ -140,17 +144,32 @@ public static class WindowsAppLogin
                 try
                 {
                     actie |= HandelSchermAf(venster, email,
-                        ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp);
+                        ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp,
+                        ref verkeerdAccount);
                 }
                 catch (ElementNotAvailableException)
                 {
                     // Scherm verdween onder onze handen: volgende poll opnieuw kijken.
+                }
+                if (verkeerdAccount.Length > 0)
+                {
+                    Log($"gestopt — verkeerd account op scherm: {verkeerdAccount}");
+                    return $"Windows App toont het account {verkeerdAccount} i.p.v. {email} — " +
+                        "ik vul géén wachtwoord in. Kies eerst zelf het juiste account " +
+                        "(of 'Ander account gebruiken'), dan neem ik het weer over";
                 }
                 if (wachtwoordIngevuld > 2)
                 {
                     return "Wachtwoordscherm blijft terugkomen — wachtwoord geweigerd? " +
                         "Ik stop met invullen";
                 }
+            }
+            if (verkeerdAccount.Length > 0)
+            {
+                Log($"gestopt — verkeerd account op scherm: {verkeerdAccount}");
+                return $"Windows App toont het account {verkeerdAccount} i.p.v. {email} — " +
+                    "ik vul géén wachtwoord in. Kies eerst zelf het juiste account " +
+                    "(of 'Ander account gebruiken'), dan neem ik het weer over";
             }
             if (actie)
             {
@@ -234,7 +253,8 @@ public static class WindowsAppLogin
     /// </summary>
     private static bool HandelDialoogAf(AutomationElement dialoog, string email,
         int dialoogPolls,
-        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp)
+        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp,
+        ref string verkeerdAccount)
     {
         var pids = System.Diagnostics.Process.GetProcessesByName("Windows365")
             .Select(p => p.Id).ToHashSet();
@@ -268,6 +288,23 @@ public static class WindowsAppLogin
             var id = Veilig(() => focus!.Current.AutomationId) ?? "";
             if (Veilig(() => focus!.Current.IsPassword))
             {
+                // Account verifiëren vóór het wachtwoord: het wachtwoordveld heet meestal
+                // "Voer het wachtwoord voor <account> in". Alleen typen als dat aantoonbaar
+                // het doelaccount is — staat er een ánder account, dan stoppen; kunnen we
+                // het niet lezen, dan ook niet typen (nooit blind een wachtwoord).
+                var opScherm = HaalEmail(naam);
+                if (opScherm.Length > 0 &&
+                    !opScherm.Equals(email, StringComparison.OrdinalIgnoreCase))
+                {
+                    verkeerdAccount = opScherm;
+                    Log($"dialoog: wachtwoord NIET getypt — scherm toont {opScherm}, doel {email}");
+                    return false;
+                }
+                if (opScherm.Length == 0)
+                {
+                    Log("dialoog: wachtwoordveld zonder leesbaar account — niet getypt (veiligheid)");
+                    return false;
+                }
                 var wachtwoord = CedLogin.Wachtwoord();
                 if (wachtwoord.Length == 0)
                 {
@@ -279,7 +316,7 @@ public static class WindowsAppLogin
                     return false;
                 }
                 wachtwoordIngevuld++;
-                Log($"dialoog: wachtwoord getypt (poging {wachtwoordIngevuld})");
+                Log($"dialoog: wachtwoord getypt voor {opScherm} (poging {wachtwoordIngevuld})");
                 TypMetEnter(wachtwoord);
                 return true;
             }
@@ -314,11 +351,16 @@ public static class WindowsAppLogin
         }
         // Chromium geeft soms helemaal geen focusinfo prijs. De állereerste stap is dan
         // toch veilig blind te doen: het e-mailscherm heeft autofocus en een e-mailadres
-        // is geen geheim. Géén Tab vooraf (dat duwde de focus juist het veld uit), en pas
-        // na een paar polls zodat het scherm echt geladen is — in de laadspinner gaat de
-        // invoer verloren. Nooit ná het wachtwoord (dan is de e-mailstap al voorbij en
-        // zou blind typen het wachtwoordveld overschrijven); het wachtwoord zelf wordt
-        // sowieso nooit blind getypt.
+        // is geen geheim. Maar ALLEEN als er echt geen focusinfo is (focus == null): staat
+        // de focus wél op iets van de app dat géén invoerveld is, dan is dit vermoedelijk
+        // een accountkeuzescherm ("Selecteer een account…"), en zou blind typen + Enter het
+        // bovenste (verkeerde) account kiezen. Dan niets doen en de gebruiker laten kiezen.
+        // Nooit ná het wachtwoord; het wachtwoord zelf wordt sowieso nooit blind getypt.
+        if (focus is not null)
+        {
+            Log("dialoog: focus staat niet op een invoerveld (wsl. accountkeuze) — niets getypt");
+            return false;
+        }
         if (emailIngevuld == 0 && wachtwoordIngevuld == 0 && dialoogPolls >= 4)
         {
             emailIngevuld++;
@@ -339,7 +381,8 @@ public static class WindowsAppLogin
 
     /// <summary>Eén poll over één venster; true zodra er iets bediend is.</summary>
     private static bool HandelSchermAf(AutomationElement venster, string email,
-        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp)
+        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp,
+        ref string verkeerdAccount)
     {
         var edits = Alle(venster, ControlType.Edit);
         var knoppen = Alle(venster, ControlType.Button);
@@ -417,6 +460,23 @@ public static class WindowsAppLogin
             ZoekEdit(edits, "wachtwoord|password", "i0118|passwordEntry");
         if (wachtwoordVeld is not null)
         {
+            // Account verifiëren vóór het wachtwoord: het veld heet meestal "Voer het
+            // wachtwoord voor <account> in", anders staat het account als tekst op het
+            // scherm. Alleen typen als dat het doelaccount is; een ander account → stoppen;
+            // niet te lezen → ook niet typen (nooit blind een wachtwoord ergens invullen).
+            var opScherm = AccountOpScherm(wachtwoordVeld, teksten);
+            if (opScherm.Length > 0 &&
+                !opScherm.Equals(email, StringComparison.OrdinalIgnoreCase))
+            {
+                verkeerdAccount = opScherm;
+                Log($"wachtwoord NIET ingevuld — scherm toont {opScherm}, doel {email}");
+                return false;
+            }
+            if (opScherm.Length == 0)
+            {
+                Log("wachtwoordscherm zonder leesbaar account — niet ingevuld (veiligheid)");
+                return false;
+            }
             var wachtwoord = CedLogin.Wachtwoord();
             if (wachtwoord.Length == 0)
             {
@@ -426,7 +486,7 @@ public static class WindowsAppLogin
             wachtwoordIngevuld++;
             if (Vul(wachtwoordVeld, wachtwoord))
             {
-                Log($"wachtwoord ingevuld (poging {wachtwoordIngevuld})");
+                Log($"wachtwoord ingevuld voor {opScherm} (poging {wachtwoordIngevuld})");
                 var aanmelden = ZoekKnop(knoppen,
                     "aanmelden|sign ?in|volgende|next", "idSIButton9");
                 if (aanmelden is null || !Klik(aanmelden))
@@ -529,6 +589,38 @@ public static class WindowsAppLogin
     }
 
     // ── UIA-hulpjes ─────────────────────────────────────────────────────────────
+
+    /// <summary>Het eerste e-mailadres in de tekst (of "" als er geen in staat).</summary>
+    private static string HaalEmail(string? tekst)
+    {
+        var m = Regex.Match(tekst ?? "",
+            @"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}");
+        return m.Success ? m.Value : "";
+    }
+
+    /// <summary>
+    /// Welk account het wachtwoordscherm toont: eerst de naam van het wachtwoordveld
+    /// ("Voer het wachtwoord voor X in"), anders het account als losse tekst op het
+    /// scherm. "" = niet te bepalen (dan wordt er uit voorzorg geen wachtwoord getypt).
+    /// </summary>
+    private static string AccountOpScherm(
+        AutomationElement wachtwoordVeld, List<AutomationElement> teksten)
+    {
+        var uitVeld = HaalEmail(Veilig(() => wachtwoordVeld.Current.Name));
+        if (uitVeld.Length > 0)
+        {
+            return uitVeld;
+        }
+        foreach (var t in teksten)
+        {
+            var em = HaalEmail(Veilig(() => t.Current.Name));
+            if (em.Length > 0)
+            {
+                return em;
+            }
+        }
+        return "";
+    }
 
     private static AutomationElement? VindHoofdvenster()
     {
