@@ -1142,7 +1142,8 @@ public class CockpitForm : Form
             if (GeselecteerdBericht() is { } b && (!b.IsChat || b.OutlookMail.Length > 0))
             {
                 using var form = new ArchiveerRegelsForm(
-                    b.VanAdres.Length > 0 && b.VanAdres != "CED Outlook" ? b.VanAdres : b.Van);
+                    b.VanAdres.Length > 0 && b.VanAdres != "CED Outlook" ? b.VanAdres : b.Van,
+                    b.Onderwerp == "bericht" ? "" : b.Onderwerp);
                 form.ShowDialog(this);
             }
         };

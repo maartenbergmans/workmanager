@@ -58,8 +58,20 @@ public sealed class ArchiveerRegelsForm : Form
         };
         _onderwerp = new TextBox
         {
-            Text = voorstelOnderwerp, Location = new Point(140, 60), Width = 370,
+            Text = voorstelOnderwerp, Location = new Point(140, 60), Width = 336,
             PlaceholderText = "bv. \"dagelijks overzicht\"",
+        };
+        // Het voorgestelde onderwerp bevat vaak variabele delen (datum, nummer): met één
+        // klik leeg te maken zodat de regel alleen op de afzender matcht.
+        var wisOnderwerp = new ModernButton
+        {
+            Text = "✕", Width = 28, Height = _onderwerp.Height,
+            Location = new Point(482, 59),
+        };
+        wisOnderwerp.Click += (_, _) =>
+        {
+            _onderwerp.Clear();
+            _onderwerp.Focus();
         };
         var voegToe = new ModernButton
         {
@@ -77,7 +89,7 @@ public sealed class ArchiveerRegelsForm : Form
             new Label { Text = "Afzender bevat:", AutoSize = true, Location = new Point(12, 32) },
             _afzender,
             new Label { Text = "Onderwerp bevat:", AutoSize = true, Location = new Point(12, 64) },
-            _onderwerp,
+            _onderwerp, wisOnderwerp,
             voegToe, verwijder,
         });
 
