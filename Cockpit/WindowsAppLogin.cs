@@ -79,12 +79,29 @@ public static class WindowsAppLogin
         var accountKnopGeprobeerd = false;
         var ooitActie = false;
         var stilTeller = 0;
+        var dialoogTabs = 0;
 
         for (var beurt = 0; beurt < 200; beurt++) // ~5 min: genoeg voor handmatige MFA
         {
             ct.ThrowIfCancellationRequested();
             Thread.Sleep(1500);
             var actie = false;
+            // De Microsoft-logindialoog in de Windows App is een BasicEmbeddedBrowser-
+            // popup die zijn inhoud níét in de accessibility-boom zet. Daarvoor is er een
+            // aparte route op basis van het gefocuste element (focus-events werken wél).
+            if (VindLoginDialoog() is { } dialoog)
+            {
+                try
+                {
+                    actie = HandelDialoogAf(dialoog, email,
+                        ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp,
+                        ref dialoogTabs);
+                }
+                catch (ElementNotAvailableException)
+                {
+                    // Dialoog sloot net: volgende poll verder.
+                }
+            }
             foreach (var venster in KandidaatVensters())
             {
                 try
@@ -112,6 +129,12 @@ public static class WindowsAppLogin
             // Na een afgeronde aanmelding is het een tijdje stil: klaar.
             if (ooitActie && stilTeller >= 4)
             {
+                if (VindLoginDialoog() is not null)
+                {
+                    Log("dialoog blijft open zonder herkenbaar veld — handwerk gevraagd");
+                    return "Windows App: e-mail is ingevuld, maar het vervolg kon ik niet " +
+                        "veilig herkennen — maak de aanmelding even af in het venster";
+                }
                 Log("klaar — geen aanmeldschermen meer na acties");
                 return $"Windows App aangemeld als {email}";
             }
@@ -119,7 +142,8 @@ public static class WindowsAppLogin
             // account? Eén keer de accountwisselaar proberen; die toont het menu met
             // accounts waar de klik op het doelaccount (of "account toevoegen") de rest
             // van deze lus weer werk geeft.
-            if (!ooitActie && stilTeller == 4 && !accountKnopGeprobeerd)
+            if (!ooitActie && stilTeller == 4 && !accountKnopGeprobeerd &&
+                VindLoginDialoog() is null)
             {
                 accountKnopGeprobeerd = true;
                 if (ProbeerAccountWissel(VindHoofdvenster(), email))
@@ -142,6 +166,137 @@ public static class WindowsAppLogin
             }
         }
         return "Windows App-aanmelding niet (op tijd) afgerond — zie windowsapp-login-log.txt";
+    }
+
+    /// <summary>
+    /// De Microsoft-logindialoog van de Windows App (klasse BasicEmbeddedBrowser) als die
+    /// openstaat; zijn inhoud is níét via de boom bereikbaar, alleen via focus.
+    /// </summary>
+    private static AutomationElement? VindLoginDialoog()
+    {
+        if (VindHoofdvenster() is not { } hoofd)
+        {
+            return null;
+        }
+        try
+        {
+            return hoofd.FindFirst(TreeScope.Descendants, new AndCondition(
+                new PropertyCondition(AutomationElement.ClassNameProperty, "BasicEmbeddedBrowser"),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Window)));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Bedient de logindialoog via het gefocuste element (de boom blijft leeg, maar
+    /// focus-events geven het actieve veld wél prijs). Veiligheidsregels: er wordt nooit
+    /// getypt als de voorgrond of de focus niet bij de Windows App hoort, en het
+    /// wachtwoord alleen als het veld aantoonbaar een wachtwoordveld is (IsPassword) —
+    /// blind typen zou het anders zichtbaar in een gewoon veld zetten.
+    /// </summary>
+    private static bool HandelDialoogAf(AutomationElement dialoog, string email,
+        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp,
+        ref int dialoogTabs)
+    {
+        var pids = System.Diagnostics.Process.GetProcessesByName("Windows365")
+            .Select(p => p.Id).ToHashSet();
+        if (VindHoofdvenster() is { } hoofd)
+        {
+            ZetVoorgrond(hoofd);
+            Thread.Sleep(300);
+        }
+        var voorgrond = NativeMethods.GetForegroundWindow();
+        var voorgrondPid = 0;
+        _ = NativeMethods.GetWindowThreadProcessId(voorgrond, ref voorgrondPid);
+        if (!pids.Contains(voorgrondPid))
+        {
+            Log("dialoog: voorgrond hoort niet bij de Windows App — niets getypt");
+            return false;
+        }
+        AutomationElement? focus = null;
+        try
+        {
+            focus = AutomationElement.FocusedElement;
+        }
+        catch
+        {
+            // Geen focusinfo: hieronder eventueel met Tab proberen.
+        }
+        var focusVanApp = focus is not null &&
+            pids.Contains(Veilig(() => focus.Current.ProcessId));
+        if (focusVanApp && Veilig(() => focus!.Current.ControlType) == ControlType.Edit)
+        {
+            var naam = Veilig(() => focus!.Current.Name) ?? "";
+            var id = Veilig(() => focus!.Current.AutomationId) ?? "";
+            if (Veilig(() => focus!.Current.IsPassword))
+            {
+                var wachtwoord = CedLogin.Wachtwoord();
+                if (wachtwoord.Length == 0)
+                {
+                    Log("dialoog: wachtwoordveld, maar geen (bruikbaar) wachtwoord — handwerk");
+                    return false;
+                }
+                if (wachtwoordIngevuld >= 2)
+                {
+                    return false;
+                }
+                wachtwoordIngevuld++;
+                Log($"dialoog: wachtwoord getypt (poging {wachtwoordIngevuld})");
+                TypMetEnter(wachtwoord);
+                return true;
+            }
+            if (Regex.IsMatch(naam + " " + id, "code|otc", RegexOptions.IgnoreCase) &&
+                CedLogin.TotpGeheim() is { Length: > 0 } seed)
+            {
+                var code = Totp.Genereer(seed);
+                if (code == laatsteOtp)
+                {
+                    return false;
+                }
+                laatsteOtp = code;
+                Log("dialoog: TOTP-code getypt");
+                TypMetEnter(code);
+                return true;
+            }
+            if (emailIngevuld < 2)
+            {
+                emailIngevuld++;
+                Log($"dialoog: e-mail getypt in veld '{naam}'");
+                TypMetEnter(email);
+                return true;
+            }
+            return false;
+        }
+        // Focus (nog) niet op een herkenbaar veld: een paar keer Tab om erin te komen.
+        if (dialoogTabs < 3)
+        {
+            dialoogTabs++;
+            Log($"dialoog: geen veldfocus — Tab {dialoogTabs}");
+            System.Windows.Forms.SendKeys.SendWait("{TAB}");
+            return true;
+        }
+        // Chromium geeft soms helemaal geen focusinfo prijs. De állereerste stap is dan
+        // toch veilig blind te doen: het e-mailscherm heeft autofocus en een e-mailadres
+        // is geen geheim. Het wachtwoord wordt nooit blind getypt.
+        if (emailIngevuld == 0)
+        {
+            emailIngevuld++;
+            Log("dialoog: geen focusinfo — e-mail blind getypt (autofocusveld)");
+            TypMetEnter(email);
+            return true;
+        }
+        return false;
+    }
+
+    private static void TypMetEnter(string tekst)
+    {
+        System.Windows.Forms.SendKeys.SendWait("^a");
+        System.Windows.Forms.SendKeys.SendWait(EscapeSendKeys(tekst));
+        Thread.Sleep(150);
+        System.Windows.Forms.SendKeys.SendWait("{ENTER}");
     }
 
     /// <summary>Eén poll over één venster; true zodra er iets bediend is.</summary>
@@ -558,5 +713,11 @@ public static class WindowsAppLogin
     {
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, ref int processId);
     }
 }
