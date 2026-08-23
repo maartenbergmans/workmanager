@@ -109,8 +109,11 @@ public static class WindowsAppLogin
                 }
                 // Hangt de dialoog (de beruchte spinner die nooit doorlaadt, ~30 s zonder
                 // ooit een veld): sluiten met Escape en nog één keer vers proberen via
-                // het accountmenu.
-                if (dialoogPolls >= 20 && dialoogHerstarts < 1)
+                // het accountmenu. Maar niet als er intussen een echt CED-/Microsoft-
+                // loginvenster openstaat (apart ApplicationFrameWindow) — dan is de
+                // "spinner" gewoon de wachtende ouder en handelt HandelSchermAf het af.
+                var extraLoginOpen = KandidaatVensters().Skip(1).Any(HeeftLoginVeld);
+                if (dialoogPolls >= 20 && dialoogHerstarts < 1 && !extraLoginOpen)
                 {
                     dialoogHerstarts++;
                     Log("dialoog hangt — Escape en opnieuw via het accountmenu");
@@ -333,6 +336,15 @@ public static class WindowsAppLogin
         var knoppen = Alle(venster, ControlType.Button);
         var teksten = Alle(venster, ControlType.Text);
 
+        // Staat het te bedienen scherm in een apart loginvenster (niet het app-hoofd),
+        // dan dat naar voren halen: de SendKeys-terugval van Vul/Klik/Enter typt naar het
+        // actieve venster.
+        if (edits.Count > 0 && Veilig(() => venster.Current.ClassName) != "MainWindow")
+        {
+            ZetVoorgrond(venster);
+            Thread.Sleep(300);
+        }
+
         // Een echte wachtwoordfout: meteen stoppen met invullen (zelfde regel als de
         // WebView2-logins) — herhaalde foute pogingen zouden het account vergrendelen.
         if (teksten.Any(t => Regex.IsMatch(t.Current.Name ?? "",
@@ -544,8 +556,9 @@ public static class WindowsAppLogin
 
     /// <summary>
     /// Alle vensters waar een aanmeldscherm in kan zitten: het app-venster zelf plus
-    /// losse Microsoft-logindialogen ("Aanmelden bij uw account", ook van webview-
-    /// hulpprocessen).
+    /// losse Microsoft-/CED-logindialogen. Die laatste openen als een apart
+    /// ApplicationFrameWindow (proces explorer/broker) met vaak een lege titel, dus we
+    /// herkennen ze aan de inhoud: een wachtwoordveld of het klassieke i0116/i0118-veld.
     /// </summary>
     private static List<AutomationElement> KandidaatVensters()
     {
@@ -559,8 +572,9 @@ public static class WindowsAppLogin
             foreach (AutomationElement top in AutomationElement.RootElement.FindAll(
                 TreeScope.Children, Condition.TrueCondition))
             {
-                if (Regex.IsMatch(Veilig(() => top.Current.Name) ?? "",
-                    "aanmelden bij|sign in to your account", RegexOptions.IgnoreCase))
+                var naam = Veilig(() => top.Current.Name) ?? "";
+                if (Regex.IsMatch(naam, "aanmelden bij|sign in to your account",
+                        RegexOptions.IgnoreCase) || HeeftLoginVeld(top))
                 {
                     vensters.Add(top);
                 }
@@ -571,6 +585,32 @@ public static class WindowsAppLogin
             // Desktopscan is best effort; het hoofdvenster hebben we al.
         }
         return vensters;
+    }
+
+    /// <summary>True als het venster een wachtwoordveld of het i0116/i0118-loginveld bevat.</summary>
+    private static bool HeeftLoginVeld(AutomationElement venster)
+    {
+        try
+        {
+            if (venster.FindFirst(TreeScope.Descendants, new PropertyCondition(
+                    AutomationElement.IsPasswordProperty, true)) is not null)
+            {
+                return true;
+            }
+            foreach (var id in new[] { "i0116", "i0118" })
+            {
+                if (venster.FindFirst(TreeScope.Descendants, new PropertyCondition(
+                        AutomationElement.AutomationIdProperty, id)) is not null)
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Venster net weg of niet doorzoekbaar.
+        }
+        return false;
     }
 
     private static List<AutomationElement> Alle(AutomationElement bron, ControlType type)
