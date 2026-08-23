@@ -296,7 +296,8 @@ public sealed class WhatsAppClient : IDisposable
                     Datum = DateTimeOffset.Now,
                     Tekst = string.Join("\n", berichten.Select(b =>
                         (b.Uitgaand ? "[eerder] Maarten (ikzelf): " : b.Pre.Length > 0 ? b.Pre : $"{naam}: ") +
-                        (b.Tekst.Length > 0 ? b.Tekst : b.Beeld.Length > 0 ? "📷 (foto)" : ""))),
+                        (b.Tekst.Length > 0 ? b.Tekst : b.Beeld.Length > 0 ? "📷 (foto)" : "") +
+                        (b.Reacties.Length > 0 ? $" [reactie: {b.Reacties}]" : ""))),
                 });
             }
             catch (OperationCanceledException)
@@ -397,9 +398,13 @@ public sealed class WhatsAppClient : IDisposable
         }
     }
 
-    /// <summary>Beeld = foto uit de bubbel als data-URL (leeg als het bericht er geen heeft).</summary>
+    /// <summary>
+    /// Beeld = foto uit de bubbel als data-URL (leeg als het bericht er geen heeft);
+    /// Reacties = emoji-reacties op het bericht, bv. "❤️" of "👍 3" (leeg zonder reacties).
+    /// </summary>
     public sealed record WaBericht(
-        string Tijd, string Afzender, bool Uitgaand, string Tekst, string Beeld = "");
+        string Tijd, string Afzender, bool Uitgaand, string Tekst, string Beeld = "",
+        string Reacties = "");
 
     /// <summary>
     /// De laatste berichten uit een chat, gestructureerd (tijd, afzender, richting, tekst)
@@ -433,7 +438,7 @@ public sealed class WhatsAppClient : IDisposable
                             afzender = wie;
                         }
                     }
-                    return new WaBericht(tijd, afzender, r.Uitgaand, r.Tekst, r.Beeld);
+                    return new WaBericht(tijd, afzender, r.Uitgaand, r.Tekst, r.Beeld, r.Reacties);
                 })
                 .ToList();
             return (berichten, await AvatarDataUrlAsync(ct));
@@ -747,7 +752,8 @@ public sealed class WhatsAppClient : IDisposable
         return (totaal, chats);
     }
 
-    private sealed record Regel(string Pre, bool Uitgaand, string Tekst, string Beeld = "");
+    private sealed record Regel(
+        string Pre, bool Uitgaand, string Tekst, string Beeld = "", string Reacties = "");
 
     private async Task<List<Regel>> OpenEnLeesAsync(string naam, CancellationToken ct)
     {
@@ -874,11 +880,36 @@ public sealed class WhatsAppClient : IDisposable
                                 } catch { /* geen foto: de tekst volstaat */ }
                             }
                         }
+                        // Emoji-reacties (❤️ 👍 …) onder de bubbel: WhatsApp toont ze als een
+                        // knopje met een aria-label ("2 reacties in totaal, …") en de emoji's
+                        // zelf als <img alt="❤️">. De hover-knop "Reageren"/"React" matcht
+                        // hier bewust niet (die bevat "reactie"/"reaction" niet).
+                        let reacties = '';
+                        const rEl = m.querySelector(
+                            '[aria-label*="reactie" i], [aria-label*="reaction" i], ' +
+                            '[aria-label*="réaction" i], [data-testid*="reaction"]');
+                        if (rEl) {
+                            reacties = [...rEl.querySelectorAll('img')]
+                                .map(i => i.alt || '').filter(Boolean).join('');
+                            if (!reacties) {
+                                // Nieuwere DOM zonder emoji-img's: pak de pictogrammen uit
+                                // het label of de tekst van het knopje zelf.
+                                const bron = (rEl.getAttribute('aria-label') || '') + ' ' +
+                                    (rEl.textContent || '');
+                                reacties = [...bron.matchAll(/\p{Extended_Pictographic}/gu)]
+                                    .map(x => x[0]).join('');
+                            }
+                            // Totaal (bv. "❤️ 3") erbij zodra er meer reacties dan emoji's zijn.
+                            const totaal = parseInt((rEl.getAttribute('aria-label') || '')
+                                .match(/\d+/)?.[0] || '', 10);
+                            if (reacties && totaal > 1) { reacties += ' ' + totaal; }
+                        }
                         msgs.push({
                             pre: c ? c.getAttribute('data-pre-plain-text') : '',
                             uit,
                             txt: delen.map(s => s.innerText).join(' ').trim(),
                             beeld,
+                            reacties,
                         });
                     }
                     const gevuld = msgs.filter(m => m.txt || m.beeld);
@@ -924,7 +955,8 @@ public sealed class WhatsAppClient : IDisposable
                 m.GetProperty("pre").GetString() ?? "",
                 m.GetProperty("uit").GetBoolean(),
                 m.GetProperty("txt").GetString() ?? "",
-                m.TryGetProperty("beeld", out var b) ? b.GetString() ?? "" : ""))
+                m.TryGetProperty("beeld", out var b) ? b.GetString() ?? "" : "",
+                m.TryGetProperty("reacties", out var re) ? re.GetString() ?? "" : ""))
             .ToList();
     }
 

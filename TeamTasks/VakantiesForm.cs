@@ -420,9 +420,7 @@ public class VakantiesForm : Form
         }
 
         Status("Inloggen bij SD Worx…");
-        var script = LoginScript
-            .Replace("__USER__", JsonSerializer.Serialize(_settings.Gebruiker))
-            .Replace("__PASS__", JsonSerializer.Serialize(_settings.Wachtwoord));
+        var script = SdWorxLogin.Script(_settings.Gebruiker, _settings.Wachtwoord);
         var wachtwoordWachtrondes = 0;
         var herNavigaties = 0;
         for (var poging = 0; poging < 75 && !_klaar; poging++)
@@ -446,19 +444,11 @@ public class VakantiesForm : Form
                 continue;
             }
             // Alleen invullen op de SD Worx-loginpagina's, nooit ergens anders.
-            if (url.Contains("auth.sdworx.com", StringComparison.OrdinalIgnoreCase) ||
+            if (SdWorxLogin.IsLoginUrl(url) ||
                 url.Contains("login", StringComparison.OrdinalIgnoreCase) && !OpKalenderPagina)
             {
                 var resultaat = await RunScriptAsync(script);
-                Status(resultaat switch
-                {
-                    "\"cookies\"" => "Privacybanner geweigerd…",
-                    "\"gebruiker\"" => "E-mailadres ingevuld…",
-                    "\"gebruiker-wacht\"" => "Wachten op de wachtwoordstap…",
-                    "\"wachtwoord\"" => "Wachtwoord ingevuld — aanmelden…",
-                    "\"wachtwoord-wacht\"" => "Aangemeld — wachten op de kalender…",
-                    _ => "Inloggen bij SD Worx…",
-                });
+                Status(SdWorxLogin.StatusTekst(resultaat));
                 if (resultaat is "\"wachtwoord-wacht\"" && ++wachtwoordWachtrondes > 15)
                 {
                     // Wachtwoord is één keer gesubmit maar de kalender komt niet: MFA of een
@@ -479,59 +469,6 @@ public class VakantiesForm : Form
             Status("Automatisch inloggen lukte niet — log handmatig in; daarna gaat het vanzelf verder.");
         }
     }
-
-    // Exact afgestemd op de SD Worx-loginpagina's (auth.sdworx.com, geverifieerd via de
-    // inspectiemodus): stap 1 = #lp_login-email + #lp_next, stap 2 = #lp_login-password +
-    // #lp_next. Een veld wordt maar één keer gevuld en gesubmit ('…-wacht' daarna), zodat
-    // een haperende pagina nooit tot herhaalde loginpogingen leidt.
-    private const string LoginScript =
-        """
-        (() => {
-            // Privacybanner (in shadow DOM) eerst weigeren.
-            const zoekOveral = selector => {
-                const uit = [];
-                const loop = root => {
-                    uit.push(...root.querySelectorAll(selector));
-                    root.querySelectorAll('*').forEach(el => {
-                        if (el.shadowRoot) loop(el.shadowRoot);
-                    });
-                };
-                loop(document);
-                return uit;
-            };
-            const weiger = zoekOveral('button, a')
-                .find(e => /^(alles )?weigeren$|^(refuse|decline|reject)( all)?$/i
-                    .test((e.innerText || '').trim()));
-            if (weiger) { weiger.click(); return 'cookies'; }
-
-            const zet = (el, v) => {
-                const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                s.call(el, v);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            };
-            const klikVolgende = () => setTimeout(() => {
-                const k = document.querySelector('#lp_next');
-                if (k && !k.disabled) k.click();
-            }, 400);
-
-            const wachtwoord = document.querySelector('#lp_login-password');
-            if (wachtwoord && wachtwoord.offsetParent !== null) {
-                if (wachtwoord.value === __PASS__) return 'wachtwoord-wacht';
-                zet(wachtwoord, __PASS__);
-                klikVolgende();
-                return 'wachtwoord';
-            }
-            const email = document.querySelector('#lp_login-email');
-            if (email && email.offsetParent !== null) {
-                if (email.value === __USER__) return 'gebruiker-wacht';
-                zet(email, __USER__);
-                klikVolgende();
-                return 'gebruiker';
-            }
-            return null;
-        })()
-        """;
 
     // Beschrijft alle invoervelden en knoppen (ook in shadow DOM/iframes) zonder waarden
     // te lezen of te wijzigen — alleen structuur, voor het afstemmen van de login-assist.

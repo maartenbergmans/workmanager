@@ -254,6 +254,7 @@ static class Program
                     @"\\wsl.localhost\Ubuntu\home\maarten\projecten\aqurat", "aqurat"),
                 "vakanties" => new VakantiesForm(),
                 "vakantiesdump" => new VakantiesForm(alleenInspecteren: true),
+                "verlof" => new SdWorxPortaalForm(),
                 "teambewerk" => new TeamTaakBewerkForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" },
                     new TeamTaak { Lid = "Kris", Tekst = "Facturatie-run van juli nakijken" }),

@@ -40,9 +40,15 @@ public static class MicrosoftLogin
         var mfaCode = JsonSerializer.Serialize(totpSeed.Length > 0 ? Totp.Genereer(totpSeed) : "");
         return $$"""
             (() => {
-                // Fouttekst bij het wachtwoordveld = geweigerd: meteen stoppen met invullen.
+                // Alleen een échte wachtwoordfout (onjuist/verlopen) schakelt het invullen
+                // uit; time-outs of "meld u opnieuw aan" horen daar niet bij — dan is het
+                // bewaarde wachtwoord gewoon nog goed en vullen we opnieuw in.
                 const foutEl = document.querySelector('#passwordError, #errorText');
-                if (foutEl && foutEl.textContent.trim().length > 0) { return 'fout'; }
+                const foutTekst = (foutEl?.textContent || '').trim().toLowerCase();
+                if (/onjuist|incorrect|verlopen|expired|falsch|abgelaufen|expiré/
+                        .test(foutTekst)) {
+                    return 'fout';
+                }
                 const zichtbaar = e => e && e.offsetParent !== null && !e.disabled;
                 const vuur = (el) => {
                     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -89,14 +95,21 @@ public static class MicrosoftLogin
                 // app" (push). Maarten gebruikt WinOTP, dat codes maakt — dus doorschakelen naar
                 // het codeinvoerscherm. De code zelf blijft handwerk (nooit een geheim uitlezen).
                 const tekstKlik = (patroon, verbod) => {
-                    const el = [...document.querySelectorAll(
-                        'a, [role=button], div[role=listitem], .table, .tile, .row')]
-                        .find(e => {
-                            if (!zichtbaar(e)) { return false; }
-                            const t = (e.textContent || '').trim().toLowerCase();
-                            return t.length > 0 && t.length < 140 && patroon.test(t) &&
-                                (!verbod || !verbod.test(t));
-                        });
+                    const past = e => {
+                        if (!zichtbaar(e)) { return false; }
+                        const t = (e.textContent || '').trim().toLowerCase();
+                        return t.length > 0 && t.length < 140 && patroon.test(t) &&
+                            (!verbod || !verbod.test(t));
+                    };
+                    let el = [...document.querySelectorAll(
+                        'a, button, [role=button], div[role=listitem], .table, .tile, .row, div[data-value]')]
+                        .find(past);
+                    if (!el) {
+                        // Microsoft wisselt de tegel-opbouw geregeld; val terug op het diepste
+                        // element met de gezochte tekst — de klik bubbelt naar de echte handler.
+                        const alle = [...document.querySelectorAll('div, span, td, li')].filter(past);
+                        el = alle.find(e => !alle.some(o => o !== e && e.contains(o)));
+                    }
                     if (el) { el.click(); return true; }
                     return false;
                 };
@@ -120,7 +133,10 @@ public static class MicrosoftLogin
                     return 'code-klaar'; // geen seed, of deze code al ingediend
                 }
                 // 2. Toont Microsoft de lijst met methoden, kies dan de authenticator-code
-                //    (niet sms/telefoon/e-mail — die willen we bewust niet).
+                //    (niet sms/telefoon/e-mail — die willen we bewust niet). Eerst de vaste
+                //    tegel (data-value=PhoneAppOTP), anders op tekst.
+                const otpTegel = document.querySelector('div[data-value="PhoneAppOTP"]');
+                if (otpTegel && zichtbaar(otpTegel)) { otpTegel.click(); return 'mfa-code-methode'; }
                 if (tekstKlik(/verification code|verificatiecode|code from|code uit/,
                               /text|sms|\bcall\b|\bbel\b|phone|telefoon|email|e-mail/)) {
                     return 'mfa-code-methode';

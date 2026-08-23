@@ -365,6 +365,10 @@ public class TrayAppContext : ApplicationContext
         devops.Click += (_, _) => OpenDevOps();
         menu.Items.Add(devops);
 
+        var verlof = new ToolStripMenuItem("Verlof goedkeuren (SD Worx)…");
+        verlof.Click += (_, _) => OpenSdWorxPortaal();
+        menu.Items.Add(verlof);
+
         // Vast startpunt voor de boodschappen: de cockpit-taak staat er niet elke dag.
         var ah = new ToolStripMenuItem("AH-bestelling…");
         ah.Click += (_, _) =>
@@ -618,6 +622,9 @@ public class TrayAppContext : ApplicationContext
             case "webversie":
                 OpenWebversie();
                 break;
+            case "verlof":
+                OpenSdWorxPortaal();
+                break;
         }
     }
 
@@ -634,6 +641,21 @@ public class TrayAppContext : ApplicationContext
         _topdeskForm = new TopdeskForm();
         _topdeskForm.FormClosed += (_, _) => _topdeskForm = null;
         _topdeskForm.Show();
+    }
+
+    private SdWorxPortaalForm? _sdworxPortaalForm;
+
+    private void OpenSdWorxPortaal()
+    {
+        if (_sdworxPortaalForm is { IsDisposed: false })
+        {
+            _sdworxPortaalForm.Activate();
+            return;
+        }
+
+        _sdworxPortaalForm = new SdWorxPortaalForm();
+        _sdworxPortaalForm.FormClosed += (_, _) => _sdworxPortaalForm = null;
+        _sdworxPortaalForm.Show();
     }
 
     private DevOpsForm? _devOpsForm;

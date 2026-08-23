@@ -20,6 +20,9 @@ public sealed class OutlookClient : IDisposable
 
     private static readonly string MarkerFile = Path.Combine(DataDir, "outlook-linked.txt");
 
+    /// <summary>Buiten-beeld-werkformaat: hoog venster = meer gerenderde maillijstrijen.</summary>
+    private static readonly Size WerkFormaat = new(1400, 1600);
+
     private Form? _venster;
     private WebView2? _web;
     private WebView2? _webAgenda; // tweede tabblad: agenda/afspraakdetails, zelfde profiel
@@ -78,7 +81,7 @@ public sealed class OutlookClient : IDisposable
                         // Bewust groot: het venster staat buiten beeld en hoe hoger het is,
                         // hoe meer rijen de gevirtualiseerde maillijst rendert (minder
                         // scroll- en zoekwerk om een mail te vinden).
-                        Size = new Size(1400, 1600),
+                        Size = WerkFormaat,
                         StartPosition = FormStartPosition.Manual,
                         Location = new Point(-4000, -4000),
                         ShowInTaskbar = false,
@@ -203,9 +206,25 @@ public sealed class OutlookClient : IDisposable
             return;
         }
         LogVensterOnScreen("KoppelAsync (MFA-aanmelding)");
+        // Hangt de sessie op een foutpagina (bv. Microsofts "offline"-pagina, die als rauwe
+        // broncode verschijnt), dan helpt tonen alleen niet: eerst vers naar de mailbox
+        // navigeren — dat geeft ofwel de inbox, ofwel het echte aanmeldscherm.
+        try
+        {
+            _web?.CoreWebView2?.Navigate("https://outlook.office.com/mail/");
+        }
+        catch
+        {
+            // Navigeren is best effort; de aanmeldlus hieronder doet de rest.
+        }
         // Op het scherm waar de gebruiker nu werkt (muispositie), en even topmost zodat
-        // het venster niet achter de gemaximaliseerde cockpit verdwijnt.
+        // het venster niet achter de gemaximaliseerde cockpit verdwijnt. Passend gemaakt:
+        // het vaste werkformaat (1400×1600) is hoger dan het scherm, waardoor de titelbalk
+        // — en dus de sluitknop — buiten beeld viel. Verberg() zet het werkformaat terug.
         var scherm = Screen.FromPoint(Cursor.Position).WorkingArea;
+        _venster.Size = new Size(
+            Math.Min(WerkFormaat.Width, scherm.Width - 60),
+            Math.Min(WerkFormaat.Height, scherm.Height - 60));
         _venster.Location = new Point(
             scherm.X + (scherm.Width - _venster.Width) / 2,
             scherm.Y + (scherm.Height - _venster.Height) / 2);
@@ -247,6 +266,7 @@ public sealed class OutlookClient : IDisposable
     {
         _venster!.TopMost = false;
         _venster.Location = new Point(-4000, -4000);
+        _venster.Size = WerkFormaat; // terug naar het grote buiten-beeld-werkformaat
         // Altijd terug naar Postvak IN (bv. na de Archief-weergave): de eerstvolgende
         // poll leest anders de verkeerde map uit. Best effort; in het inlogscherm
         // bestaat de mappenbalk simpelweg nog niet.

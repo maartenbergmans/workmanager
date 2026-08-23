@@ -75,6 +75,8 @@ public class CockpitForm : Form
     private readonly ModernButton _topdeskKnop;
     /// <summary>Alleen in de werkbalk zolang het DevOps-signaal aan staat.</summary>
     private readonly ModernButton _devopsKnop;
+    /// <summary>Alleen in de werkbalk zolang het SD Worx-verlofsignaal aan staat.</summary>
+    private readonly ModernButton _verlofKnop;
     /// <summary>Per klant een eigen projectknop; op een smal venster vervangt "Projecten ▾" ze.</summary>
     private readonly List<(ModernButton Knop, string Label, List<string> Mappen)> _projectKnoppen = new();
     private ModernButton? _projectenHoofdknop;
@@ -311,6 +313,9 @@ public class CockpitForm : Form
         // Alle klanten zitten samen achter één "Projecten ▾"-knop (submenu per klant) —
         // vijf losse dropdowns maakten de werkbalk onleesbaar vol.
         var projectenMenu = new ContextMenuStrip();
+        // Wisselstuk voor de losse klantknoppen: het klantItem krijgt tijdelijk deze lege
+        // dropdown zolang zijn echte menu los van "Projecten ▾" getoond wordt (zie onder).
+        var losseKnopDummy = new ToolStripDropDownMenu();
         Theme.Style(projectenMenu);
         // Ruimte voor de klantlogo's: woordmerken zijn breder dan hoog.
         projectenMenu.ImageScalingSize = new Size(28, 18);
@@ -481,7 +486,21 @@ public class CockpitForm : Form
             var klantKnop = new ModernButton { Text = label };
             klantKnop.KrimpNaarInhoud();
             klantKnop.Click += (_, _) =>
-                klantItem.DropDown.Show(klantKnop, new Point(0, klantKnop.Height + 4));
+            {
+                // Zolang de dropdown aan het klantItem in "Projecten ▾" hangt, negeert
+                // WinForms de meegegeven positie en rekent hij vanaf dat (onzichtbare)
+                // verzamelmenu — het menu klapte dan helemaal linksboven uit. Daarom hier
+                // tijdelijk loskoppelen en na het sluiten weer terughangen.
+                var dd = klantItem.DropDown;
+                klantItem.DropDown = losseKnopDummy;
+                void Terug(object? _, ToolStripDropDownClosedEventArgs __)
+                {
+                    dd.Closed -= Terug;
+                    klantItem.DropDown = dd;
+                }
+                dd.Closed += Terug;
+                dd.Show(klantKnop, new Point(0, klantKnop.Height + 4));
+            };
             _projectKnoppen.Add((klantKnop, label, claudeMappen));
         }
 
@@ -507,9 +526,18 @@ public class CockpitForm : Form
             projectenMenu.Show(projectenKnop, new Point(0, projectenKnop.Height + 4));
         // Breed venster: de klantknoppen naast elkaar; smal venster: alleen "Projecten ▾".
         _projectenHoofdknop = projectenKnop;
-        foreach (var (knop, _, _) in _projectKnoppen)
+        // CED is geen dev-project maar wel een dagelijkse werkplek: een gewone knop naar
+        // de Azure-portal (admin-account), direct naast de Lauryssens-klantknop.
+        var cedKnop = new ModernButton { Text = "CED", Glyph = Fluent.Globe };
+        cedKnop.KrimpNaarInhoud();
+        cedKnop.Click += (_, _) => OpenExtern("https://portal.azure.com/");
+        foreach (var (knop, klantLabel, _) in _projectKnoppen)
         {
             toolbar.Controls.Add(knop);
+            if (klantLabel.StartsWith("Lauryssens", StringComparison.OrdinalIgnoreCase))
+            {
+                toolbar.Controls.Add(cedKnop);
+            }
         }
         toolbar.Controls.Add(projectenKnop);
         Resize += (_, _) => WerkProjectWeergaveBij();
@@ -732,6 +760,12 @@ public class CockpitForm : Form
         devopsKnop.KrimpNaarInhoud();
         devopsKnop.Visible = WerkSignaal.Actief("devops");
         devopsKnop.Click += (_, _) => _openDevOps();
+        // Zelfde patroon voor SD Worx: een meldingsmail over een verlofaanvraag zet de knop
+        // aan; het portaalvenster logt automatisch in, zodat je alleen nog hoeft goed te keuren.
+        var verlofKnop = _verlofKnop = new ModernButton { Text = "Verlof…", Glyph = Fluent.Kalender };
+        verlofKnop.KrimpNaarInhoud();
+        verlofKnop.Visible = WerkSignaal.Actief("sdworx");
+        verlofKnop.Click += (_, _) => _openVenster("verlof");
         // Claude Code CLI bijwerken naar de nieuwste versie ('claude update' is een no-op als
         // je al up-to-date bent). De knop staat altijd in de balk; alleen bij een échte
         // versiesprong (2.1 → 2.2, taak van UpdateCheck) kleurt hij accent met de versies erbij.
@@ -861,6 +895,7 @@ public class CockpitForm : Form
         toolbar.Controls.Add(dagvoorstelKnop);
         toolbar.Controls.Add(topdeskKnop);
         toolbar.Controls.Add(devopsKnop);
+        toolbar.Controls.Add(verlofKnop);
         toolbar.Controls.Add(timesheetKnop);
         toolbar.Controls.Add(timesheetDashboardKnop);
         // Claude-abonnementsverbruik (zelfde bron als /usage in de CLI).
@@ -921,10 +956,12 @@ public class CockpitForm : Form
             Venster("Dagstart…", "dagstart"),
             Venster("Mijn taken…", "mijntaken"),
             Actie("Taken team…", () => _openTeamTasks()),
+            Venster("Verlof goedkeuren (SD Worx)…", "verlof"),
             Venster("Wacht op antwoord…", "followup"),
             new ToolStripSeparator(),
 
             Kop("CED / Microsoft"),
+            Actie("Azure-portal (CED)…", () => OpenExtern("https://portal.azure.com/")),
             Actie("Azure DevOps…", () => _openDevOps()),
             Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
             Actie("Mail beantwoorden (Gmail)…", () => _openMail()),
@@ -3081,6 +3118,22 @@ public class CockpitForm : Form
             WerkSignaal.Zet("devops", true);
         }
         _devopsKnop.Visible = WerkSignaal.Actief("devops");
+        // Verlofsignaal: een meldingsmail van SD Worx (myworkandme) over een aanvraag
+        // betekent dat er een verlofaanvraag van een teamlid klaarstaat om goed te keuren.
+        // Het signaal dooft zodra het portaalvenster geopend wordt.
+        if (berichten.Any(m => !m.Genegeerd &&
+                (m.Van.Contains("sdworx", StringComparison.OrdinalIgnoreCase) ||
+                 m.Van.Contains("sd worx", StringComparison.OrdinalIgnoreCase) ||
+                 m.Van.Contains("workandme", StringComparison.OrdinalIgnoreCase)) &&
+                (m.Onderwerp.Contains("aanvraag", StringComparison.OrdinalIgnoreCase) ||
+                 m.Onderwerp.Contains("goedkeur", StringComparison.OrdinalIgnoreCase) ||
+                 m.Onderwerp.Contains("goed te keuren", StringComparison.OrdinalIgnoreCase) ||
+                 m.Onderwerp.Contains("approv", StringComparison.OrdinalIgnoreCase) ||
+                 m.Onderwerp.Contains("request", StringComparison.OrdinalIgnoreCase))))
+        {
+            WerkSignaal.Zet("sdworx", true);
+        }
+        _verlofKnop.Visible = WerkSignaal.Actief("sdworx");
 
         berichten.RemoveAll(m => m.IsChat && m.Genegeerd);
 
@@ -3729,7 +3782,19 @@ public class CockpitForm : Form
             sb.Append("<div style=\"font-size:10.5px;color:#667781;text-align:right;margin-top:3px\">" +
                 System.Net.WebUtility.HtmlEncode(b.Tijd) +
                 (b.Uitgaand ? " <span style=\"color:#53bdeb\">✓✓</span>" : "") + "</div>");
-            sb.Append("</div></div>");
+            sb.Append("</div>");
+            // Emoji-reacties (❤️ 👍 …) als wit pilletje dat net als in WhatsApp half over de
+            // onderrand van de bubbel hangt.
+            if (b.Reacties.Length > 0)
+            {
+                var reactieKant = b.Uitgaand ? "flex-end" : "flex-start";
+                sb.Append("<div style=\"display:flex;justify-content:" + reactieKant +
+                    ";margin:-7px 6px 0\"><span style=\"background:#ffffff;border-radius:11px;" +
+                    "box-shadow:0 1px 2px rgba(0,0,0,.25);padding:1px 7px;font-size:12px;" +
+                    "color:#111b21\">" + System.Net.WebUtility.HtmlEncode(b.Reacties) +
+                    "</span></div>");
+            }
+            sb.Append("</div>");
         }
         sb.Append("</div></div>");
         return sb.ToString();
@@ -7653,12 +7718,10 @@ public class CockpitForm : Form
                 // Volgende verversing opnieuw proberen.
             }
         }, _cts.Token);
-        var rijen = new List<TaakRij>();
-        foreach (var t in MijnTaakStore.Load().Taken.Where(t =>
-                     !t.Klaar && !t.Gesnoozed && !t.NogNietGestart && !t.NogNietAanDeBeurt))
-        {
-            rijen.Add(new TaakRij(t.Tekst, t.Deadline, "Mijn", t, "", t.Prioriteit));
-        }
+        // Eerst de (trage) Asana-call, en pas daarná de lokale taken laden: vink je tijdens
+        // die seconden een taak af, dan bouwde een al-lopende verversing de lijst anders op
+        // met verouderde data en dook de net afgevinkte rij meteen weer op.
+        var asanaRijen = new List<TaakRij>();
         try
         {
             var asana = AsanaSettings.Load();
@@ -7668,7 +7731,7 @@ public class CockpitForm : Form
                 foreach (var t in (await AsanaClient.OpenTakenAsync(asana, _cts.Token))
                     .Where(t => t.Deadline is not null))
                 {
-                    rijen.Add(new TaakRij(t.Naam, t.Deadline, "Asana", null, t.Gid,
+                    asanaRijen.Add(new TaakRij(t.Naam, t.Deadline, "Asana", null, t.Gid,
                         AsanaOmschrijving: t.Omschrijving));
                 }
             }
@@ -7677,6 +7740,13 @@ public class CockpitForm : Form
         {
             // Asana even niet bereikbaar: lokale taken gewoon tonen.
         }
+        var rijen = new List<TaakRij>();
+        foreach (var t in MijnTaakStore.Load().Taken.Where(t =>
+                     !t.Klaar && !t.Gesnoozed && !t.NogNietGestart && !t.NogNietAanDeBeurt))
+        {
+            rijen.Add(new TaakRij(t.Tekst, t.Deadline, "Mijn", t, "", t.Prioriteit));
+        }
+        rijen.AddRange(asanaRijen);
         rijen.AddRange(VooruitblikRijen());
 
         if (IsDisposed)
@@ -9020,6 +9090,17 @@ public class CockpitForm : Form
     /// </summary>
     private async Task VinkRijAfAsync(ListViewItem item, TaakRij rij)
     {
+        // Vooruitblik-rijen ("Mail terug…") horen niet afvinkbaar te zijn: er is niets om
+        // klaar te zetten, dus de rij stilletjes weghalen zou liegen.
+        if (rij.Lokaal is null && rij.AsanaGid.Length == 0)
+        {
+            Toast.Toon(this, "Deze rij is een vooruitblik — hier valt niets af te vinken", Fluent.Checkbox);
+            return;
+        }
+        // De rij meteen uit de lijst: het resultaat moet direct zichtbaar zijn, ook als het
+        // boeken van de timer of de Asana-call hierna even duurt (trage wifi). Gaat er iets
+        // mis, dan zet de ververs in de catch de echte staat terug.
+        item.Remove();
         try
         {
             // Zelfkennis en prijzenkast: klantsprong registreren + prestatiecheck.
@@ -9043,7 +9124,6 @@ public class CockpitForm : Form
                     taak.KlaarOp = DateTimeOffset.Now;
                     MijnTaakStore.Save(data);
                 }
-                item.Remove();
                 // Undo: het afvinken meteen ongedaan kunnen maken (lokale taken).
                 Toast.ToonUndo(this, $"Afgevinkt: {Kort(rij.Tekst, 40)}", () =>
                 {
@@ -9060,7 +9140,6 @@ public class CockpitForm : Form
             else if (rij.AsanaGid.Length > 0)
             {
                 await AsanaClient.VoltooiAsync(AsanaSettings.Load(), rij.AsanaGid, _cts.Token);
-                item.Remove();
                 Toast.Toon(this, $"Afgevinkt: {Kort(rij.Tekst, 40)}", Fluent.Check);
             }
             VierAlsLijstLeeg();
@@ -9069,6 +9148,8 @@ public class CockpitForm : Form
         catch (Exception ex)
         {
             Toast.Toon(this, $"Afvinken mislukt: {ex.Message}", Fluent.Checkbox);
+            // De rij was al optimistisch weggehaald: de lijst verversen zet de echte staat terug.
+            _ = VerversTakenAsync();
         }
     }
 
