@@ -296,7 +296,14 @@ public static class WindowsAppLogin
                 TypMetEnter(code);
                 return true;
             }
-            if (emailIngevuld < 2)
+            // E-mailveld: alleen zolang we nog aan de e-mailstap zijn (geen wachtwoord
+            // getypt) én het veld echt naar een e-mail/gebruikersnaam vraagt. Anders zou
+            // het na het wachtwoord het adres opnieuw in een verkeerd veld pompen — precies
+            // wat de aanmelding eerder brak.
+            var emailVeld = Regex.IsMatch(naam + " " + id,
+                @"e-?mail|iemand@|someone@|gebruikersnaam|user ?name|i0116|loginfmt",
+                RegexOptions.IgnoreCase);
+            if (wachtwoordIngevuld == 0 && emailIngevuld < 2 && emailVeld)
             {
                 emailIngevuld++;
                 Log($"dialoog: e-mail getypt in veld '{naam}'");
@@ -309,8 +316,10 @@ public static class WindowsAppLogin
         // toch veilig blind te doen: het e-mailscherm heeft autofocus en een e-mailadres
         // is geen geheim. Géén Tab vooraf (dat duwde de focus juist het veld uit), en pas
         // na een paar polls zodat het scherm echt geladen is — in de laadspinner gaat de
-        // invoer verloren. Het wachtwoord wordt nooit blind getypt.
-        if (emailIngevuld == 0 && dialoogPolls >= 4)
+        // invoer verloren. Nooit ná het wachtwoord (dan is de e-mailstap al voorbij en
+        // zou blind typen het wachtwoordveld overschrijven); het wachtwoord zelf wordt
+        // sowieso nooit blind getypt.
+        if (emailIngevuld == 0 && wachtwoordIngevuld == 0 && dialoogPolls >= 4)
         {
             emailIngevuld++;
             Log("dialoog: geen focusinfo — e-mail blind getypt (autofocusveld)");
