@@ -1166,9 +1166,21 @@ public class CockpitForm : Form
         berichtenMenu.Items.Add(mailTimesheetItem);
         var driveItem = BijlagenNaarDrive.Submenu(async (id, naam) => await BijlagenNaarDriveAsync(id, naam));
         berichtenMenu.Items.Add(driveItem);
+        // Bijlage(n) van een Gmail-mail (facturen) doorsturen naar het Billit-inboxadres —
+        // dezelfde actie als in het mailvenster, zodat de cockpit de volledige werkplek blijft.
+        var billitItem = new ToolStripMenuItem("Bijlage doorsturen naar Billit…");
+        billitItem.Click += async (_, _) => await BillitDoorsturenAsync();
+        berichtenMenu.Items.Add(billitItem);
         // Aparte handler: driveItem bestaat pas hier, en de eerste Opening-handler staat hierboven.
         berichtenMenu.Opening += (_, _) =>
-            driveItem.Visible = BijlagenNaarDrive.HeeftBijlagen(GeselecteerdBericht());
+        {
+            var b = GeselecteerdBericht();
+            driveItem.Visible = BijlagenNaarDrive.HeeftBijlagen(b);
+            // Doorsturen loopt via IMAP op de Gmail-inbox: alleen voor Gmail-mails met
+            // bijlagen (niet voor Outlook- of chatberichten).
+            billitItem.Visible = b is { IsChat: false, OutlookMail.Length: 0 } &&
+                BijlagenNaarDrive.HeeftBijlagen(b);
+        };
         var mailvensterItem = new ToolStripMenuItem("Openen in mailvenster…");
         mailvensterItem.Click += (_, _) => _openMail();
         berichtenMenu.Items.Add(mailvensterItem);
@@ -6876,6 +6888,46 @@ public class CockpitForm : Form
         if (resultaat.Count > 0)
         {
             Toast.Toon(this, $"{resultaat.Count} bijlage(n) in Drive gezet", Fluent.Document);
+        }
+    }
+
+    /// <summary>Stuurt gekozen bijlage(n) van de geselecteerde Gmail-mail door naar Billit.</summary>
+    private async Task BillitDoorsturenAsync()
+    {
+        if (GeselecteerdBericht() is not { IsChat: false, OutlookMail.Length: 0 } bericht ||
+            !BijlagenNaarDrive.HeeftBijlagen(bericht))
+        {
+            return;
+        }
+        var settings = MailReplySettings.Load();
+        var adres = settings.BillitAdres.Trim();
+        if (adres.Length == 0)
+        {
+            Toast.Toon(this, "Geen Billit-adres ingesteld — vul dat in via het mailvenster → Instellingen", Fluent.Globe);
+            return;
+        }
+        // Zelfde keuzedialoog als in het mailvenster: per bijlage aanvinken (standaard niets,
+        // tenzij er maar één is) en de naam eventueel aanpassen.
+        using var dialog = new BijlagenForm(bericht, "", doorsturen: true);
+        if (dialog.ShowDialog(this) != DialogResult.OK ||
+            (dialog.Selectie.Count == 0 && dialog.LinkSelectie.Count == 0))
+        {
+            return;
+        }
+        try
+        {
+            var aantal = await GmailClient.DoorsturenAsync(
+                settings, bericht, adres, dialog.Selectie, dialog.LinkSelectie, _cts.Token);
+            Toast.Toon(this,
+                $"Naar Billit gestuurd: {aantal} bijlage{(aantal == 1 ? "" : "n")}", Fluent.Send);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cockpit gesloten tijdens het doorsturen.
+        }
+        catch (Exception ex)
+        {
+            Toast.Toon(this, $"Doorsturen naar Billit mislukt: {ex.Message}", Fluent.Globe);
         }
     }
 
