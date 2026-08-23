@@ -79,7 +79,8 @@ public static class WindowsAppLogin
         var accountKnopGeprobeerd = false;
         var ooitActie = false;
         var stilTeller = 0;
-        var dialoogTabs = 0;
+        var dialoogPolls = 0;
+        var dialoogHerstarts = 0;
 
         for (var beurt = 0; beurt < 200; beurt++) // ~5 min: genoeg voor handmatige MFA
         {
@@ -91,16 +92,45 @@ public static class WindowsAppLogin
             // aparte route op basis van het gefocuste element (focus-events werken wél).
             if (VindLoginDialoog() is { } dialoog)
             {
+                dialoogPolls++;
                 try
                 {
-                    actie = HandelDialoogAf(dialoog, email,
-                        ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp,
-                        ref dialoogTabs);
+                    // De eerste polls laten laden: direct typen belandt in de
+                    // "Een ogenblik geduld…"-spinner en gaat verloren.
+                    if (dialoogPolls > 2)
+                    {
+                        actie = HandelDialoogAf(dialoog, email, dialoogPolls,
+                            ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp);
+                    }
                 }
                 catch (ElementNotAvailableException)
                 {
                     // Dialoog sloot net: volgende poll verder.
                 }
+                // Hangt de dialoog (de beruchte spinner die nooit doorlaadt, ~30 s zonder
+                // ooit een veld): sluiten met Escape en nog één keer vers proberen via
+                // het accountmenu.
+                if (dialoogPolls >= 20 && dialoogHerstarts < 1)
+                {
+                    dialoogHerstarts++;
+                    Log("dialoog hangt — Escape en opnieuw via het accountmenu");
+                    if (VindHoofdvenster() is { } h)
+                    {
+                        ZetVoorgrond(h);
+                        Thread.Sleep(300);
+                        System.Windows.Forms.SendKeys.SendWait("{ESC}");
+                    }
+                    dialoogPolls = 0;
+                    emailIngevuld = 0;
+                    accountKnopGeprobeerd = false;
+                    ooitActie = false;
+                    stilTeller = 0;
+                    continue;
+                }
+            }
+            else
+            {
+                dialoogPolls = 0;
             }
             foreach (var venster in KandidaatVensters())
             {
@@ -127,7 +157,7 @@ public static class WindowsAppLogin
             }
             stilTeller++;
             // Na een afgeronde aanmelding is het een tijdje stil: klaar.
-            if (ooitActie && stilTeller >= 4)
+            if (ooitActie && stilTeller >= 6)
             {
                 if (VindLoginDialoog() is not null)
                 {
@@ -149,7 +179,9 @@ public static class WindowsAppLogin
                 if (ProbeerAccountWissel(VindHoofdvenster(), email))
                 {
                     ooitActie = true;
-                    stilTeller = 0;
+                    // Extra geduld: na de accountwissel kan de logindialoog ruim tien
+                    // seconden op zich laten wachten — niet te vroeg "klaar" melden.
+                    stilTeller = -8;
                 }
                 else
                 {
@@ -198,8 +230,8 @@ public static class WindowsAppLogin
     /// blind typen zou het anders zichtbaar in een gewoon veld zetten.
     /// </summary>
     private static bool HandelDialoogAf(AutomationElement dialoog, string email,
-        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp,
-        ref int dialoogTabs)
+        int dialoogPolls,
+        ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp)
     {
         var pids = System.Diagnostics.Process.GetProcessesByName("Windows365")
             .Select(p => p.Id).ToHashSet();
@@ -270,18 +302,12 @@ public static class WindowsAppLogin
             }
             return false;
         }
-        // Focus (nog) niet op een herkenbaar veld: een paar keer Tab om erin te komen.
-        if (dialoogTabs < 3)
-        {
-            dialoogTabs++;
-            Log($"dialoog: geen veldfocus — Tab {dialoogTabs}");
-            System.Windows.Forms.SendKeys.SendWait("{TAB}");
-            return true;
-        }
         // Chromium geeft soms helemaal geen focusinfo prijs. De állereerste stap is dan
         // toch veilig blind te doen: het e-mailscherm heeft autofocus en een e-mailadres
-        // is geen geheim. Het wachtwoord wordt nooit blind getypt.
-        if (emailIngevuld == 0)
+        // is geen geheim. Géén Tab vooraf (dat duwde de focus juist het veld uit), en pas
+        // na een paar polls zodat het scherm echt geladen is — in de laadspinner gaat de
+        // invoer verloren. Het wachtwoord wordt nooit blind getypt.
+        if (emailIngevuld == 0 && dialoogPolls >= 4)
         {
             emailIngevuld++;
             Log("dialoog: geen focusinfo — e-mail blind getypt (autofocusveld)");
