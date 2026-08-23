@@ -313,9 +313,6 @@ public class CockpitForm : Form
         // Alle klanten zitten samen achter één "Projecten ▾"-knop (submenu per klant) —
         // vijf losse dropdowns maakten de werkbalk onleesbaar vol.
         var projectenMenu = new ContextMenuStrip();
-        // Wisselstuk voor de losse klantknoppen: het klantItem krijgt tijdelijk deze lege
-        // dropdown zolang zijn echte menu los van "Projecten ▾" getoond wordt (zie onder).
-        var losseKnopDummy = new ToolStripDropDownMenu();
         Theme.Style(projectenMenu);
         // Ruimte voor de klantlogo's: woordmerken zijn breder dan hoog.
         projectenMenu.ImageScalingSize = new Size(28, 18);
@@ -397,110 +394,106 @@ public class CockpitForm : Form
             {
                 Image = KlantLogo.Voor(label.Replace(" ▾", "")),
             };
-            foreach (var (item, doe, _) in acties)
-            {
-                var mi = new ToolStripMenuItem(item);
-                mi.Click += (_, _) =>
-                {
-                    try
-                    {
-                        doe();
-                        Toast.Toon(this, ThemaStem.Gestart(item), Fluent.Globe);
-                    }
-                    catch (Exception ex)
-                    {
-                        Toast.Toon(this, $"Starten mislukt: {ex.Message}", Fluent.Globe);
-                    }
-                };
-                klantItem.DropDownItems.Add(mi);
-            }
-            // Per Claude-projectmap een sluiten-item dat alleen aan staat als er een sessie draait.
             var claudeMappen = acties.Where(a => a.Claude is not null).Select(a => a.Claude!).Distinct().ToList();
-            // Git-status per projectmap: het aantal ongecommitte bestanden komt in het label te
-            // staan (asynchroon, want een git-call in WSL duurt bijna een seconde) en klikken
-            // opent de volledige lijst.
-            var gitItems = new List<(ToolStripMenuItem Item, string Map, string Naam)>();
-            if (claudeMappen.Count > 0)
+            // Bouwt één volledige set klant-items (acties + git-status + Claude-sluiten) in
+            // het gegeven menu, inclusief de Opening-verversing. Dit gebeurt twee keer: voor
+            // het submenu in "Projecten ▾" én voor het eigen menu van de losse klantknop.
+            // Items kunnen in WinForms maar in één menu tegelijk leven, en het submenu
+            // standalone tonen kan niet: zolang de dropdown een OwnerItem heeft, herrekent
+            // WinForms de positie vanaf het (onzichtbare) verzamelmenu — linksboven dus.
+            void VulKlantMenu(ToolStripDropDown menu)
             {
-                klantItem.DropDownItems.Add(new ToolStripSeparator());
-                foreach (var map in claudeMappen)
+                foreach (var (item, doe, _) in acties)
                 {
-                    var projectNaam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
-                    var git = new ToolStripMenuItem($"◆ Git-status — {projectNaam}");
-                    git.Click += (_, _) =>
-                    {
-                        using var form = new GitStatusForm(map, projectNaam);
-                        form.ShowDialog(this);
-                    };
-                    klantItem.DropDownItems.Add(git);
-                    gitItems.Add((git, map, projectNaam));
-                    _gitMenuItems.Add((git, map, projectNaam));
-                    WerkGitLabelBij(git, map, projectNaam); // laatst bekende stand meteen erbij
-                }
-            }
-            var sluitItems = new List<(ToolStripMenuItem Item, string Map)>();
-            if (claudeMappen.Count > 0)
-            {
-                klantItem.DropDownItems.Add(new ToolStripSeparator());
-                foreach (var map in claudeMappen)
-                {
-                    var naam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
-                    var sluit = new ToolStripMenuItem($"⏹ Claude sluiten — {naam}");
-                    sluit.Click += (_, _) =>
+                    var mi = new ToolStripMenuItem(item);
+                    mi.Click += (_, _) =>
                     {
                         try
                         {
-                            ClientLauncher.StopClaude(map);
-                            Toast.Toon(this, $"Claude-sessie gesloten — {naam}", Fluent.Globe);
+                            doe();
+                            Toast.Toon(this, ThemaStem.Gestart(item), Fluent.Globe);
                         }
                         catch (Exception ex)
                         {
-                            Toast.Toon(this, $"Sluiten mislukt: {ex.Message}", Fluent.Globe);
+                            Toast.Toon(this, $"Starten mislukt: {ex.Message}", Fluent.Globe);
                         }
                     };
-                    klantItem.DropDownItems.Add(sluit);
-                    sluitItems.Add((sluit, map));
+                    menu.Items.Add(mi);
                 }
+                // Git-status per projectmap: het aantal ongecommitte bestanden komt in het
+                // label te staan (asynchroon, want een git-call in WSL duurt bijna een
+                // seconde) en klikken opent de volledige lijst.
+                var gitItems = new List<(ToolStripMenuItem Item, string Map, string Naam)>();
+                if (claudeMappen.Count > 0)
+                {
+                    menu.Items.Add(new ToolStripSeparator());
+                    foreach (var map in claudeMappen)
+                    {
+                        var projectNaam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
+                        var git = new ToolStripMenuItem($"◆ Git-status — {projectNaam}");
+                        git.Click += (_, _) =>
+                        {
+                            using var form = new GitStatusForm(map, projectNaam);
+                            form.ShowDialog(this);
+                        };
+                        menu.Items.Add(git);
+                        gitItems.Add((git, map, projectNaam));
+                        _gitMenuItems.Add((git, map, projectNaam));
+                        WerkGitLabelBij(git, map, projectNaam); // laatst bekende stand meteen erbij
+                    }
+                }
+                // Per Claude-projectmap een sluiten-item dat alleen aan staat als er een sessie draait.
+                var sluitItems = new List<(ToolStripMenuItem Item, string Map)>();
+                if (claudeMappen.Count > 0)
+                {
+                    menu.Items.Add(new ToolStripSeparator());
+                    foreach (var map in claudeMappen)
+                    {
+                        var naam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
+                        var sluit = new ToolStripMenuItem($"⏹ Claude sluiten — {naam}");
+                        sluit.Click += (_, _) =>
+                        {
+                            try
+                            {
+                                ClientLauncher.StopClaude(map);
+                                Toast.Toon(this, $"Claude-sessie gesloten — {naam}", Fluent.Globe);
+                            }
+                            catch (Exception ex)
+                            {
+                                Toast.Toon(this, $"Sluiten mislukt: {ex.Message}", Fluent.Globe);
+                            }
+                        };
+                        menu.Items.Add(sluit);
+                        sluitItems.Add((sluit, map));
+                    }
+                }
+                // Bij het openen: sluiten-items aan/uit en git-tellingen verversen zonder
+                // het menu te laten wachten — de labels komen uit de dagcache (1× per dag
+                // automatisch ververst, of via "Git controleren" onder ▾).
+                menu.Opening += (_, _) =>
+                {
+                    foreach (var (sluit, map) in sluitItems)
+                    {
+                        sluit.Enabled = ClientLauncher.IsClaudeActief(map);
+                    }
+                    foreach (var (item, map, naam) in gitItems)
+                    {
+                        WerkGitLabelBij(item, map, naam);
+                    }
+                };
             }
-            // Bij openen van het klant-submenu: sluiten-items aan/uit en git-tellingen erbij
-            // zoeken zonder het menu te laten wachten ("…" tot git antwoordt). Op de
-            // DropDown zelf (niet DropDownOpening): dan vuurt het ook wanneer een losse
-            // klantknop in de werkbalk ditzelfde menu rechtstreeks toont.
-            klantItem.DropDown.Opening += (_, _) =>
-            {
-                foreach (var (sluit, map) in sluitItems)
-                {
-                    sluit.Enabled = ClientLauncher.IsClaudeActief(map);
-                }
-                // De labels komen uit de dagcache (1× per dag automatisch ververst, of via
-                // "Git controleren" onder ▾) — het menu wacht dus niet meer op git/WSL.
-                foreach (var (item, map, naam) in gitItems)
-                {
-                    WerkGitLabelBij(item, map, naam);
-                }
-            };
+            VulKlantMenu(klantItem.DropDown);
             projectKlanten.Add((klantItem, claudeMappen));
             projectenMenu.Items.Add(klantItem);
             // Op een breed venster staat elke klant gewoon naast elkaar in de balk; de knop
-            // toont hetzelfde submenu als het verzamelmenu.
+            // krijgt een eigen, zelfstandig menu met dezelfde inhoud.
+            var losMenu = new ContextMenuStrip();
+            Theme.Style(losMenu);
+            VulKlantMenu(losMenu);
             var klantKnop = new ModernButton { Text = label };
             klantKnop.KrimpNaarInhoud();
             klantKnop.Click += (_, _) =>
-            {
-                // Zolang de dropdown aan het klantItem in "Projecten ▾" hangt, negeert
-                // WinForms de meegegeven positie en rekent hij vanaf dat (onzichtbare)
-                // verzamelmenu — het menu klapte dan helemaal linksboven uit. Daarom hier
-                // tijdelijk loskoppelen en na het sluiten weer terughangen.
-                var dd = klantItem.DropDown;
-                klantItem.DropDown = losseKnopDummy;
-                void Terug(object? _, ToolStripDropDownClosedEventArgs __)
-                {
-                    dd.Closed -= Terug;
-                    klantItem.DropDown = dd;
-                }
-                dd.Closed += Terug;
-                dd.Show(klantKnop, new Point(0, klantKnop.Height + 4));
-            };
+                losMenu.Show(klantKnop, new Point(0, klantKnop.Height + 4));
             _projectKnoppen.Add((klantKnop, label, claudeMappen));
         }
 
