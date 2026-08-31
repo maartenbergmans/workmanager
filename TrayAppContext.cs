@@ -105,6 +105,11 @@ public class TrayAppContext : ApplicationContext
         _dubbelCtrl = new DubbelCtrlHook();
         _dubbelCtrl.Getikt += OpenCockpit;
 
+        // Claude Code-meldingen: de Notification-hook zet signalen in een spoolmap; hier
+        // begint de bewaking die daar klikbare meldingen van maakt (klik = terminal naar
+        // de voorgrond).
+        ClaudeAandacht.Start();
+
         // Het trayicoon is met de themakleuren getekend: bij een ander kleurenschema
         // opnieuw tekenen, anders blijft het oude accent in de systeembalk staan.
         Theme.ThemaGewijzigd += UpdateIcon;

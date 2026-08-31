@@ -21,6 +21,15 @@ static class Program
             }
         };
 
+        // Claude Code-brug: de Notification-hook van Claude Code roept deze modus aan met
+        // het hook-JSON op stdin. Alleen het signaalbestand wegschrijven en meteen stoppen —
+        // de draaiende tray-app toont dan de klikbare melding (zie ClaudeAandacht).
+        if (args.Length == 1 && args[0] == "--claude-aandacht")
+        {
+            ClaudeAandacht.SchrijfSignaal(Console.In.ReadToEnd());
+            return;
+        }
+
         // Headless regressietests voor de kwetsbaarste tekstparsers (OWA-labels wijzigen
         // geregeld): resultaat in %APPDATA%\WorkManager\parser-tests.txt, exitcode = aantal fouten.
         if (args.Length == 1 && args[0] == "--parsertests")
