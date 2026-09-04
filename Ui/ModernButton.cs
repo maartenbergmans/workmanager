@@ -9,6 +9,8 @@ public enum ButtonKind
     Normal,
     /// <summary>Primaire actie: gevuld in de accentkleur.</summary>
     Accent,
+    /// <summary>Alarmactie die nú aandacht vraagt: gevuld in de dangerkleur (rood).</summary>
+    Danger,
 }
 
 /// <summary>
@@ -244,6 +246,14 @@ public class ModernButton : Control, IButtonControl
             // Niet altijd wit: op een licht accent (goud, turquoise) leest bijna-zwart beter.
             tekst = Theme.OpAccent;
         }
+        else if (Kind == ButtonKind.Danger)
+        {
+            vlak = _ingedrukt
+                ? Theme.Mix(Theme.Danger, Color.Black, 0.25f)
+                : Theme.Mix(Theme.Danger, Color.White, 0.15f * _hover);
+            rand = Color.Transparent;
+            tekst = Color.White;
+        }
         else
         {
             vlak = _ingedrukt ? Theme.Surface : Theme.Mix(Theme.Card, Theme.CardHover, _hover);
@@ -299,6 +309,7 @@ public class ModernButton : Control, IButtonControl
             var x = Math.Max(4, (Width - totaal) / 2);
             var glyphKleur = !Enabled && !Bezig ? tekst
                 : Kind == ButtonKind.Accent ? Theme.OpAccent
+                : Kind == ButtonKind.Danger ? Color.White
                 : Theme.Mix(Theme.AccentHover, Theme.Text, 0.25f);
             if (Bezig)
             {

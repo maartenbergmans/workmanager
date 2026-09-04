@@ -1217,7 +1217,7 @@ public class MailReplyForm : Form
         _list.Items.Clear();
         foreach (var mail in _mails.Where(Zichtbaar))
         {
-            var icoon = mail.WhatsAppChat.Length > 0 ? "🟢 " : mail.ChatSpace.Length > 0 ? "💬 " : "✉️ ";
+            var icoon = mail.BronIcoon.Length > 0 ? mail.BronIcoon + " " : "✉️ ";
             var item = new ListViewItem(icoon + mail.Van)
             {
                 Tag = mail, UseItemStyleForSubItems = false,

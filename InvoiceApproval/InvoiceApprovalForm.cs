@@ -95,9 +95,31 @@ public class InvoiceApprovalForm : Form
         _list.Columns.Add("Valuta", 60);
         _list.Columns.Add("Auto-regel", 300);
         _list.ItemChecked += (_, _) => UpdateStatus();
+        // Dubbelklik = de factuur rechts in de browser openen; gaat zelf eerst terug naar
+        // het overzicht, ook als er nog een andere factuur open staat.
+        _list.MouseDoubleClick += async (_, e) =>
+        {
+            if (_list.GetItemAt(e.X, e.Y) is not { Tag: InvoiceRow rij } item)
+            {
+                return;
+            }
+            // Dubbelklik toggelt in een checkbox-lijst ook het vinkje — dat is hier niet
+            // de bedoeling, dus meteen terugdraaien.
+            item.Checked = !item.Checked;
+            await BekijkFactuurAsync(rij);
+        };
 
         var listMenu = new ContextMenuStrip();
         Theme.Style(listMenu);
+        var bekijkItem = new ToolStripMenuItem("Factuur bekijken in de browser");
+        bekijkItem.Click += async (_, _) =>
+        {
+            if (_list.SelectedItems.Count > 0 && _list.SelectedItems[0].Tag is InvoiceRow rij)
+            {
+                await BekijkFactuurAsync(rij);
+            }
+        };
+        listMenu.Items.Add(bekijkItem);
         var ruleItem = new ToolStripMenuItem("Regel maken/aanpassen voor deze leverancier…");
         ruleItem.Click += (_, _) =>
         {
@@ -211,15 +233,49 @@ public class InvoiceApprovalForm : Form
         {
             return;
         }
-        if ((_web.CoreWebView2?.Source ?? "").Contains("/invoices", StringComparison.OrdinalIgnoreCase))
+        // Niet alleen op de URL afgaan: bij een verlopen sessie toont ISPnext het
+        // loginscherm óp de /invoices-URL zelf, en dan moet niet de facturenlezer maar
+        // de login-assistent aan de slag.
+        if (await IsLoginSchermAsync())
         {
-            await FetchInvoicesAsync();
+            await TryLoginAssistAsync();
+        }
+        else if ((_web.CoreWebView2?.Source ?? "").Contains("/invoices", StringComparison.OrdinalIgnoreCase))
+        {
+            // Alleen ophalen als de facturentabel (binnenkort) echt in beeld is: een geopend
+            // factuurdetail heeft dezelfde /invoices-URL maar geen tabel, en dan was een
+            // fetch-poging alleen maar 15 s ruis ("geen facturentabel gevonden").
+            for (var waited = 0; waited < 15000; waited += 1000)
+            {
+                if (IsDisposed)
+                {
+                    return;
+                }
+                if (await HeeftTabelAsync())
+                {
+                    await FetchInvoicesAsync();
+                    return;
+                }
+                if (await IsLoginSchermAsync())
+                {
+                    await TryLoginAssistAsync();
+                    return;
+                }
+                await Task.Delay(1000);
+            }
         }
         else
         {
             await TryLoginAssistAsync();
         }
     }
+
+    /// <summary>
+    /// Staat er nu een loginscherm in beeld? Een Microsoft-aanmeldpagina, of op ISPnext
+    /// zelf een zichtbaar wachtwoordveld of een 'Single Sign-On'-knop.
+    /// </summary>
+    private async Task<bool> IsLoginSchermAsync() =>
+        await RunScriptAsync(LoginSchermScript) is { ValueKind: JsonValueKind.True };
 
     // ---------- Login-assistent ----------
 
@@ -238,20 +294,28 @@ public class InvoiceApprovalForm : Form
         _loginAssistBusy = true;
         try
         {
-            // SPA/loginpagina's renderen soms pas na de navigatie; even blijven proberen —
-            // en dóór de stappen heen (e-mail → wachtwoord → "aangemeld blijven?"), want
-            // die wisselen zonder navigatie. Alleen de MFA-stap blijft handwerk.
+            // SPA/loginpagina's renderen soms pas (veel) later, en de stappen (e-mail →
+            // wachtwoord → "aangemeld blijven?") wisselen zonder navigatie. Daarom blijven
+            // proberen zolang het venster open is en we nog niet op de facturenpagina
+            // staan — een vaste pogingenteller gaf het eerder net te vroeg op en liet het
+            // loginscherm gewoon staan. Alleen de MFA-stap blijft handwerk.
             var gelogd = new HashSet<string>(StringComparer.Ordinal);
-            for (var attempt = 0; attempt < 40; attempt++)
+            // Ook op de /invoices-URL doorgaan zolang daar een loginscherm staat (verlopen
+            // sessie): pas als dat weg is, is de login echt rond.
+            while (!IsDisposed && _web.CoreWebView2 is { } kern &&
+                   (!(kern.Source ?? "").Contains("/invoices", StringComparison.OrdinalIgnoreCase) ||
+                    await IsLoginSchermAsync()))
             {
                 var result = await RunScriptStringAsync(LoginAssistScript);
-                if (result is "sso" or "account" or "email" && gelogd.Add(result))
+                if (result is "sso" or "account" or "email" or "geen-sso" && gelogd.Add(result))
                 {
                     Log(result switch
                     {
                         "sso" => $"Gebruikersnaam '{LoginEmail}' ingevuld en 'Ga verder met " +
                                  "Single Sign-On' aangeklikt.",
                         "account" => "Microsoft-account automatisch geselecteerd.",
+                        "geen-sso" => "Loginscherm gezien, maar geen 'Single Sign-On'-knop " +
+                                      "gevonden — de pagina is vermoedelijk veranderd.",
                         _ => $"E-mailadres '{LoginEmail}' ingevuld op de Microsoft-aanmeldpagina.",
                     });
                 }
@@ -262,7 +326,22 @@ public class InvoiceApprovalForm : Form
                 {
                     Log("Wachtwoord ingevuld — alleen de MFA-stap is nog handwerk.");
                 }
-                await Task.Delay(500);
+                await Task.Delay(700);
+            }
+            // De login kan ook zonder nieuwe navigatie rond zijn (SPA-wissel): dan komt er
+            // geen event meer, dus de facturen hier meteen ophalen.
+            if (!IsDisposed && (_web.CoreWebView2?.Source ?? "")
+                    .Contains("/invoices", StringComparison.OrdinalIgnoreCase))
+            {
+                await FetchInvoicesAsync();
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Venster gesloten of WebView2 weggevallen tijdens het proberen: stil stoppen.
+            if (!IsDisposed)
+            {
+                Log($"Login-assistent gestopt: {ex.Message}");
             }
         }
         finally
@@ -298,6 +377,16 @@ public class InvoiceApprovalForm : Form
                     result = parsed;
                     break;
                 }
+                // Rendert er intussen een loginscherm (verlopen sessie op de /invoices-URL),
+                // dan heeft verder zoeken geen zin: de login-assistent moet aan de slag.
+                if (await IsLoginSchermAsync())
+                {
+                    Log("Sessie verlopen — de login-assistent klikt zelf door tot aan de MFA-stap.");
+                    // Bewust niet awaiten: de assistent kan minutenlang bezig zijn (MFA) en
+                    // de fetch-vlaggen moeten intussen weer vrijkomen.
+                    _ = TryLoginAssistAsync();
+                    return;
+                }
                 await Task.Delay(1000);
             }
 
@@ -307,13 +396,31 @@ public class InvoiceApprovalForm : Form
                 return;
             }
 
+            // Vinkjes van de gebruiker overleven een verversing (bv. de automatische fetch
+            // na terugkeer uit een factuurdetail): wat aangevinkt stond, blijft aangevinkt;
+            // alleen een eerste (lege) lijst volgt de auto-goedkeuringsregels.
+            var eerder = _invoices.Count > 0
+                ? CheckedRows().Select(r => r.Leverancier + "|" + r.Factuurnummer)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             _invoices = ParseInvoices(result.Value);
             Classify();
             FillList();
+            if (eerder is not null)
+            {
+                foreach (ListViewItem item in _list.Items)
+                {
+                    if (item.Tag is InvoiceRow r)
+                    {
+                        item.Checked = eerder.Contains(r.Leverancier + "|" + r.Factuurnummer);
+                    }
+                }
+            }
 
             var total = _invoices.Sum(i => i.Bedrag ?? 0);
             Log($"{_invoices.Count} facturen gevonden, totaal {FormatBedrag(total)}. " +
-                $"{_invoices.Count(i => i.AutoGoedkeuren)} voldoen aan de auto-goedkeuringsregels.");
+                $"{_invoices.Count(i => i.AutoGoedkeuren)} voldoen aan de auto-goedkeuringsregels. " +
+                "Dubbelklik op een rij om de factuur rechts te bekijken.");
             if (_invoices.Count > 30)
             {
                 Log("⚠ Meer dan 30 facturen — onverwacht hoog volume, controleer de lijst extra goed.");
@@ -450,6 +557,65 @@ public class InvoiceApprovalForm : Form
         }
     }
 
+    // ---------- Factuur bekijken ----------
+
+    /// <summary>
+    /// Opent één factuur in de browser rechts: eerst (zo nodig) terug naar het overzicht —
+    /// ook als er al een andere factuur open staat — en dan de juiste rij aanklikken.
+    /// </summary>
+    private async Task BekijkFactuurAsync(InvoiceRow rij)
+    {
+        if (_web.CoreWebView2 is null || !await ZorgVoorOverzichtAsync())
+        {
+            return;
+        }
+        var target = JsonSerializer.Serialize(new { l = rij.Leverancier, f = rij.Factuurnummer });
+        var uitkomst = await RunScriptStringAsync(OpenRowScript.Replace("__TARGET__", target));
+        Log(uitkomst switch
+        {
+            "geopend" => $"Factuur {rij.Factuurnummer} ({rij.Leverancier}) geopend in de browser.",
+            "niet-gevonden" => $"Factuur {rij.Factuurnummer} niet teruggevonden in het overzicht — " +
+                               "haal de lijst opnieuw op.",
+            _ => "Factuur openen mislukt: geen facturentabel in beeld.",
+        });
+    }
+
+    /// <summary>
+    /// Zorgt dat de browser het facturenoverzicht (met tabel) toont. Staat er nog een
+    /// factuurdetail of iets anders open, dan navigeert hij ernaartoe en wacht tot de
+    /// tabel er echt staat.
+    /// </summary>
+    private async Task<bool> ZorgVoorOverzichtAsync()
+    {
+        if (_web.CoreWebView2 is null)
+        {
+            return false;
+        }
+        if (await HeeftTabelAsync())
+        {
+            return true;
+        }
+        Log("Terug naar het facturenoverzicht…");
+        _web.CoreWebView2.Navigate(InvoicesUrl);
+        for (var waited = 0; waited < 30000; waited += 1000)
+        {
+            await Task.Delay(1000);
+            if (IsDisposed)
+            {
+                return false;
+            }
+            if (await HeeftTabelAsync())
+            {
+                return true;
+            }
+        }
+        Log("Facturenoverzicht niet gevonden — is de sessie verlopen? Probeer opnieuw zodra de login rond is.");
+        return false;
+    }
+
+    private async Task<bool> HeeftTabelAsync() =>
+        await RunScriptAsync(HeeftTabelScript) is { ValueKind: JsonValueKind.True };
+
     // ---------- Goedkeuren ----------
 
     private async Task ApproveSelectedAsync()
@@ -475,6 +641,13 @@ public class InvoiceApprovalForm : Form
         _pulse.Actief = true;
         try
         {
+            // Sta je nog in een factuurdetail, dan is er geen tabel om in aan te vinken:
+            // eerst zelf terug naar het overzicht.
+            if (!await ZorgVoorOverzichtAsync())
+            {
+                Log("Goedkeuren afgebroken: het facturenoverzicht is niet bereikbaar.");
+                return;
+            }
             // 1. Rijen aanvinken in ISPnext (matching op factuurnummer + leverancier).
             var targets = JsonSerializer.Serialize(rows.Select(r => new { l = r.Leverancier, f = r.Factuurnummer }));
             var selection = await RunScriptAsync(SelectScript.Replace("__TARGETS__", targets));
@@ -647,6 +820,39 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
+    private const string HeeftTabelScript = $$"""
+        (() => {
+            {{FindTableJs}}
+            return !!findTable();
+        })()
+        """;
+
+    private const string OpenRowScript = $$"""
+        (() => {
+            {{FindTableJs}}
+            const table = findTable();
+            if (!table) return 'geen-tabel';
+            const t = __TARGET__;
+            const row = [...table.querySelectorAll('tbody tr')].find(r => {
+                const text = norm(r.innerText);
+                return text.includes(t.f) && text.includes(t.l);
+            });
+            if (!row) return 'niet-gevonden';
+            // Liefst een echte link in de rij; anders de factuurnummer-cel (niet de
+            // checkbox) met de volledige muis-eventreeks — SPA-tabellen reageren vaak op
+            // mousedown — en voor de zekerheid een dubbelklik erachteraan.
+            const cells = [...row.querySelectorAll('td')].filter(c => !c.querySelector('input[type=checkbox]'));
+            const doel = row.querySelector('a[href]') ||
+                cells.find(c => norm(c.innerText).includes(t.f)) || cells[0] || row;
+            const opts = { bubbles: true, cancelable: true, view: window };
+            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick']) {
+                doel.dispatchEvent(type.startsWith('pointer')
+                    ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
+            }
+            return 'geopend';
+        })()
+        """;
+
     private const string SelectScript = $$"""
         (() => {
             {{FindTableJs}}
@@ -700,22 +906,70 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
+    // Herkent elk loginscherm: Microsoft-aanmeldpagina's op hun eigen host, en op ISPnext
+    // zelf een zichtbaar wachtwoordveld of een 'Single Sign-On'-knop (ook in shadow
+    // DOM/iframes, net als de assistent zelf).
+    private const string LoginSchermScript = """
+        (() => {
+            if (location.hostname.includes('login.microsoftonline.com') ||
+                location.hostname.includes('login.live.com')) return true;
+            const alle = sel => {
+                const uit = [];
+                const loop = root => {
+                    root.querySelectorAll(sel).forEach(e => uit.push(e));
+                    root.querySelectorAll('*').forEach(e => {
+                        if (e.shadowRoot) loop(e.shadowRoot);
+                    });
+                    root.querySelectorAll('iframe').forEach(f => {
+                        try { if (f.contentDocument) loop(f.contentDocument); } catch (_) {}
+                    });
+                };
+                loop(document);
+                return uit;
+            };
+            if (alle('input[type=password]').some(e => e.offsetParent !== null)) return true;
+            return alle('button, a, input[type=submit], [role=button]')
+                .some(e => e.offsetParent !== null &&
+                           /single\s*sign/i.test((e.innerText || e.value || '')));
+        })()
+        """;
+
     private const string LoginAssistScript = $$"""
         (() => {
-            const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+            // Exotische koppeltekens (bv. de non-breaking hyphen in "Sign‑On") worden een
+            // gewone '-', zodat de tekstmatch niet stukloopt op typografie.
+            const norm = s => (s || '').replace(/[‐-―−]/g, '-')
+                .replace(/\s+/g, ' ').trim();
             const email = {{EmailJson}};
+
+            // querySelectorAll die ook shadow DOM en same-origin iframes doorzoekt: de
+            // loginkaart zit soms in een web component of frame en bleef anders onvindbaar.
+            const alle = sel => {
+                const uit = [];
+                const loop = root => {
+                    root.querySelectorAll(sel).forEach(e => uit.push(e));
+                    root.querySelectorAll('*').forEach(e => {
+                        if (e.shadowRoot) loop(e.shadowRoot);
+                    });
+                    root.querySelectorAll('iframe').forEach(f => {
+                        try { if (f.contentDocument) loop(f.contentDocument); } catch (_) {}
+                    });
+                };
+                loop(document);
+                return uit;
+            };
 
             // Microsoft-loginpagina's (accountkeuze of aanmeldscherm).
             if (location.hostname.includes('login.microsoftonline.com') ||
                 location.hostname.includes('login.live.com')) {
                 // Accountkeuze: klik de tegel met het juiste e-mailadres.
-                const tiles = [...document.querySelectorAll('[role=button], [role=listitem], .table')]
+                const tiles = alle('[role=button], [role=listitem], .table')
                     .filter(e => e.offsetParent !== null &&
                                  norm(e.innerText).toLowerCase().includes(email));
                 if (tiles.length > 0) { tiles[tiles.length - 1].click(); return 'account'; }
 
                 // Aanmeldscherm ("E-mailadres, telefoonnummer of Skype"): e-mail invullen + Volgende.
-                const emailField = [...document.querySelectorAll('input[type=email], input[name=loginfmt]')]
+                const emailField = alle('input[type=email], input[name=loginfmt]')
                     .find(e => e.offsetParent !== null);
                 if (emailField) {
                     if (norm(emailField.value).toLowerCase() !== email) {
@@ -725,7 +979,7 @@ public class InvoiceApprovalForm : Form
                         emailField.dispatchEvent(new Event('change', { bubbles: true }));
                     }
                     const next = document.querySelector('#idSIButton9') ||
-                        [...document.querySelectorAll('input[type=submit], button')]
+                        alle('input[type=submit], button')
                             .find(e => e.offsetParent !== null &&
                                        ['volgende', 'next'].includes(norm(e.value || e.innerText).toLowerCase()));
                     if (next) { next.click(); return 'email'; }
@@ -735,11 +989,16 @@ public class InvoiceApprovalForm : Form
 
             // ISPnext-loginpagina: gebruikersnaam invullen en de SSO-knop klikken
             // (niet 'Inloggen', dat is voor een lokaal wachtwoord).
-            const ssoBtn = [...document.querySelectorAll('button, a, input[type=submit], [role=button]')]
+            const ssoBtn = alle('button, a, input[type=submit], [role=button]')
                 .find(e => e.offsetParent !== null &&
                            norm(e.innerText || e.value).toLowerCase().includes('single sign-on'));
-            if (!ssoBtn) return null;
-            const field = [...document.querySelectorAll('input[type=text], input[type=email], input:not([type])')]
+            if (!ssoBtn) {
+                // Wél een loginscherm (wachtwoordveld zichtbaar) maar geen SSO-knop: dat
+                // is een veranderde pagina — meld het, anders lijkt de assistent kapot.
+                const wachtwoord = alle('input[type=password]').find(e => e.offsetParent !== null);
+                return wachtwoord ? 'geen-sso' : null;
+            }
+            const field = alle('input[type=text], input[type=email], input:not([type])')
                 .find(e => e.offsetParent !== null);
             if (field && norm(field.value).toLowerCase() !== email) {
                 const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;

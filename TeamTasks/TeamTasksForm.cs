@@ -52,8 +52,15 @@ public class TeamTasksForm : Form
                 TaakToevoegen();
             }
         };
-        var addButton = new ModernButton { Text = "Toevoegen", Width = 110, Glyph = Fluent.Add };
+        var addButton = new ModernButton
+        {
+            Text = "Toevoegen", Width = 110, Glyph = Fluent.Add, Enabled = false,
+        };
         addButton.Click += (_, _) => TaakToevoegen();
+        // De knop hoort bij het invoerveld ernaast: pas actief zodra er tekst staat,
+        // zodat die samenhang zichtbaar is.
+        _nieuweTaak.TextChanged += (_, _) =>
+            addButton.Enabled = _nieuweTaak.Text.Trim().Length > 0;
         var claudeButton = new ModernButton { Text = "Uit tekst (Claude)…", Width = 165, Glyph = Fluent.Ster };
         claudeButton.Click += (_, _) => TakenUitTekst();
         _mailButton = new ModernButton

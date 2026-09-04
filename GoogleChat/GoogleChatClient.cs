@@ -185,7 +185,8 @@ public static class GoogleChatClient
 
             var transcript = string.Join("\n", berichten.Select(b =>
                 $"[{b.Tijd.ToLocalTime():dd-MM HH:mm}] " +
-                $"{(b.SenderId == s.MijnUserId ? "Maarten (ikzelf)" : b.SenderNaam)}: {b.Tekst}"));
+                $"{(b.SenderId == s.MijnUserId ? "Maarten (ikzelf)" : b.SenderNaam)}: " +
+                TekstMetBijlagen(b.Tekst, b.Afbeeldingen, b.Bestanden)));
 
             resultaat.Add(new MailBericht
             {
@@ -327,8 +328,12 @@ public static class GoogleChatClient
     /// </summary>
     private static readonly Dictionary<string, string> AfbeeldingCache = new();
 
-    /// <summary>Grens per afbeelding; daarboven tonen we alleen de bestandsnaam.</summary>
-    private const int MaxAfbeeldingBytes = 3 * 1024 * 1024;
+    /// <summary>
+    /// Grens voor de download per afbeelding; daarboven tonen we alleen de bestandsnaam.
+    /// Ruim genomen: telefoonfoto's van 5–10 MB worden hieronder toch verkleind vóór ze
+    /// in de HTML belanden.
+    /// </summary>
+    private const int MaxAfbeeldingBytes = 12 * 1024 * 1024;
 
     private static async Task<List<Space>> SpacesAsync(string token, CancellationToken ct)
     {
@@ -485,6 +490,29 @@ public static class GoogleChatClient
         IReadOnlyList<string>? Afbeeldingen = null, IReadOnlyList<string>? Bestanden = null);
 
     /// <summary>
+    /// Berichttekst voor transcripten (Claude-concepten, snelantwoord, webversie): een
+    /// bericht met alleen een foto zou daar anders als lege regel verschijnen, dus foto's
+    /// en bijlagen krijgen een tekstmarkering achter de tekst.
+    /// </summary>
+    public static string TekstMetBijlagen(
+        string tekst, IReadOnlyList<string>? afbeeldingen, IReadOnlyList<string>? bestanden)
+    {
+        var markers = new List<string>();
+        var fotos = afbeeldingen?.Count ?? 0;
+        if (fotos > 0)
+        {
+            markers.Add(fotos == 1 ? "[📷 foto]" : $"[📷 {fotos} foto's]");
+        }
+        markers.AddRange((bestanden ?? Array.Empty<string>()).Select(naam => $"[📎 {naam}]"));
+        if (markers.Count == 0)
+        {
+            return tekst;
+        }
+        var achtervoegsel = string.Join(" ", markers);
+        return tekst.Length == 0 ? achtervoegsel : $"{tekst} {achtervoegsel}";
+    }
+
+    /// <summary>
     /// Haalt een meegestuurde afbeelding op en geeft haar terug als data-URL. De WebView kan
     /// de Google-URL zelf niet ophalen (die vraagt een token), dus de bytes gaan mee in de
     /// HTML. Leeg bij een fout of een te groot bestand — dan tonen we alleen de naam.
@@ -517,13 +545,123 @@ public static class GoogleChatClient
             {
                 AfbeeldingCache.Clear();
             }
-            return AfbeeldingCache[resourceName] =
-                $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+            return AfbeeldingCache[resourceName] = WeergaveDataUrl(bytes, contentType);
         }
         catch
         {
             return "";
         }
+    }
+
+    /// <summary>
+    /// Maakt van gedownloade afbeeldingsbytes een data-URL die klein genoeg is voor de
+    /// weergave. Eén telefoonfoto van een paar MB zou de hele chat-HTML anders over de
+    /// NavigateToString-limiet duwen, waarna de weergave terugvalt op platte tekst en er
+    /// juist níets meer te zien is. Grote foto's worden daarom verkleind (max 900 px) en
+    /// als JPEG opnieuw gecodeerd; kleine plaatjes gaan ongewijzigd mee.
+    /// </summary>
+    internal static string WeergaveDataUrl(byte[] bytes, string contentType)
+    {
+        const int maxZijde = 900;
+        const int maxDirecteBytes = 250_000;
+        try
+        {
+            using var invoer = new MemoryStream(bytes);
+            using var origineel = System.Drawing.Image.FromStream(invoer);
+            if (bytes.Length <= maxDirecteBytes &&
+                origineel.Width <= maxZijde && origineel.Height <= maxZijde)
+            {
+                return $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+            }
+            var schaal = Math.Min(1.0,
+                (double)maxZijde / Math.Max(origineel.Width, origineel.Height));
+            var breedte = Math.Max(1, (int)Math.Round(origineel.Width * schaal));
+            var hoogte = Math.Max(1, (int)Math.Round(origineel.Height * schaal));
+            using var klein = new Bitmap(breedte, hoogte);
+            using (var g = Graphics.FromImage(klein))
+            {
+                // JPEG kent geen transparantie: doorschijnende screenshots op wit zetten.
+                g.Clear(Color.White);
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(origineel, 0, 0, breedte, hoogte);
+            }
+            var jpeg = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
+                .First(c => c.MimeType == "image/jpeg");
+            using var parameters = new System.Drawing.Imaging.EncoderParameters(1);
+            parameters.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+                System.Drawing.Imaging.Encoder.Quality, 80L);
+            using var uitvoer = new MemoryStream();
+            klein.Save(uitvoer, jpeg, parameters);
+            return $"data:image/jpeg;base64,{Convert.ToBase64String(uitvoer.ToArray())}";
+        }
+        catch
+        {
+            // Geen leesbaar beeld (of System.Drawing-strubbeling): dan maar de bestandsnaam.
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// Diagnose voor --chatimg: toont per recente space de berichten mét bijlage (rauwe
+    /// attachment-JSON) en probeert elke afbeelding echt te downloaden, met het resultaat
+    /// erbij. Zo is zichtbaar wáár het tonen van foto's strandt.
+    /// </summary>
+    public static async Task<string> DiagnoseAfbeeldingenAsync(
+        GoogleChatSettings s, int dagen, CancellationToken ct)
+    {
+        var token = await AccessTokenAsync(s, ct);
+        var sinds = DateTimeOffset.UtcNow.AddDays(-Math.Max(1, dagen));
+        var sb = new StringBuilder();
+        var totaal = 0;
+        foreach (var space in (await SpacesAsync(token, ct))
+            .Where(sp => sp.LaatstActief >= sinds))
+        {
+            var filter = Uri.EscapeDataString($"createTime > \"{sinds:yyyy-MM-dd'T'HH:mm:ss'Z'}\"");
+            var orderBy = Uri.EscapeDataString("createTime desc");
+            using var doc = await GetAsync(token,
+                $"https://chat.googleapis.com/v1/{space.Name}/messages?pageSize=50&filter={filter}&orderBy={orderBy}", ct);
+            if (!doc.RootElement.TryGetProperty("messages", out var lijst))
+            {
+                continue;
+            }
+            foreach (var m in lijst.EnumerateArray())
+            {
+                if (!m.TryGetProperty("attachment", out var bijlagen) ||
+                    bijlagen.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+                totaal++;
+                sb.AppendLine($"=== {space.Name} ({(space.DisplayName.Length > 0 ? space.DisplayName : "DM")})");
+                sb.AppendLine($"    bericht: {m.GetProperty("name").GetString()}");
+                foreach (var bijlage in bijlagen.EnumerateArray())
+                {
+                    sb.AppendLine("    attachment: " + JsonSerializer.Serialize(bijlage,
+                        new JsonSerializerOptions { WriteIndented = false }));
+                    var bron = bijlage.TryGetProperty("attachmentDataRef", out var adr) &&
+                        adr.TryGetProperty("resourceName", out var rn) ? rn.GetString() ?? "" : "";
+                    if (bron.Length == 0)
+                    {
+                        sb.AppendLine("    → geen attachmentDataRef.resourceName (Drive-bestand?)");
+                        continue;
+                    }
+                    using var request = new HttpRequestMessage(HttpMethod.Get,
+                        $"https://chat.googleapis.com/v1/media/{Uri.EscapeDataString(bron)}?alt=media");
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    using var response = await Http.SendAsync(request, ct);
+                    var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                    sb.AppendLine($"    → download: HTTP {(int)response.StatusCode}, " +
+                        $"{bytes.Length} bytes, type {response.Content.Headers.ContentType}");
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var foutTekst = Encoding.UTF8.GetString(bytes);
+                        sb.AppendLine("      " + (foutTekst.Length > 300 ? foutTekst[..300] : foutTekst));
+                    }
+                }
+            }
+        }
+        sb.AppendLine($"--- {totaal} bericht(en) met bijlage in de laatste {dagen} dag(en).");
+        return sb.ToString();
     }
 
     /// <summary>Recente berichten uit één space, gestructureerd (oudste eerst).</summary>
@@ -550,6 +688,10 @@ public static class GoogleChatClient
     /// </summary>
     public static string BouwChatHtml(IEnumerable<ChatRegel> berichten)
     {
+        // Totaalbudget voor ingebedde foto's: de weergave valt boven ±1,5 MB HTML terug op
+        // platte tekst (NavigateToString-limiet), dus liever de óudste foto's als tekstchip
+        // tonen dan de hele bubbelweergave verliezen. Nieuwste eerst, die winnen het budget.
+        var fotoBudget = 1_000_000;
         var sb = new StringBuilder();
         sb.Append("<div class=\"wm-chat wm-chat-scroll\" style=\"background:#f6f8fc;margin:-16px;" +
             "padding:14px;display:flex;flex-direction:column-reverse;max-height:560px;" +
@@ -568,13 +710,20 @@ public static class GoogleChatClient
                     $"margin-bottom:2px\">{System.Net.WebUtility.HtmlEncode(b.Naam)}</div>");
             }
             sb.Append(System.Net.WebUtility.HtmlEncode(b.Tekst));
-            // Meegestuurde foto's onder de tekst, schaalbaar binnen de bubbel en klikbaar
-            // om ze op ware grootte te openen.
+            // Meegestuurde foto's onder de tekst, schaalbaar binnen de bubbel.
             foreach (var afbeelding in b.Afbeeldingen ?? Array.Empty<string>())
             {
-                sb.Append($"<a href=\"{afbeelding}\" target=\"_blank\">" +
-                    $"<img src=\"{afbeelding}\" style=\"display:block;max-width:100%;" +
-                    "border-radius:8px;margin:6px 0 2px\"></a>");
+                if (afbeelding.Length <= fotoBudget)
+                {
+                    fotoBudget -= afbeelding.Length;
+                    sb.Append($"<img src=\"{afbeelding}\" style=\"display:block;max-width:100%;" +
+                        "border-radius:8px;margin:6px 0 2px\">");
+                }
+                else
+                {
+                    sb.Append("<div style=\"margin:5px 0 2px;font-size:12.5px;color:#5f6368\">" +
+                        "📷 foto (te veel foto's om allemaal te tonen)</div>");
+                }
             }
             foreach (var bestand in b.Bestanden ?? Array.Empty<string>())
             {

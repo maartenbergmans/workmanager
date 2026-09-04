@@ -13,6 +13,7 @@ public class TeamUitTekstForm : Form
     private readonly TextBox _invoer;
     private readonly ModernButton _genereerButton;
     private readonly ModernButton _okButton;
+    private readonly Label _okHint;
     private readonly ModernListView _lijst;
     private readonly PulseBar _pulse = new();
     private readonly CancellationTokenSource _cts = new();
@@ -131,8 +132,15 @@ public class TeamUitTekstForm : Form
             Text = "Toevoegen", Width = 170, Kind = ButtonKind.Accent, Glyph = Fluent.Add, Enabled = false,
         };
         _okButton.Click += (_, _) => Bevestig();
+        // Uitleg links van de knop zolang die uitstaat: zonder deze hint is niet te
+        // zien dat "Toevoegen" pas aangaat na het voorstellen én aanvinken van taken.
+        _okHint = new Label
+        {
+            AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(0, 11, 10, 0),
+        };
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(_okButton);
+        buttons.Controls.Add(_okHint);
         CancelButton = cancel;
 
         Controls.Add(_lijst);
@@ -141,6 +149,7 @@ public class TeamUitTekstForm : Form
         Controls.Add(buttons);
 
         FormClosed += (_, _) => _cts.Cancel();
+        UpdateOkKnop();
         Theme.Apply(this);
     }
 
@@ -225,6 +234,9 @@ public class TeamUitTekstForm : Form
             1 => "1 taak toevoegen",
             _ => $"{aantal} taken toevoegen",
         };
+        _okHint.Text = aantal > 0 ? "" : _lijst.Items.Count == 0
+            ? "Eerst tekst invoeren en 'Taken voorstellen' klikken"
+            : "Vink minstens één voorstel aan";
     }
 
     private void Bevestig()

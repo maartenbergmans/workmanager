@@ -113,16 +113,11 @@ public class TeamTaakBewerkForm : Form
         };
         var cancel = new ModernButton { Text = "Annuleren", DialogResult = DialogResult.Cancel, Width = 100 };
         var ok = new ModernButton { Text = "Opslaan", Width = 110, Kind = ButtonKind.Accent, Glyph = Fluent.Check };
-        ok.Click += (_, _) =>
-        {
-            if (TaakTekst.Length == 0)
-            {
-                MessageBox.Show(this, "Vul een taakomschrijving in.", "Taken team",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            DialogResult = DialogResult.OK;
-        };
+        ok.Click += (_, _) => DialogResult = DialogResult.OK;
+        // Opslaan hoort bij het taakveld: pas actief met een omschrijving (zelfde
+        // koppeling als de Toevoegen-knop in het Taken team-venster).
+        ok.Enabled = TaakTekst.Length > 0;
+        _tekst.TextChanged += (_, _) => ok.Enabled = TaakTekst.Length > 0;
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(ok);
         AcceptButton = ok;

@@ -203,6 +203,15 @@ public sealed class TeamsClient : IDisposable
                 Aangemeld = true;
                 return true;
             }
+            // Verlopen sessie: het Microsoft-aanmeldscherm stil invullen (wachtwoord +
+            // TOTP-code), net als bij Outlook. Alleen op échte aanmeldpagina's, nooit in
+            // Teams zelf — daar zou de "Ja"-fallback van het KmsI-scherm mis kunnen klikken.
+            if (i % 2 == 1 && await JsAsync(
+                    "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
+                    ".test(location.hostname)") == "true")
+            {
+                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), null);
+            }
             await Task.Delay(500, ct);
         }
         Aangemeld = false;
@@ -265,13 +274,41 @@ public sealed class TeamsClient : IDisposable
         // bovenop" staan en kun je niet meer bij vensters die erachter zitten.
         try
         {
+            var jsFoutGelogd = false;
             for (var i = 0; i < 900; i++) // max. 7,5 min voor login + MFA
             {
                 ct.ThrowIfCancellationRequested();
                 await Task.Delay(500, ct);
-                // E-mail en wachtwoord vullen we in; alleen de MFA-stap blijft handwerk.
-                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), _venster);
-                if (await IsIngelogdAsync())
+                bool nuIngelogd;
+                try
+                {
+                    // E-mail en wachtwoord vullen we in; alleen de MFA-stap blijft handwerk.
+                    MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), _venster);
+                    nuIngelogd = await IsIngelogdAsync();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Eén mislukte JS-beurt — bv. de 2-min-poll die tegelijk dezelfde pagina
+                    // bestuurt, of een navigatie die net het document verving — mag de
+                    // aanmelding niet afbreken: de finally verborg dan meteen het venster,
+                    // alsof de knop niets deed (29 augustus 2026). Halve seconde later opnieuw.
+                    if (!jsFoutGelogd)
+                    {
+                        jsFoutGelogd = true;
+                        try
+                        {
+                            File.AppendAllText(Path.Combine(DataDir, "teams-koppel-debug.txt"),
+                                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} KoppelAsync: JS-fout " +
+                                $"genegeerd, lus loopt door — {ex.Message}\r\n");
+                        }
+                        catch
+                        {
+                            // Alleen diagnose.
+                        }
+                    }
+                    continue;
+                }
+                if (nuIngelogd)
                 {
                     File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
                     MfaTijd.Noteer("teams"); // een echte interactieve MFA-aanmelding
@@ -433,8 +470,202 @@ public sealed class TeamsClient : IDisposable
         script.Replace("__SELECTOR__", RijSelector);
 
     private string _laatsteVingerafdruk = "";
-    private (int Totaal, List<TeamsBericht> Ongelezen)? _laatsteUitslag;
+    private (int Totaal, List<TeamsBericht> Ongelezen, Dictionary<string, string> Previews)?
+        _laatsteUitslag;
     private int _overgeslagen;
+
+    /// <summary>
+    /// Zet de filterknop "Ongelezen" boven de chatlijst aan of uit. Resultaat: "geklikt",
+    /// "al-goed" (stond al in de gevraagde stand) of "geen-chip" (knop niet gevonden).
+    /// Meldt de chip zijn stand niet via aria-attributen, dan wordt er bij het úítzetten
+    /// altijd geklikt: de aanroeper zet hem alleen uit nadat hij (vermoedelijk) aanstond,
+    /// en een filter die blijft hangen zou álle volgende beurten vergiftigen.
+    /// </summary>
+    private async Task<string> ZetOngelezenFilterAsync(bool aan)
+    {
+        var ruw = await JsAsync(
+            $$"""
+            (function () {
+                // Taalonafhankelijk id-patroon eerst ("…-toggle-button-UNREAD"), daarna de
+                // knoptekst als terugvaloptie.
+                const chip = document.querySelector(
+                        '[data-tid$="toggle-button-UNREAD"], [data-testid$="toggle-button-UNREAD"]') ||
+                    [...document.querySelectorAll(
+                        'button, [role="button"], [role="tab"], [role="radio"],' +
+                        '[role="checkbox"], [role="switch"]')]
+                    .find(b => /^(ongelezen|unread|non lus?)$/i.test(
+                        (b.textContent || '').replace(/\s+/g, ' ').trim()));
+                if (!chip) return 'geen-chip';
+                const stand = chip.getAttribute('aria-pressed') ??
+                    chip.getAttribute('aria-checked') ?? chip.getAttribute('aria-selected');
+                if (stand !== null && (stand === 'true') === {{(aan ? "true" : "false")}}) {
+                    return 'al-goed|' + chip.outerHTML.slice(0, 200);
+                }
+                // Volledige pointer-reeks: Teams negeert een kale .click() geregeld (zelfde
+                // les als bij het aanklikken van chatrijen).
+                const b = chip.getBoundingClientRect();
+                const opts = { bubbles: true, cancelable: true, view: window,
+                    clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
+                for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
+                                    'pointerup', 'mouseup', 'click']) {
+                    chip.dispatchEvent(type.startsWith('pointer')
+                        ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
+                }
+                return 'geklikt|' + chip.outerHTML.slice(0, 200);
+            })()
+            """);
+        try
+        {
+            return JsonSerializer.Deserialize<string>(ruw) ?? "";
+        }
+        catch (JsonException)
+        {
+            return ruw;
+        }
+    }
+
+    /// <summary>
+    /// Leest de ongelezen chats via de filterknop "Ongelezen" boven de chatlijst: even
+    /// aanzetten, de (korte) gefilterde lijst lezen, weer uitzetten. Nodig sinds Teams de
+    /// rijen zelf geen badge of "ongelezen"-label meer geeft. Retourneert null als de knop
+    /// er niet is of de gefilterde lijst ongeloofwaardig blijft (dan geldt de heuristiek).
+    /// </summary>
+    private async Task<List<TeamsBericht>?> FilterOngelezenAsync(CancellationToken ct)
+    {
+        var vooraf = int.TryParse(
+            await JsAsync($"document.querySelectorAll({RijSelector}).length"), out var v) ? v : 0;
+        var chip = await ZetOngelezenFilterAsync(aan: true);
+        if (chip.StartsWith("geen-chip"))
+        {
+            return null;
+        }
+        var diagnose = new List<string> { $"chip={chip}", $"vooraf={vooraf}" };
+        var herstelNodig = true;
+        try
+        {
+            // Wachten tot de lijst echt hergefilterd is (het aantal rijen verandert); een
+            // gelijk gebleven vólle lijst zou anders elke bovenste chat "ongelezen" maken.
+            // Daarna nog even doorwachten tot de telling stilstaat: de gevirtualiseerde
+            // lijst wisselt tijdens het herfilteren van aantal, en te vroeg lezen gaf een
+            // lege tussenstand (0 rijen) terwijl de ongelezen chat nog moest renderen.
+            var na = vooraf;
+            var stabiel = 0;
+            for (var i = 0; i < 25; i++)
+            {
+                await Task.Delay(200, ct);
+                var n = int.TryParse(
+                    await JsAsync($"document.querySelectorAll({RijSelector}).length"),
+                    out var t) ? t : 0;
+                if (n != vooraf && n == na)
+                {
+                    if (++stabiel >= 3) // 600 ms onveranderd na de omslag
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    stabiel = 0;
+                }
+                na = n;
+            }
+            diagnose.Add($"na={na}");
+            if (na == vooraf && na > 25)
+            {
+                diagnose.Add("uitslag=filter-niet-toegepast");
+                return null; // filter lijkt niet toegepast: niet op gokken
+            }
+            if (na > vooraf)
+            {
+                // Filteren kan de lijst alleen laten krimpen. Groeit hij, dan stond de
+                // filter vermoedelijk al aan (hangen gebleven na een crash) en heeft onze
+                // klik hem juist úítgezet — vooral niet de volle lijst als "ongelezen"
+                // teruggeven. De lijst staat nu al in de gewenste ongefilterde stand,
+                // dus het herstel in de finally moet níét nog eens klikken.
+                diagnose.Add("uitslag=lijst-groeide");
+                herstelNodig = false;
+                return null;
+            }
+            var json = await JsAsync(MetSelector(
+                """
+                (function () {
+                    let items = [...document.querySelectorAll(__SELECTOR__)];
+                    items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                    return JSON.stringify(items.slice(0, 30).map(it => {
+                        let ruw = (it.textContent || '').replace(/\s+/g, ' ').trim();
+                        ruw = ruw.replace(/^(chats?|ongelezen|unread|non lus?)[,.:]?\s*/i, '');
+                        const tijd = ruw.match(/\d{1,2}:\d{2}|\d{1,2}-\d{1,2}/);
+                        let naam = ruw, preview = '';
+                        if (tijd) {
+                            naam = ruw.slice(0, tijd.index).trim();
+                            preview = ruw.slice(tijd.index + tijd[0].length).trim();
+                        }
+                        preview = preview.split(/\s*(?:Ongelezen|Unread|Non lus?)(?=[A-ZÀ-Ž])/)[0].trim();
+                        const titelAttr = (it.querySelector('[data-tid="chat-list-item-title"]') ||
+                            it.querySelector('span[title]'))?.getAttribute('title');
+                        if (titelAttr) naam = titelAttr;
+                        naam = naam.replace(/[,.]$/, '').slice(0, 60).trim();
+                        return { naam, preview: preview.slice(0, 300) };
+                    }).filter(r => r.naam));
+                })()
+                """));
+            var tekst = JsonSerializer.Deserialize<string>(json) ?? "[]";
+            diagnose.Add($"rijen={tekst}");
+            try
+            {
+                // Schermafdruk mét actieve filter: zonder deze is niet te zien of de
+                // gefilterde lijst leeg was of dat de uitlezer ernaast keek.
+                using var beeld = new MemoryStream();
+                await _web!.CoreWebView2!.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                File.WriteAllBytes(Path.Combine(DataDir, "teams-filter-screen.png"),
+                    beeld.ToArray());
+            }
+            catch
+            {
+                // Alleen diagnose.
+            }
+            using var doc = JsonDocument.Parse(tekst);
+            var ruis = new System.Text.RegularExpressions.Regex(
+                "de opname is klaar|opname is klaar|recording is (ready|available)|" +
+                "transcript is (ready|available|now available)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var rijen = doc.RootElement.EnumerateArray()
+                .Select(e => new TeamsBericht(
+                    e.GetProperty("naam").GetString() ?? "",
+                    e.GetProperty("preview").GetString() ?? ""))
+                .Where(b => b.Naam.Length > 0 && !ruis.IsMatch(b.Naam + " " + b.Preview))
+                .DistinctBy(b => b.Naam)
+                .ToList();
+            // Meer dan 30 "ongelezen" chats is geen geloofwaardige filteruitkomst.
+            diagnose.Add($"uitslag={rijen.Count}");
+            return rijen.Count > 30 ? null : rijen;
+        }
+        finally
+        {
+            try
+            {
+                if (herstelNodig)
+                {
+                    await ZetOngelezenFilterAsync(aan: false);
+                }
+            }
+            catch
+            {
+                // De volgende beurt zet de filter alsnog terug (ZetOngelezenFilterAsync
+                // controleert de stand voordat hij klikt).
+            }
+            try
+            {
+                File.WriteAllText(Path.Combine(DataDir, "teams-filter-debug.txt"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\r\n" + string.Join("\r\n", diagnose));
+            }
+            catch
+            {
+                // Alleen diagnose.
+            }
+        }
+    }
 
     /// <summary>
     /// Goedkope vingerafdruk van de zichtbare bovenkant van de chatlijst: per rij de naam en
@@ -451,16 +682,14 @@ public sealed class TeamsClient : IDisposable
                     let items = [...document.querySelectorAll(__SELECTOR__)];
                     items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
                     if (items.length < 5) return '';
-                    return items.length + '|' + items.slice(0, 25).map(it => {
-                        const label = it.getAttribute('aria-label') ||
-                            it.querySelector('[aria-label]')?.getAttribute('aria-label') || '';
-                        const badgeEl = it.querySelector('[data-tid*="unread"], [class*="unread"]');
-                        const ongelezen = /ongelezen|unread|non lu/i.test(label) ||
-                            (!!badgeEl && badgeEl.offsetParent !== null);
-                        const naam = (it.querySelector('[data-tid="chat-list-item-title"]') ||
-                            it.querySelector('span[title]') || it).textContent || '';
-                        return naam.replace(/\s+/g, ' ').trim().slice(0, 40) + (ongelezen ? '!' : '');
-                    }).join(';');
+                    // De volledige rijtekst (naam + tijdstip + preview) én de titelbadge
+                    // ("(2) Chat | …"): alleen de naam was te grof — een nieuw bericht in de
+                    // chat die al bovenaan stond, veranderde de vingerafdruk dan niet en de
+                    // snelweg bleef tot tien beurten lang de oude uitslag teruggeven.
+                    return document.title.split('|')[0].trim() + '|' + items.length + '|' +
+                        items.slice(0, 25).map(it =>
+                            ((it.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)))
+                        .join(';');
                 })()
                 """));
             return JsonSerializer.Deserialize<string>(ruw) ?? "";
@@ -495,6 +724,123 @@ public sealed class TeamsClient : IDisposable
                 await Task.Delay(500, ct);
             }
             return await JsAsync(script);
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Diagnose voor de bubbelweergave (CLI --teamschat): opent de genoemde chat en dumpt
+    /// per bericht de DOM-structuur — welke elementen kandidaat-auteur zijn en wat de
+    /// huidige selector oplevert. Teams wijzigt zijn DOM geregeld; dan moet je ter plekke
+    /// kunnen kijken zonder de leescode te slopen.
+    /// </summary>
+    public async Task<string> DiagnoseChatAsync(string naam, CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct))
+            {
+                return "(niet ingelogd)";
+            }
+            // De Teams-web-app heeft na het opstarten ruim tijd nodig ("We stellen dingen
+            // voor u in…"): wachten tot er echt chatrijen staan, niet op een elemententelling.
+            for (var i = 0; i < 90; i++)
+            {
+                var n = await JsAsync($"document.querySelectorAll({RijSelector}).length");
+                if (int.TryParse(n, out var aantal) && aantal >= 5)
+                {
+                    break;
+                }
+                await Task.Delay(500, ct);
+            }
+            await TerugNaarChatlijstAsync();
+            if (naam.Length == 0)
+            {
+                // Zonder naam: de chatlijst tonen, zodat je weet welke naam je moet meegeven.
+                return await JsAsync(MetSelector(
+                    """
+                    (function () {
+                        let items = [...document.querySelectorAll(__SELECTOR__)];
+                        items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                        return JSON.stringify(items.map(it =>
+                            ((it.querySelector('span[title]')?.getAttribute('title')) ||
+                             it.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60)));
+                    })()
+                    """));
+            }
+            var geklikt = await JsAsync(MetSelector(
+                $$"""
+                (function () {
+                    const naam = {{JsonSerializer.Serialize(naam)}};
+                    let items = [...document.querySelectorAll(__SELECTOR__)];
+                    items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                    const doel = items.find(it =>
+                        ((it.querySelector('span[title]')?.getAttribute('title')) ||
+                         it.textContent || '').includes(naam));
+                    if (!doel) return 'niet gevonden';
+                    doel.scrollIntoView({ block: 'center' });
+                    const b = doel.getBoundingClientRect();
+                    const opts = { bubbles: true, cancelable: true, view: window,
+                        clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
+                    for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
+                                        'pointerup', 'mouseup', 'click']) {
+                        doel.dispatchEvent(type.startsWith('pointer')
+                            ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
+                    }
+                    return 'ok';
+                })()
+                """));
+            if (geklikt != "\"ok\"")
+            {
+                return $"chat \"{naam}\" niet gevonden ({geklikt})";
+            }
+            await Task.Delay(2500, ct);
+            var dump = await JsAsync(
+                """
+                (function () {
+                    let msgs = [...document.querySelectorAll(
+                        '[data-tid="chat-pane-message"], [id^="message-body-"],' +
+                        '[data-tid="message-wrapper"]')];
+                    if (msgs.length === 0) {
+                        msgs = [...document.querySelectorAll(
+                            '[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"], [data-mid]')];
+                    }
+                    const kort = e => {
+                        const cls = (typeof e.className === 'string' ? e.className : '')
+                            .split(/\s+/).filter(c => c).slice(0, 4).join(' ');
+                        return e.tagName.toLowerCase() +
+                            (e.getAttribute('data-tid') ? `[tid=${e.getAttribute('data-tid')}]` : '') +
+                            (e.getAttribute('data-testid') ? `[testid=${e.getAttribute('data-testid')}]` : '') +
+                            (cls ? `.${cls.slice(0, 90)}` : '');
+                    };
+                    return JSON.stringify(msgs.slice(-8).map(m => {
+                        // De body is niet per se de wrapper: kijk ook in de omliggende
+                        // fui-ChatMessage voor auteur en tijdstip.
+                        const wrap = m.closest('[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"]')
+                            ?.parentElement || m.parentElement || m;
+                        const mid = m.getAttribute('data-mid') || '';
+                        const el = naam => {
+                            const e = document.getElementById(naam + '-' + mid);
+                            return !e ? null : kort(e) + ' => ' +
+                                (e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+                        };
+                        return {
+                            wortel: kort(m),
+                            mid,
+                            auteurEl: el('author'),
+                            tijdEl: el('timestamp'),
+                            inhoudEl: el('content'),
+                            tekst: (m.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+                        };
+                    }), null, 1);
+                })()
+                """);
+            await ParkeerOpConceptenAsync();
+            return dump;
         }
         finally
         {
@@ -589,7 +935,8 @@ public sealed class TeamsClient : IDisposable
     /// te openen (dus zonder leesbevestigingen). De platte itemtekst wordt uiteengerafeld
     /// op het tijdstip: "[Ongelezen]Naam12:02Preview…" → naam en preview apart.
     /// </summary>
-    public async Task<(int Totaal, List<TeamsBericht> Ongelezen)> OngelezenAsync(CancellationToken ct)
+    public async Task<(int Totaal, List<TeamsBericht> Ongelezen, Dictionary<string, string> Previews)>
+        OngelezenAsync(CancellationToken ct)
     {
         // Faseklok: Teams is de traagste bron van de ophaalbeurt, en zonder meting is niet
         // te zien of dat aan de herlaadbeurt, het renderen of het scrollen ligt. Eén regel
@@ -793,6 +1140,10 @@ public sealed class TeamsClient : IDisposable
                             totaal: alle.length,
                             ongelezen: alle.filter(c => c.ongelezen)
                                 .map(c => ({ naam: c.naam, preview: c.preview })),
+                            // Alle zijbalkpreviews: de cockpit ziet zo of Maarten intussen
+                            // zelf geantwoord heeft ("U: …") en vult lege previews van de
+                            // filterlezing aan.
+                            previews: alle.map(c => ({ naam: c.naam, preview: c.preview })),
                             diagnose: alle.map(c => ({ naam: c.naam, ongelezen: c.ongelezen,
                                 preview: c.preview.slice(0, 60),
                                 viaLabel: c.viaLabel, viaBadge: c.viaBadge, gewicht: c.gewicht,
@@ -841,6 +1192,15 @@ public sealed class TeamsClient : IDisposable
                 // Alleen diagnose.
             }
             using var doc = JsonDocument.Parse(json);
+            var previews = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (doc.RootElement.TryGetProperty("previews", out var previewLijst))
+            {
+                foreach (var e in previewLijst.EnumerateArray())
+                {
+                    previews[e.GetProperty("naam").GetString() ?? ""] =
+                        e.GetProperty("preview").GetString() ?? "";
+                }
+            }
             var uitslag = (
                 Totaal: doc.RootElement.GetProperty("totaal").GetInt32(),
                 Ongelezen: doc.RootElement.GetProperty("ongelezen").EnumerateArray()
@@ -848,7 +1208,27 @@ public sealed class TeamsClient : IDisposable
                         e.GetProperty("naam").GetString() ?? "",
                         e.GetProperty("preview").GetString() ?? ""))
                     .Where(b => b.Naam.Length > 0)
-                    .ToList());
+                    .ToList(),
+                Previews: previews);
+            // Sinds september 2026 zet Teams géén "unread"-badge of aria-label meer op de
+            // chatrijen (alle rijen renderen gewicht 400, badge null), terwijl de zijbalk
+            // wél een ongelezen-teller toont — de heuristiek hierboven vindt dan niets.
+            // De filterknop "Ongelezen" boven de chatlijst ís er nog: die even aanzetten
+            // toont uitsluitend de ongelezen chats, wat elke DOM-gok overbodig maakt.
+            var gefilterd = await FilterOngelezenAsync(ct);
+            if (gefilterd is not null)
+            {
+                uitslag.Ongelezen.Clear();
+                // De gefilterde rijen missen soms hun preview (de rij rendert daar zonder
+                // tijdstip, waar de tekstsplitsing op steunt): dan de preview uit de
+                // volledige scrape overnemen — de cockpit sleutelt rijen op naam+preview,
+                // en een lege preview zou nieuwe berichten onzichtbaar maken.
+                uitslag.Ongelezen.AddRange(gefilterd.Select(b =>
+                    b.Preview.Length == 0 && uitslag.Previews.TryGetValue(b.Naam, out var p)
+                        ? b with { Preview = p }
+                        : b));
+                fasen.Add("viaFilter");
+            }
             // Alleen een geloofwaardige uitslag als vertrekpunt onthouden: bij een half
             // gerenderde lijst zou de volgende beurt anders een verkeerde stand hergebruiken.
             fasen.Add($"gevonden={uitslag.Ongelezen.Count}/{uitslag.Totaal}");
@@ -885,7 +1265,8 @@ public sealed class TeamsClient : IDisposable
         }
     }
 
-    public sealed record TeamsChatBericht(string Tijd, string Auteur, bool Uitgaand, string Tekst);
+    public sealed record TeamsChatBericht(
+        string Tijd, string Auteur, bool Uitgaand, string Tekst, string Beeld = "");
 
     /// <summary>
     /// De laatste berichten uit een Teams-chat, gestructureerd (tijd, auteur, richting,
@@ -903,6 +1284,17 @@ public sealed class TeamsClient : IDisposable
                 throw new InvalidOperationException("Teams is niet ingelogd.");
             }
             await TerugNaarChatlijstAsync(); // vanuit de Concepten-parkeerstand
+            // Koude start (net opgebouwde sessie): de Teams-app doet er lang over voordat
+            // de chatlijst er staat ("We stellen dingen voor u in…") — wachten op echte rijen.
+            for (var i = 0; i < 60; i++)
+            {
+                var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
+                if (int.TryParse(rijen, out var n) && n >= 5)
+                {
+                    break;
+                }
+                await Task.Delay(500, ct);
+            }
             var geklikt = await JsAsync(
                 $$"""
                 (function () {
@@ -933,56 +1325,179 @@ public sealed class TeamsClient : IDisposable
             }
             await Task.Delay(2500, ct); // berichten laten laden
 
-            var json = await JsAsync(
+            // Asynchrone verzameljob in de pagina (zelfde patroon als WhatsApp): afbeeldingen
+            // in bubbels moeten per stuk geladen en naar data-URL's omgezet worden, dus het
+            // resultaat komt in window.__wmTeamsMsgs en wordt hieronder gepolld.
+            await JsAsync(
                 $$"""
                 (function () {
-                    let msgs = [...document.querySelectorAll(
-                        '[data-tid="chat-pane-message"], [id^="message-body-"],' +
-                        '[data-tid="message-wrapper"]')];
-                    if (msgs.length === 0) {
-                        // Fallbacks voor nieuwere Teams-DOM's (Fluent-componenten).
-                        msgs = [...document.querySelectorAll(
-                            '[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"], [data-mid]')];
-                    }
-                    if (msgs.length === 0) {
-                        return { leeg: true, diag: {
-                            paneMsg: document.querySelectorAll('[data-tid="chat-pane-message"]').length,
-                            msgBody: document.querySelectorAll('[id^="message-body-"]').length,
-                            fui: document.querySelectorAll('[class*="ChatMessage"]').length,
-                            mid: document.querySelectorAll('[data-mid]').length,
-                            mainTekst: (document.querySelector('[data-tid="app-layout-area--main"]')
-                                ?.textContent || '').slice(0, 120),
-                        } };
-                    }
-                    const paneel = document.querySelector('[data-tid="app-layout-area--main"]') ||
-                        document.body;
-                    const paneRect = paneel.getBoundingClientRect();
-                    return msgs.slice(-{{max}}).map(m => {
-                        const auteur = m.querySelector('[data-tid="message-author-name"]')
-                            ?.textContent?.trim() || '';
-                        const tijd = (m.querySelector('time, [data-tid*="timestamp"],' +
-                            '[id*="timestamp"]')?.textContent || '').trim().slice(0, 20);
-                        const body = m.querySelector('[id^="message-body-"],' +
-                            '[data-tid="message-body-content"], [class*="fui-ChatMessage__body"]');
-                        let tekst = ((body || m).innerText || '')
-                            .replace(/\s+/g, ' ').trim().slice(0, 500);
-                        if (auteur && tekst.startsWith(auteur)) tekst = tekst.slice(auteur.length).trim();
-                        if (tijd && tekst.startsWith(tijd)) tekst = tekst.slice(tijd.length).trim();
-                        // Richting: eigen berichten hebben de ChatMyMessage-component of staan
-                        // rechts van het midden van het berichtenpaneel.
-                        let uit = !!(m.closest('[class*="ChatMyMessage"]') ||
-                            m.querySelector('[class*="ChatMyMessage"]') ||
-                            (typeof m.className === 'string' && m.className.includes('ChatMyMessage')));
-                        if (!uit && !auteur) {
-                            const rect = (body || m).getBoundingClientRect();
-                            if (rect.width > 0 && rect.width < paneRect.width * 0.85) {
-                                uit = rect.left + rect.width / 2 > paneRect.left + paneRect.width / 2;
-                            }
+                    window.__wmTeamsMsgs = null;
+                    (async () => {
+                      try {
+                        let msgs = [...document.querySelectorAll(
+                            '[data-tid="chat-pane-message"], [id^="message-body-"],' +
+                            '[data-tid="message-wrapper"]')];
+                        if (msgs.length === 0) {
+                            // Fallbacks voor nieuwere Teams-DOM's (Fluent-componenten).
+                            msgs = [...document.querySelectorAll(
+                                '[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"], [data-mid]')];
                         }
-                        return { tijd, auteur, uit, tekst };
-                    }).filter(o => o.tekst.length > 0);
+                        if (msgs.length === 0) {
+                            window.__wmTeamsMsgs = { leeg: true, diag: {
+                                paneMsg: document.querySelectorAll('[data-tid="chat-pane-message"]').length,
+                                msgBody: document.querySelectorAll('[id^="message-body-"]').length,
+                                fui: document.querySelectorAll('[class*="ChatMessage"]').length,
+                                mid: document.querySelectorAll('[data-mid]').length,
+                                mainTekst: (document.querySelector('[data-tid="app-layout-area--main"]')
+                                    ?.textContent || '').slice(0, 120),
+                            } };
+                            return;
+                        }
+                        const paneel = document.querySelector('[data-tid="app-layout-area--main"]') ||
+                            document.body;
+                        const paneRect = paneel.getBoundingClientRect();
+                        const uitkomst = [];
+                        let fotoBudget = 8; // niet eindeloos downloaden bij een fotoreeks
+                        // Totaalcap: de uiteindelijke HTML gaat via NavigateToString (limiet
+                        // ±1,5 MB); daarboven zou de hele bubbelweergave wegvallen.
+                        let fotoTekens = 0;
+                        for (const m of msgs.slice(-{{max}})) {
+                            // Systeemberichten ("X heeft Y toegevoegd") zijn geen chatberichten.
+                            if (m.getAttribute('data-tid') === 'control-message-renderer' ||
+                                m.closest('[class*="ChatControlMessage"]')) continue;
+                            // Auteur en tijd staan búíten de body: de body verwijst er via
+                            // aria-labelledby naar (elementen author-<mid> en timestamp-<mid>).
+                            const mid = m.getAttribute('data-mid') || '';
+                            const byId = voor => mid ? document.getElementById(voor + '-' + mid) : null;
+                            const auteur = ((byId('author') ||
+                                m.querySelector('[data-tid="message-author-name"],' +
+                                '[class*="fui-ChatMessage__author"]'))
+                                ?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+                            const tijd = ((byId('timestamp') ||
+                                m.querySelector('time, [data-tid*="timestamp"],' +
+                                '[id*="timestamp"], [class*="fui-ChatMessage__timestamp"]'))
+                                ?.textContent || '').trim().slice(0, 20);
+                            const body = m.querySelector('[id^="message-body-"],' +
+                                '[data-tid="message-body-content"], [class*="fui-ChatMessage__body"]');
+                            let tekst = ((body || m).innerText || '')
+                                .replace(/\s+/g, ' ').trim().slice(0, 500);
+                            if (auteur && tekst.startsWith(auteur)) tekst = tekst.slice(auteur.length).trim();
+                            if (tijd && tekst.startsWith(tijd)) tekst = tekst.slice(tijd.length).trim();
+                            // Richting: eigen berichten hebben de ChatMyMessage-component of staan
+                            // rechts van het midden van het berichtenpaneel.
+                            let uit = !!(m.closest('[class*="ChatMyMessage"]') ||
+                                m.querySelector('[class*="ChatMyMessage"]') ||
+                                (typeof m.className === 'string' && m.className.includes('ChatMyMessage')));
+                            if (!uit && !auteur) {
+                                const rect = (body || m).getBoundingClientRect();
+                                if (rect.width > 0 && rect.width < paneRect.width * 0.85) {
+                                    uit = rect.left + rect.width / 2 > paneRect.left + paneRect.width / 2;
+                                }
+                            }
+                            // Meegestuurde afbeelding in de bubbel. Alleen binnen de body zoeken
+                            // (avatars staan erbuiten); emoji's en pictogrammen vallen af op
+                            // formaat. Teams gebruikt blob:-URL's én https-media (asyncgw, met
+                            // sessiecookies bereikbaar).
+                            let beeld = '';
+                            const kandidaten = [...(body || m).querySelectorAll('img')].filter(i => {
+                                const src = i.src || i.currentSrc || '';
+                                if (!/^(blob:|data:image|https:)/.test(src)) return false;
+                                if (i.closest('[class*="Avatar"], [data-tid*="avatar"]')) return false;
+                                const b = i.getBoundingClientRect();
+                                const breed = i.naturalWidth || i.clientWidth || b.width;
+                                const hoog = i.naturalHeight || i.clientHeight || b.height;
+                                return breed >= 50 && hoog >= 50;
+                            });
+                            // De grootste kandidaat: bij een bubbel met thumbnail + volle foto
+                            // levert dat de scherpste.
+                            const img = kandidaten.sort((a, b) =>
+                                (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth))[0];
+                            if (img && fotoBudget > 0) {
+                                try {
+                                    // In beeld brengen: Teams laadt afbeeldingen lui, anders
+                                    // blijft de src een lege placeholder.
+                                    m.scrollIntoView({ block: 'center' });
+                                    await new Promise(r => setTimeout(r, 120));
+                                    if (!img.complete || !img.naturalWidth) {
+                                        await new Promise(r => {
+                                            const klaar = () => r();
+                                            img.addEventListener('load', klaar, { once: true });
+                                            img.addEventListener('error', klaar, { once: true });
+                                            setTimeout(klaar, 1200);
+                                        });
+                                    }
+                                    // Via canvas: meteen verkleinen naar maximaal 900 px breed en
+                                    // als JPEG opslaan, zodat grote foto's binnen de limiet passen.
+                                    const bron = img.currentSrc || img.src;
+                                    const bitmap = await new Promise((res, rej) => {
+                                        const el = new Image();
+                                        el.crossOrigin = 'anonymous';
+                                        el.onload = () => res(el);
+                                        el.onerror = rej;
+                                        el.src = bron;
+                                    });
+                                    const schaal = Math.min(1, 900 / (bitmap.naturalWidth || 900));
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = Math.max(1, Math.round((bitmap.naturalWidth || 1) * schaal));
+                                    canvas.height = Math.max(1, Math.round((bitmap.naturalHeight || 1) * schaal));
+                                    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                                    const jpeg = canvas.toDataURL('image/jpeg', 0.72);
+                                    if (jpeg.length > 200 && fotoTekens + jpeg.length <= 2500000) {
+                                        beeld = jpeg;
+                                        fotoTekens += jpeg.length;
+                                        fotoBudget--;
+                                    }
+                                } catch {
+                                    // Canvas geblokkeerd (cross-origin zonder CORS-headers) of
+                                    // laden mislukt: dan de bytes via fetch proberen — de
+                                    // sessiecookies gaan daarbij vanzelf mee.
+                                    try {
+                                        const resp = await fetch(img.currentSrc || img.src);
+                                        const blob = await resp.blob();
+                                        if (blob.size <= 900000 && /^image\//.test(blob.type)) {
+                                            const dataUrl = await new Promise(res => {
+                                                const fr = new FileReader();
+                                                fr.onload = () => res(String(fr.result));
+                                                fr.onerror = () => res('');
+                                                fr.readAsDataURL(blob);
+                                            });
+                                            if (dataUrl && fotoTekens + dataUrl.length <= 2500000) {
+                                                beeld = dataUrl;
+                                                fotoTekens += dataUrl.length;
+                                                fotoBudget--;
+                                            }
+                                        }
+                                    } catch { /* geen foto: de tekst volstaat */ }
+                                }
+                            }
+                            uitkomst.push({ tijd, auteur, uit, tekst, beeld });
+                        }
+                        window.__wmTeamsMsgs = uitkomst
+                            .filter(o => o.tekst.length > 0 || o.beeld.length > 0);
+                      } catch (e) {
+                        window.__wmTeamsMsgs = { leeg: true, diag: { fout: String(e).slice(0, 200) } };
+                      }
+                    })();
+                    return true;
                 })()
                 """);
+            var json = "null";
+            for (var i = 0; i < 40; i++) // foto's omzetten kan even duren (max. ~12 s)
+            {
+                await Task.Delay(300, ct);
+                var klaar = await JsAsync("JSON.stringify(window.__wmTeamsMsgs)");
+                if (klaar is not ("null" or "\"null\""))
+                {
+                    json = JsonSerializer.Deserialize<string>(klaar) ?? "null";
+                    break;
+                }
+            }
+            if (json == "null")
+            {
+                await ParkeerOpConceptenAsync();
+                throw new InvalidOperationException(
+                    "Berichten uitlezen bleef hangen (geen resultaat).");
+            }
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.ValueKind == JsonValueKind.Object)
             {
@@ -995,11 +1510,113 @@ public sealed class TeamsClient : IDisposable
                     e.GetProperty("tijd").GetString() ?? "",
                     e.GetProperty("auteur").GetString() ?? "",
                     e.GetProperty("uit").GetBoolean(),
-                    e.GetProperty("tekst").GetString() ?? ""))
-                .Where(b => b.Tekst.Length > 0)
+                    e.GetProperty("tekst").GetString() ?? "",
+                    e.TryGetProperty("beeld", out var be) ? be.GetString() ?? "" : ""))
+                .Where(b => b.Tekst.Length > 0 || b.Beeld.Length > 0)
                 .ToList();
+            // Teams zet de auteursnaam alleen boven het eerste bericht van een reeks; schuif
+            // hem door naar de vervolgberichten zodat in groepschats elke afzender zichtbaar is.
+            var vorigeAuteur = "";
+            for (var i = 0; i < regels.Count; i++)
+            {
+                if (regels[i].Uitgaand)
+                {
+                    vorigeAuteur = "";
+                }
+                else if (regels[i].Auteur.Length > 0)
+                {
+                    vorigeAuteur = regels[i].Auteur;
+                }
+                else if (vorigeAuteur.Length > 0)
+                {
+                    regels[i] = regels[i] with { Auteur = vorigeAuteur };
+                }
+            }
             await ParkeerOpConceptenAsync(); // de geopende chat weer sluiten
             return regels;
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Chats waarin ik vandaag het laatste woord had, als signaalregels voor het dagvoorstel
+    /// ("HH:mm chatnaam — U: preview"). Leest alleen de zichtbare chatlijst: een rij met een
+    /// tijd (i.p.v. een datum) is van vandaag, en een preview die met "U:"/"You:" begint is
+    /// een bericht van mijzelf. Alleen het láátste bericht per chat is zichtbaar, dus dit is
+    /// een ondergrens — maar als werktijdsignaal volstaat "in die chat heb ik gereageerd".
+    /// </summary>
+    public async Task<List<string>> MijnChatsVanVandaagAsync(CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    "Teams is niet ingelogd — koppel opnieuw via 'Teams koppelen…'.");
+            }
+            if (!await OpChatlijstAsync())
+            {
+                await TerugNaarChatlijstAsync();
+            }
+            for (var i = 0; i < 20; i++)
+            {
+                var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
+                if (int.TryParse(rijen, out var n) && n >= 5)
+                {
+                    break;
+                }
+                await Task.Delay(500, ct);
+            }
+            // Zelfde rij-ontleding als de ongelezen-scrape: naam vóór het tijdstip, preview
+            // erna. Alleen de gerenderde rijen (geen scrollen): chats van vandaag staan bovenaan.
+            var json = await JsAsync(MetSelector(
+                """
+                (function () {
+                    let items = [...document.querySelectorAll(__SELECTOR__)];
+                    items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                    const uit = [];
+                    for (const it of items) {
+                        let ruw = (it.textContent || '').replace(/\s+/g, ' ').trim();
+                        ruw = ruw.replace(/^(chats?|ongelezen|unread|non lus?)[,.:]?\s*/i, '');
+                        const tijd = ruw.match(/\b\d{1,2}:\d{2}\b/);
+                        const datum = ruw.match(/\b\d{1,2}-\d{1,2}\b/);
+                        // Een datum vóór (of zonder) een tijd = een rij van een eerdere dag.
+                        if (!tijd || (datum && datum.index < tijd.index)) continue;
+                        let naam = ruw.slice(0, tijd.index).trim();
+                        const titelAttr = (it.querySelector('[data-tid="chat-list-item-title"]') ||
+                            it.querySelector('span[title]'))?.getAttribute('title');
+                        if (titelAttr) naam = titelAttr;
+                        naam = naam.replace(/[,.]$/, '').slice(0, 60).trim();
+                        let preview = ruw.slice(tijd.index + tijd[0].length).trim();
+                        preview = preview.split(/\s*(?:Ongelezen|Unread|Non lus?)(?=[A-ZÀ-Ž])/)[0].trim();
+                        if (!naam || !/^(u|you|vous)\s*:/i.test(preview)) continue;
+                        uit.push({ naam, tijd: tijd[0], preview: preview.slice(0, 160) });
+                    }
+                    return JSON.stringify(uit);
+                })()
+                """));
+            var regels = new List<string>();
+            try
+            {
+                using var doc = JsonDocument.Parse(
+                    JsonSerializer.Deserialize<string>(json) is { } s ? s : json);
+                foreach (var e in doc.RootElement.EnumerateArray())
+                {
+                    var naam = e.GetProperty("naam").GetString() ?? "";
+                    var tijd = e.GetProperty("tijd").GetString() ?? "";
+                    var preview = e.GetProperty("preview").GetString() ?? "";
+                    regels.Add($"{tijd} {naam} — {preview}");
+                }
+            }
+            catch
+            {
+                // Onverwachte DOM: dan gewoon geen Teams-signaal.
+            }
+            return regels.OrderBy(r => r, StringComparer.Ordinal).ToList();
         }
         finally
         {

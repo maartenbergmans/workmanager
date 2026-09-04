@@ -7,9 +7,10 @@ namespace WorkManager;
 /// <summary>
 /// Algemene activiteitenlog: elke minuut wordt het voorgrondvenster (proces + titel)
 /// weggeschreven naar %APPDATA%\WorkManager\activiteiten-log.jsonl. Samen met de
-/// contextswitches, de launcher-log en de meetings vormt dat het bronmateriaal voor het
-/// dagelijkse timesheetvoorstel (knop "Dagvoorstel…" in de cockpit): Claude clustert de
-/// sporen tot regels die na controle in de timesheetwachtrij gaan.
+/// contextswitches, de launcher-log, de meetings, de Claude Code-opdrachten en de
+/// verzonden mails vormt dat het bronmateriaal voor het dagelijkse timesheetvoorstel
+/// (knop "Dagvoorstel…" in de cockpit): Claude clustert de sporen tot regels die na
+/// controle in de timesheetwachtrij gaan.
 /// </summary>
 public static class ActiviteitenLog
 {
@@ -19,6 +20,7 @@ public static class ActiviteitenLog
     private static readonly string LogBestand = Path.Combine(DataDir, "activiteiten-log.jsonl");
     private static readonly string SwitchLog = Path.Combine(DataDir, "switch-log.jsonl");
     private static readonly string LauncherLog = Path.Combine(DataDir, "launcher.log");
+    private static readonly string ClaudeLog = Path.Combine(DataDir, "claude-requests.jsonl");
 
     /// <summary>Ouder dan dit wordt bij de dagelijkse opruiming uit de log geknipt.</summary>
     private static readonly TimeSpan Bewaartermijn = TimeSpan.FromDays(21);
@@ -79,7 +81,29 @@ public static class ActiviteitenLog
         }
     }
 
-    /// <summary>Knipt (1×/dag) regels ouder dan de bewaartermijn uit het bestand.</summary>
+    /// <summary>
+    /// Eén interactieve Claude Code-opdracht (UserPromptSubmit-hook) bijschrijven; de map
+    /// verraadt de klant. Elke opdracht staat in het dagvoorstel voor minstens 20 minuten
+    /// werk, ook als het voorgrondvenster intussen iets anders toonde.
+    /// </summary>
+    public static void NoteerClaudeRequest(string map)
+    {
+        try
+        {
+            Directory.CreateDirectory(DataDir);
+            File.AppendAllText(ClaudeLog, JsonSerializer.Serialize(new
+            {
+                t = DateTimeOffset.Now,
+                map,
+            }) + Environment.NewLine);
+        }
+        catch
+        {
+            // Best effort — de hook mag de Claude-sessie nooit storen.
+        }
+    }
+
+    /// <summary>Knipt (1×/dag) regels ouder dan de bewaartermijn uit de logbestanden.</summary>
     private static void RuimOpAlsNodig()
     {
         var vandaag = DateOnly.FromDateTime(DateTime.Now);
@@ -88,9 +112,9 @@ public static class ActiviteitenLog
             return;
         }
         _opgeruimd = vandaag;
+        var grens = DateTimeOffset.Now - Bewaartermijn;
         try
         {
-            var grens = DateTimeOffset.Now - Bewaartermijn;
             var vers = File.ReadAllLines(LogBestand)
                 .Where(l => ParseSample(l) is { } s && s.T >= grens)
                 .ToList();
@@ -100,18 +124,87 @@ public static class ActiviteitenLog
         {
             // Volgende dag opnieuw.
         }
+        try
+        {
+            if (File.Exists(ClaudeLog))
+            {
+                File.WriteAllLines(ClaudeLog, File.ReadAllLines(ClaudeLog)
+                    .Where(l => ParseTijd(l) is { } t && t >= grens));
+            }
+        }
+        catch
+        {
+            // Volgende dag opnieuw.
+        }
+    }
+
+    private static DateTimeOffset? ParseTijd(string regel)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(regel);
+            return doc.RootElement.GetProperty("t").GetDateTimeOffset();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------- voorstel
 
     /// <summary>
-    /// Laat Claude van alle sporen van de dag een timesheetvoorstel maken. Geeft een lege
-    /// lijst als er niets bruikbaars uit komt.
+    /// Laat Claude van alle sporen van de dag een timesheetvoorstel maken, met een losse
+    /// toelichting over de gemaakte keuzes. Geeft een lege lijst als er niets bruikbaars
+    /// uit komt.
     /// </summary>
-    public static async Task<List<TimesheetRegel>> VoorstelAsync(
+    public static async Task<(List<TimesheetRegel> Regels, string Toelichting)> VoorstelAsync(
         DateOnly dag, List<AgendaClient.AgendaItem> meetings, CancellationToken ct)
     {
         var bestaand = TimesheetStore.Load().Where(r => r.Datum == dag && r.Minuten > 0).ToList();
+        // Verzonden mails zijn een hard signaal (elke mail = minstens een kwartier), maar
+        // het voorstel moet ook zonder Gmail-verbinding blijven werken.
+        var verzonden = new List<string>();
+        try
+        {
+            var mailSettings = MailReplySettings.Load();
+            if (mailSettings.AppWachtwoord.Length > 0)
+            {
+                verzonden = (await GmailClient.VerzondenVanDagAsync(mailSettings, dag, ct))
+                    .Select(r => $"{r} [Gmail]").ToList();
+            }
+        }
+        catch
+        {
+            // Dan zonder maillijst.
+        }
+        // Zelfde verhaal voor CED-Outlook: mails die dáár verstuurd zijn, ziet Gmail niet.
+        try
+        {
+            if (OutlookClient.OoitGekoppeld)
+            {
+                verzonden.AddRange((await OutlookClient.Instance.VerzondenVanDagAsync(dag, ct))
+                    .Select(r => $"{r} [CED-Outlook]"));
+            }
+        }
+        catch
+        {
+            // Outlook niet aangemeld (dagelijkse MFA) of OWA hapert: dan zonder.
+        }
+        // Teams toont alleen het laatste bericht per chat, en alleen vandaag is uit de
+        // chatlijst af te lezen — voor een eerdere dag valt dit signaal gewoon weg.
+        var teamsChats = new List<string>();
+        try
+        {
+            if (TeamsClient.OoitGekoppeld && dag == DateOnly.FromDateTime(DateTime.Now))
+            {
+                teamsChats = await TeamsClient.Instance.MijnChatsVanVandaagAsync(ct);
+            }
+        }
+        catch
+        {
+            // Teams niet ingelogd of DOM gewijzigd: dan zonder.
+        }
         var prompt = $$"""
             Je zet de werkdag van Maarten (freelance IT'er, UrbanIT) om in timesheetregels.
 
@@ -133,7 +226,17 @@ public static class ActiviteitenLog
                 .Select(m => $"{m.Start.LocalDateTime:HH:mm}–{m.Einde.LocalDateTime:HH:mm} {m.Titel}"),
                 "geen meetings")}}
 
-            5) Al geboekte timesheetregels van die dag (die tijd is al gedekt — NIET opnieuw voorstellen):
+            5) Opdrachten aan Claude Code (tijdstip + projectmap):
+            {{Blok(ClaudeRegels(dag), "geen Claude-opdrachten")}}
+
+            6) Verzonden mails (Gmail én CED-Outlook):
+            {{Blok(verzonden, "geen verzonden mails (of niet op te halen)")}}
+
+            7) Teams-chats waarin ik vandaag het laatste woord had (alleen het laatste
+            bericht per chat is zichtbaar — er kan dus méér gestuurd zijn):
+            {{Blok(teamsChats, "geen Teams-chats (of niet op te halen)")}}
+
+            8) Al geboekte timesheetregels van die dag:
             {{Blok(bestaand.Select(r =>
                 $"{(r.Van is { } v ? v.ToString("HH:mm") : "??:??")} {r.Klant} {r.Minuten} min — {r.Omschrijving}"),
                 "nog niets geboekt")}}
@@ -148,22 +251,48 @@ public static class ActiviteitenLog
             Geplande maaltijden (🍴-recepten, avondeten, koken) zijn géén werktijd: daar komt
             helemaal geen regel voor — ook niet als "Niet factureerbaar".
 
+            MEETREGELS — zo meet je de tijd:
+            - Elke meeting uit de agenda hoort als regel in het voorstel (duur = de
+              agendaduur, bij de juiste klant), tenzij die tijd al door een geboekte regel
+              gedekt is.
+            - Elke opdracht aan Claude Code telt voor minstens 20 minuten, ook als het
+              voorgrondvenster intussen iets anders toonde: het werk loopt op de
+              achtergrond door. Meerdere opdrachten in hetzelfde project mag je bundelen,
+              maar de som blijft minstens het aantal opdrachten × 20 minuten.
+            - Elke verzonden mail telt voor minstens 15 minuten; een langere mail
+              (± 150 woorden of meer) voor 20 minuten. Ook hier mag je bundelen per klant,
+              met dezelfde ondergrens. Van CED-Outlookmails is geen woordental bekend
+              (alleen een stukje preview): reken daar 15 minuten, of 20 als onderwerp en
+              preview duidelijk een lange inhoudelijke mail verraden.
+            - Elke Teams-chat waarin ik reageerde telt voor minstens 15 minuten CED-werk
+              (per chat, niet per berichtje); meerdere chats mag je bundelen tot één
+              regel met dezelfde ondergrens.
+            - Twee dingen tegelijk doen is normaal (een meeting bijwonen terwijl een
+              Claude-opdracht doorloopt): regels mogen dan in tijd overlappen.
+            - De al geboekte regels zijn al gedekt: die tijd niet opnieuw voorstellen,
+              alleen aanvullen wat nog ontbreekt.
+
             OPDRACHT: maak een beknopt, realistisch dagvoorstel dat de gewerkte tijd dekt.
-            Blokken van minstens 15 min, afgerond op 15 min, aaneensluitend waar dat logisch is,
-            zonder overlap met de al geboekte regels. Korte zakelijke omschrijving in het
-            Nederlands per regel; gelijkaardig werk samenvoegen in plaats van versnipperen.
+            Blokken van minstens 15 min, afgerond op 15 min, aaneensluitend waar dat logisch
+            is. Korte zakelijke omschrijving in het Nederlands per regel; gelijkaardig werk
+            samenvoegen in plaats van versnipperen. In "toelichting" mag je gerust wat
+            uitgebreider uitleggen welke keuzes en aannames je maakte (wat je bundelde, wat
+            je wegliet, waar signalen elkaar overlapten) — die uitleg komt níét in de
+            timesheets terecht.
 
             Antwoord uitsluitend met JSON, exact dit formaat (geen extra tekst):
-            {"regels": [{"van": "HH:mm", "minuten": 60, "klant": "CED", "omschrijving": "…"}]}
+            {"regels": [{"van": "HH:mm", "minuten": 60, "klant": "CED", "omschrijving": "…"}], "toelichting": "…"}
             """;
 
         var output = await ClaudeDrafter.RunClaudeAsync(prompt, ct);
         using var doc = ClaudeDrafter.ParseJson(output);
         var voorstel = new List<TimesheetRegel>();
+        var toelichting = doc.RootElement.TryGetProperty("toelichting", out var uitleg) &&
+            uitleg.ValueKind == JsonValueKind.String ? uitleg.GetString() ?? "" : "";
         if (!doc.RootElement.TryGetProperty("regels", out var lijst) ||
             lijst.ValueKind != JsonValueKind.Array)
         {
-            return voorstel;
+            return (voorstel, toelichting);
         }
         foreach (var el in lijst.EnumerateArray())
         {
@@ -189,7 +318,44 @@ public static class ActiviteitenLog
                 });
             }
         }
-        return voorstel.OrderBy(r => r.Van ?? TimeOnly.MaxValue).ToList();
+        return (voorstel.OrderBy(r => r.Van ?? TimeOnly.MaxValue).ToList(), toelichting);
+    }
+
+    /// <summary>De interactieve Claude Code-opdrachten van één dag, als "HH:mm projectmap".</summary>
+    private static List<string> ClaudeRegels(DateOnly dag)
+    {
+        try
+        {
+            if (!File.Exists(ClaudeLog))
+            {
+                return new List<string>();
+            }
+            var regels = new List<string>();
+            foreach (var lijn in File.ReadLines(ClaudeLog))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(lijn);
+                    var t = doc.RootElement.GetProperty("t").GetDateTimeOffset();
+                    if (DateOnly.FromDateTime(t.LocalDateTime) != dag)
+                    {
+                        continue;
+                    }
+                    var map = doc.RootElement.TryGetProperty("map", out var m)
+                        ? m.GetString() ?? "" : "";
+                    regels.Add($"{t.LocalDateTime:HH:mm} {Path.GetFileName(map.TrimEnd('\\', '/'))}");
+                }
+                catch
+                {
+                    // Kapotte regel overslaan.
+                }
+            }
+            return regels;
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private static string Blok(IEnumerable<string> regels, string leeg)

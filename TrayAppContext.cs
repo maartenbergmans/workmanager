@@ -105,6 +105,11 @@ public class TrayAppContext : ApplicationContext
         _dubbelCtrl = new DubbelCtrlHook();
         _dubbelCtrl.Getikt += OpenCockpit;
 
+        // En de losse Ctrl,Ctrl-wachter meestarten: die vangt de dubbele tik óók op als
+        // WorkManager zelf niet (meer) draait en start hem dan opnieuw. Het proces bewaakt
+        // met een eigen mutex dat er maar één wachter loopt, dus dit mag blind.
+        StartCtrlWachter();
+
         // Claude Code-meldingen: de Notification-hook zet signalen in een spoolmap; hier
         // begint de bewaking die daar klikbare meldingen van maakt (klik = terminal naar
         // de voorgrond).
@@ -370,6 +375,10 @@ public class TrayAppContext : ApplicationContext
         devops.Click += (_, _) => OpenDevOps();
         menu.Items.Add(devops);
 
+        var azureVm = new ToolStripMenuItem("Azure-VM BI starten (CED)…");
+        azureVm.Click += (_, _) => OpenAzureVm();
+        menu.Items.Add(azureVm);
+
         var verlof = new ToolStripMenuItem("Verlof goedkeuren (SD Worx)…");
         verlof.Click += (_, _) => OpenSdWorxPortaal();
         menu.Items.Add(verlof);
@@ -633,7 +642,25 @@ public class TrayAppContext : ApplicationContext
             case "verlof":
                 OpenSdWorxPortaal();
                 break;
+            case "azurevm":
+                OpenAzureVm();
+                break;
         }
+    }
+
+    private AzureVmForm? _azureVmForm;
+
+    private void OpenAzureVm()
+    {
+        if (_azureVmForm is { IsDisposed: false })
+        {
+            _azureVmForm.Activate();
+            return;
+        }
+
+        _azureVmForm = new AzureVmForm();
+        _azureVmForm.FormClosed += (_, _) => _azureVmForm = null;
+        _azureVmForm.Show();
     }
 
     private TopdeskForm? _topdeskForm;
@@ -1306,10 +1333,38 @@ public class TrayAppContext : ApplicationContext
         if (enable)
         {
             key.SetValue(AutoStartValueName, $"\"{Application.ExecutablePath}\"");
+            // De Ctrl,Ctrl-wachter apart mee-registreren: crasht of sluit de app na het
+            // aanmelden, dan blijft de dubbele tik hem toch kunnen terugstarten.
+            key.SetValue(AutoStartValueName + "CtrlWachter",
+                $"\"{Application.ExecutablePath}\" --ctrlwachter");
         }
         else
         {
             key.DeleteValue(AutoStartValueName, throwOnMissingValue: false);
+            key.DeleteValue(AutoStartValueName + "CtrlWachter", throwOnMissingValue: false);
+        }
+    }
+
+    /// <summary>
+    /// Start het losse Ctrl,Ctrl-wachterproces (zelfde exe, --ctrlwachter): dat draagt
+    /// alleen de dubbele-Ctrl-hook en start WorkManager wanneer die niet draait. Loopt er
+    /// al een wachter, dan stopt het nieuwe proces meteen weer op zijn eigen mutex.
+    /// </summary>
+    private static void StartCtrlWachter()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = Application.ExecutablePath,
+                Arguments = "--ctrlwachter",
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // Zonder wachter werkt al de rest gewoon; alleen Ctrl,Ctrl bij een
+            // afgesloten app doet dan niets.
         }
     }
 

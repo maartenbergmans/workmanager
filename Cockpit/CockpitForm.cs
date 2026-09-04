@@ -77,6 +77,8 @@ public class CockpitForm : Form
     private readonly ModernButton _devopsKnop;
     /// <summary>Alleen in de werkbalk zolang het SD Worx-verlofsignaal aan staat.</summary>
     private readonly ModernButton _verlofKnop;
+    /// <summary>Rode alarmknop, alleen zichtbaar zolang de Docker-engine niet draait.</summary>
+    private readonly ModernButton _dockerKnop;
     /// <summary>Per klant een eigen projectknop; op een smal venster vervangt "Projecten ▾" ze.</summary>
     private readonly List<(ModernButton Knop, string Label, List<string> Mappen)> _projectKnoppen = new();
     private ModernButton? _projectenHoofdknop;
@@ -104,7 +106,11 @@ public class CockpitForm : Form
     private ModernButton _vertaalButton = null!;
     private readonly ModernButton _teamsKoppelButton;
     private readonly ModernButton _outlookKoppelButton;
+    private readonly ModernButton _waKoppelButton;
     private MailBericht? _getoond;
+    // Staat de detailweergave los van de berichtenlijst (taak-mail, chat-transcript of
+    // meetingdetail)? Dan mag een berichtenverversing het paneel niet leegmaken.
+    private bool _detailLosVanLijst;
     private bool _gevierd; // confetti maar één keer per lege takenlijst
     private bool _takenLaden; // ItemChecked negeren terwijl de lijst gevuld wordt
     private bool _negeerTaakCheck; // dubbelklik op een taak = bewerken, niet toggelen
@@ -323,7 +329,9 @@ public class CockpitForm : Form
             {
                 ("Claude — aqurat", () => ClientLauncher.StartClaude(wsl + "aqurat"), wsl + "aqurat"),
                 ("PhpStorm — aqurat", () => ClientLauncher.StartPhpStorm(wsl + "aqurat"), null),
-                // De draaiende dev-omgeving: de app zelf en de mailvanger ernaast, in Firefox.
+                // De draaiende dev-omgeving: eerst de app opstarten (start.sh = npm start in
+                // webapp/), dan de app zelf en de mailvanger ernaast, in Firefox.
+                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "aqurat", "start.sh"), null),
                 ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("Mailpit — localhost:8025", () => ClientLauncher.StartFirefox("http://localhost:8025/"), null),
                 ("DataGrip — Aqurat", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Aqurat")), null),
@@ -367,11 +375,9 @@ public class CockpitForm : Form
             }),
             ("Lauryssens ▾", new (string, Action, string?)[]
             {
-                ("Claude — laurapp-backend", () => ClientLauncher.StartClaude(wsl + "laurapp-backend"), wsl + "laurapp-backend"),
-                ("Claude — laurapp-frontend", () => ClientLauncher.StartClaude(wsl + "laurapp-frontend"), wsl + "laurapp-frontend"),
+                ("Claude — laurapp", () => ClientLauncher.StartClaude(wsl + "laurapp"), wsl + "laurapp"),
                 ("Claude — herstel-calculator", () => ClientLauncher.StartClaude(wsl + "lauryssens-herstel-calculator"), wsl + "lauryssens-herstel-calculator"),
-                ("PhpStorm — laurapp-backend", () => ClientLauncher.StartPhpStorm(wsl + "laurapp-backend"), null),
-                ("PhpStorm — laurapp-frontend", () => ClientLauncher.StartPhpStorm(wsl + "laurapp-frontend"), null),
+                ("PhpStorm — laurapp", () => ClientLauncher.StartPhpStorm(wsl + "laurapp"), null),
                 ("PhpStorm — herstel-calculator", () => ClientLauncher.StartPhpStorm(wsl + "lauryssens-herstel-calculator"), null),
                 ("Claude — glascalculator (Drive)", () => ClientLauncher.StartClaude(
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
@@ -524,9 +530,31 @@ public class CockpitForm : Form
         // WorkManager de Microsoft-aanmelding voor het gekozen account invult.
         var cedMenu = new ContextMenuStrip();
         Theme.Style(cedMenu);
+        // De Outlook VBA-modules (Mobility/Property/MailModule) zijn CED-werk: de
+        // Claude-sessie hoort in dit ene CED-menu, niet als aparte projectgroep.
+        var automaticmailItem = new ToolStripMenuItem("Claude — automaticmail");
+        automaticmailItem.Click += (_, _) =>
+        {
+            try
+            {
+                ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail");
+                Toast.Toon(this, ThemaStem.Gestart("Claude — automaticmail"), Fluent.Globe);
+            }
+            catch (Exception ex)
+            {
+                Toast.Toon(this, $"Starten mislukt: {ex.Message}", Fluent.Globe);
+            }
+        };
+        cedMenu.Items.Add(automaticmailItem);
+        cedMenu.Items.Add(new ToolStripSeparator());
         var azurePortalItem = new ToolStripMenuItem("Azure-portal…");
         azurePortalItem.Click += (_, _) => OpenExtern("https://portal.azure.com/");
         cedMenu.Items.Add(azurePortalItem);
+        // Facturen goedkeuren hoort bij het CED-werk: ook hier bereikbaar, niet alleen via
+        // de (week)taakknop in de balk en het tray-menu.
+        var ispnextItem = new ToolStripMenuItem("Facturen goedkeuren (ISPnext)…");
+        ispnextItem.Click += (_, _) => _openInvoices();
+        cedMenu.Items.Add(ispnextItem);
         cedMenu.Items.Add(new ToolStripSeparator());
         var windowsAppItems = new List<ToolStripMenuItem>();
         foreach (var account in new[] { CedLogin.TopdeskGebruiker, CedLogin.Email })
@@ -566,6 +594,65 @@ public class CockpitForm : Form
         toolbar.Controls.Add(projectenKnop);
         Resize += (_, _) => WerkProjectWeergaveBij();
         WerkProjectWeergaveBij();
+
+        // Live sessiepaneel voor de multiclauder: één knop met badge (aantal sessies dat
+        // op input wacht) en per draaiende Claude-sessie een regel met status; klikken
+        // haalt het terminalvenster naar voren. Gevoed door de hook-events die de tray
+        // al verwerkt (ClaudeSessies) — werkt dus ook voor WSL-sessies.
+        var claudeMenu = new ContextMenuStrip();
+        Theme.Style(claudeMenu);
+        var claudeKnop = new ModernButton { Text = "🤖 Claude ▾" };
+        claudeKnop.KrimpNaarInhoud(dropdown: true);
+        claudeMenu.Opening += (_, _) =>
+        {
+            claudeMenu.Items.Clear();
+            var sessies = ClaudeSessies.Snapshot();
+            if (sessies.Count == 0)
+            {
+                claudeMenu.Items.Add(new ToolStripMenuItem("Geen actieve Claude-sessies")
+                {
+                    Enabled = false,
+                });
+                return;
+            }
+            foreach (var s in sessies)
+            {
+                var (icoon, status) = s.Status switch
+                {
+                    ClaudeSessies.Wacht => ("🟠", "wacht op input"),
+                    ClaudeSessies.Klaar => ("✅", "klaar — wacht op vervolg"),
+                    ClaudeSessies.Bezig => ("🔵", "bezig"),
+                    _ => ("⚪", "gestart"),
+                };
+                var minuten = (int)(DateTimeOffset.Now - s.Sinds).TotalMinutes;
+                var mi = new ToolStripMenuItem(
+                    $"{icoon} {ClientLauncher.SessieLabel(s.Map)} — {status} " +
+                    $"({(minuten < 1 ? "net" : $"{minuten} min")})")
+                {
+                    ToolTipText = s.Boodschap,
+                };
+                var sessie = s;
+                mi.Click += (_, _) => ClaudeAandacht.ActiveerTerminal(
+                    sessie.VensterPid, sessie.VensterHandle, sessie.Map);
+                claudeMenu.Items.Add(mi);
+            }
+        };
+        claudeKnop.Click += (_, _) =>
+            claudeMenu.Show(claudeKnop, new Point(0, claudeKnop.Height + 4));
+        // Badge in de knoptekst: aantal sessies dat op input wacht, elke 5 s ververst.
+        var claudeBadgeTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        claudeBadgeTimer.Tick += (_, _) =>
+        {
+            var wachtend = ClaudeSessies.AantalWachtend();
+            var tekst = wachtend > 0 ? $"🤖 Claude ({wachtend}) ▾" : "🤖 Claude ▾";
+            if (claudeKnop.Text != tekst)
+            {
+                claudeKnop.Text = tekst;
+                claudeKnop.KrimpNaarInhoud(dropdown: true);
+            }
+        };
+        claudeBadgeTimer.Start();
+        toolbar.Controls.Add(claudeKnop);
 
         // Snelkoppelingen naar de Drive-boekhoudmappen: openen in de Verkenner via de lokale
         // "Drive voor desktop"-spiegel (G:\Mijn Drive). Begin volgend jaar de 2026-paden
@@ -630,7 +717,7 @@ public class CockpitForm : Form
         // facturen die klaarstaan, een sessie die heraanmelding nodig heeft, een Claude-update.
         // Gewone bedieningsknoppen zoals verversen en filters blijven neutraal.
         _verversButton = new ModernButton { Text = "Nu verversen", Width = 140 };
-        _verversButton.Click += async (_, _) => await VerversAsync();
+        _verversButton.Click += async (_, _) => await VerversAsync(handmatig: true);
         // Dropdown naast de verversknop: "Volledige synchronisatie" herstelt de Outlook-
         // lijst (verbergmarkeringen weg) en herlaadt de verborgen sessies vers.
         var verversMenu = new ContextMenuStrip();
@@ -683,7 +770,7 @@ public class CockpitForm : Form
                 await TeamsClient.Instance.KoppelAsync(_cts.Token);
                 _teamsKoppelButton.Visible = false; // meteen weg, niet wachten op de sync
                 Toast.Toon(this, "Teams aangemeld", Fluent.Check);
-                await VerversAsync();
+                await VerversNaAanmeldenAsync();
             }
             catch (OperationCanceledException)
             {
@@ -705,7 +792,7 @@ public class CockpitForm : Form
                 await OutlookClient.Instance.KoppelAsync(_cts.Token);
                 _outlookKoppelButton.Visible = false; // meteen weg, niet wachten op de sync
                 Toast.Toon(this, "Outlook (CED) aangemeld", Fluent.Check);
-                await VerversAsync();
+                await VerversNaAanmeldenAsync();
             }
             catch (OperationCanceledException)
             {
@@ -714,6 +801,34 @@ public class CockpitForm : Form
             catch (Exception ex)
             {
                 Toast.Toon(this, $"Outlook aanmelden mislukt: {ex.Message}", Fluent.Globe);
+            }
+        };
+        // WhatsApp logt gekoppelde apparaten na een tijd uit (dan is een nieuwe QR-scan
+        // nodig): dezelfde alleen-bij-actie-knop als voor Teams en Outlook, maar de scan
+        // gebeurt in een QR-venster in plaats van een Microsoft-login.
+        _waKoppelButton = new ModernButton
+        {
+            Text = "WhatsApp koppelen…", Width = 185, Kind = ButtonKind.Accent,
+            Visible = false, // pas tonen als een poll de sessiestatus echt kent
+        };
+        _waKoppelButton.Click += async (_, _) =>
+        {
+            try
+            {
+                Toast.Toon(this, "Er opent een venster met een QR-code — scan die met je " +
+                    "telefoon (WhatsApp → Instellingen → Gekoppelde apparaten)", Fluent.Mail);
+                await WhatsAppClient.Instance.KoppelAsync(_cts.Token);
+                _waKoppelButton.Visible = false; // meteen weg, niet wachten op de sync
+                Toast.Toon(this, "WhatsApp gekoppeld", Fluent.Check);
+                await VerversNaAanmeldenAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                // Venster gesloten tijdens het koppelen.
+            }
+            catch (Exception ex)
+            {
+                Toast.Toon(this, $"WhatsApp koppelen mislukt: {ex.Message}", Fluent.Globe);
             }
         };
         // Snelkoppelingen voor Jan Van Dyck: zijn DM in het detailpaneel en de vaste Meet-link.
@@ -790,6 +905,42 @@ public class CockpitForm : Form
         verlofKnop.KrimpNaarInhoud();
         verlofKnop.Visible = WerkSignaal.Actief("sdworx");
         verlofKnop.Click += (_, _) => _openVenster("verlof");
+        // Docker-check bij het openen van de cockpit: ligt de engine plat, dan staat hier
+        // een opvallend rode startknop (devenv-mysql en de projectstacks draaien in Docker).
+        // De knop verdwijnt zodra de engine draait; elke ophaalronde kijkt opnieuw.
+        var dockerKnop = _dockerKnop = new ModernButton
+            { Text = "Docker starten", Glyph = Fluent.Play, Kind = ButtonKind.Danger };
+        dockerKnop.KrimpNaarInhoud();
+        dockerKnop.Visible = DockerStatus.Geinstalleerd && !DockerStatus.Draait;
+        dockerKnop.Click += async (_, _) =>
+        {
+            dockerKnop.Bezig = true;
+            dockerKnop.Enabled = false;
+            try
+            {
+                var ok = await DockerStatus.StartAsync(_cts.Token);
+                dockerKnop.Visible = !ok;
+                if (ok)
+                {
+                    Toast.Toon(this, "Docker draait", Fluent.Check);
+                }
+                else
+                {
+                    Toast.Fout(this, "Docker start niet",
+                        "Docker Desktop is gestart maar de engine kwam niet binnen 2 minuten op. " +
+                        "Kijk zelf even in Docker Desktop wat er hapert.");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Cockpit gesloten tijdens het wachten.
+            }
+            finally
+            {
+                dockerKnop.Bezig = false;
+                dockerKnop.Enabled = true;
+            }
+        };
         // Claude Code CLI bijwerken naar de nieuwste versie ('claude update' is een no-op als
         // je al up-to-date bent). De knop staat altijd in de balk; alleen bij een échte
         // versiesprong (2.1 → 2.2, taak van UpdateCheck) kleurt hij accent met de versies erbij.
@@ -843,8 +994,8 @@ public class CockpitForm : Form
         var outlookAanmeldItem = new ToolStripMenuItem("Outlook aanmelden…");
         outlookAanmeldItem.Click += (_, _) => _outlookKoppelButton.PerformClick();
         sessieMenu.Items.Add(outlookAanmeldItem);
-        var waKoppelItem = new ToolStripMenuItem("WhatsApp koppelen… (QR in mailvenster)");
-        waKoppelItem.Click += (_, _) => _openMail();
+        var waKoppelItem = new ToolStripMenuItem("WhatsApp koppelen… (QR-scan)");
+        waKoppelItem.Click += (_, _) => _waKoppelButton.PerformClick();
         sessieMenu.Items.Add(waKoppelItem);
         var gezondheidItem = new ToolStripMenuItem("Gezondheid bronnen…");
         gezondheidItem.Click += (_, _) => ToonGezondheid();
@@ -868,7 +1019,7 @@ public class CockpitForm : Form
             // Alleen tonen wat nú actie vraagt; het gezondheidsoverzicht staat er altijd.
             teamsAanmeldItem.Visible = !TeamsClient.Aangemeld;
             outlookAanmeldItem.Visible = !OutlookClient.Aangemeld;
-            waKoppelItem.Visible = !WhatsAppClient.OoitGekoppeld;
+            waKoppelItem.Visible = !WhatsAppClient.OoitGekoppeld || !WhatsAppClient.Aangemeld;
         };
         _sessieStatus.Click += (_, _) =>
             sessieMenu.Show(_sessieStatus, new Point(0, _sessieStatus.Height + 4));
@@ -915,11 +1066,13 @@ public class CockpitForm : Form
         toolbar.Controls.Add(meetJanKnop);
         toolbar.Controls.Add(_teamsKoppelButton);
         toolbar.Controls.Add(_outlookKoppelButton);
+        toolbar.Controls.Add(_waKoppelButton);
         toolbar.Controls.Add(cedDagKnop);
         toolbar.Controls.Add(dagvoorstelKnop);
         toolbar.Controls.Add(topdeskKnop);
         toolbar.Controls.Add(devopsKnop);
         toolbar.Controls.Add(verlofKnop);
+        toolbar.Controls.Add(dockerKnop);
         toolbar.Controls.Add(timesheetKnop);
         toolbar.Controls.Add(timesheetDashboardKnop);
         // Claude-abonnementsverbruik (zelfde bron als /usage in de CLI).
@@ -991,6 +1144,7 @@ public class CockpitForm : Form
             Actie($"Windows App — {CedLogin.Email}…",
                 () => windowsAppItems[1].PerformClick()),
             Actie("Azure DevOps…", () => _openDevOps()),
+            Venster("Azure-VM BI starten (VMWS-BI-MB-1)…", "azurevm"),
             Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
             Actie("Mail beantwoorden (Gmail)…", () => _openMail()),
             Actie("TopDesk-tickets…", () => _openTopdesk()),
@@ -1175,10 +1329,12 @@ public class CockpitForm : Form
         berichtenMenu.Opening += (_, _) =>
         {
             var b = GeselecteerdBericht();
-            driveItem.Visible = BijlagenNaarDrive.HeeftBijlagen(b);
-            // Doorsturen loopt via IMAP op de Gmail-inbox: alleen voor Gmail-mails met
-            // bijlagen (niet voor Outlook- of chatberichten).
-            billitItem.Visible = b is { IsChat: false, OutlookMail.Length: 0 } &&
+            // Beide acties lopen via IMAP op de Gmail-inbox: Smartschool-bijlagen kunnen
+            // alleen via de chips in de berichtkop (verborgen schoolsessie).
+            driveItem.Visible = b is { SmartschoolBericht.Length: 0 } &&
+                BijlagenNaarDrive.HeeftBijlagen(b);
+            billitItem.Visible = b is
+                { IsChat: false, OutlookMail.Length: 0, SmartschoolBericht.Length: 0 } &&
                 BijlagenNaarDrive.HeeftBijlagen(b);
         };
         var mailvensterItem = new ToolStripMenuItem("Openen in mailvenster…");
@@ -1291,13 +1447,20 @@ public class CockpitForm : Form
         {
             if (_berichtenBezig)
             {
-                Toast.Toon(this, "Berichten worden al opgehaald — even geduld", Fluent.Klok);
-                return;
+                // Niet stilletjes niets doen: de lopende beurt is met oudere gegevens
+                // begonnen, dus na afloop alsnog een verse ophaalbeurt draaien — anders
+                // leek de knop te werken terwijl de lijst oud bleef (2 sep 2026).
+                Toast.Toon(this, "Berichten worden al opgehaald — daarna volgt meteen " +
+                    "een verse beurt", Fluent.Klok);
             }
             berichtenVerversKnop.Bezig = true;
             berichtenVerversKnop.Enabled = false;
             try
             {
+                while (_berichtenBezig && !IsDisposed)
+                {
+                    await Task.Delay(500, _cts.Token);
+                }
                 await VerversBerichtenAsync();
                 Toast.Toon(this, $"Berichten ververst ({DateTime.Now:HH:mm})", Fluent.Mail);
             }
@@ -2407,6 +2570,11 @@ public class CockpitForm : Form
         {
             return;
         }
+        if (bericht.SmartschoolBericht.Length > 0)
+        {
+            await OpenSmartschoolBijlageAsync(bericht, index);
+            return;
+        }
         if (bericht.Uid == 0)
         {
             Toast.Toon(this, "Bijlage openen kan alleen bij Gmail-mails uit de lijst", Fluent.Mail);
@@ -2439,6 +2607,67 @@ public class CockpitForm : Form
         }
     }
 
+    /// <summary>
+    /// Downloadt de bijlagen van een Smartschool-bericht via de verborgen schoolsessie
+    /// (de bijlagen in de berichtweergave zijn daar geen echte links) en opent daarna de
+    /// aangeklikte bijlage; komt de naam niet overeen, dan gaat de map open.
+    /// </summary>
+    private async Task OpenSmartschoolBijlageAsync(MailBericht bericht, int index)
+    {
+        if (bericht.SmartschoolBericht.Split('|', 2) is not { Length: 2 } delen)
+        {
+            return;
+        }
+        try
+        {
+            // De pollronde downloadt bijlagen proactief naar de lokale bijlagenmap;
+            // normaal opent de chip dus meteen. Alleen als er (nog) niets lokaal staat
+            // haalt de verborgen sessie ze alsnog op — dat duurt even.
+            var paden = SmartschoolClient.LokaleBijlagen(delen[1]);
+            if (paden.Count == 0)
+            {
+                Toast.Toon(this, "Bijlage uit Smartschool downloaden…", Fluent.Mail);
+                paden = await SmartschoolClient.Instance.DownloadBijlagenAsync(
+                    delen[0], delen[1], _cts.Token);
+            }
+            var naam = index < bericht.Bijlagen.Count ? bericht.Bijlagen[index] : "";
+            // Ook een "naam (2).pdf" van een eerdere download telt als treffer.
+            var pad = paden.FirstOrDefault(p =>
+                string.Equals(Path.GetFileName(p), naam, StringComparison.OrdinalIgnoreCase) ||
+                (string.Equals(Path.GetExtension(p), Path.GetExtension(naam),
+                    StringComparison.OrdinalIgnoreCase) &&
+                 Path.GetFileNameWithoutExtension(p).StartsWith(
+                     Path.GetFileNameWithoutExtension(naam), StringComparison.OrdinalIgnoreCase)));
+            if (pad is null && paden.Count == 1)
+            {
+                pad = paden[0];
+            }
+            if (pad is not null)
+            {
+                Process.Start(new ProcessStartInfo(pad) { UseShellExecute = true });
+            }
+            else if (paden.Count > 0 && Path.GetDirectoryName(paden[0]) is { } map)
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{map}\"")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            else
+            {
+                Toast.Toon(this, "Geen bijlage binnengekregen uit Smartschool", Fluent.Mail);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Venster gesloten tijdens het downloaden.
+        }
+        catch (Exception ex)
+        {
+            Toast.Toon(this, $"Bijlage downloaden mislukt: {ex.Message}", Fluent.Mail);
+        }
+    }
+
     private static void OpenExtern(string uri)
     {
         try
@@ -2465,13 +2694,53 @@ public class CockpitForm : Form
 
     // ---------- Verversen ----------
 
-    private async Task VerversAsync()
+    /// <summary>
+    /// Verse verversbeurt zodra dat kan: net na het aanmelden van Teams/Outlook mag het
+    /// resultaat niet op de volgende timerbeurt wachten. Loopt er al een beurt (die de
+    /// bron mogelijk nog als "niet aangemeld" heeft overgeslagen), dan wachten we tot
+    /// die klaar is en halen we daarna alsnog vers op.
+    /// </summary>
+    private async Task VerversNaAanmeldenAsync()
+    {
+        while (_bezig && !IsDisposed)
+        {
+            await Task.Delay(500, _cts.Token);
+        }
+        await VerversAsync();
+    }
+
+    private bool _verseBeurtGepland;
+
+    /// <param name="handmatig">Een klik op ⟳: bij een al lopende beurt niet overslaan maar
+    /// na afloop meteen een verse beurt draaien. De timer laat dit uit — die tikt vanzelf
+    /// weer en hoeft niet te stapelen.</param>
+    private async Task VerversAsync(bool handmatig = false)
     {
         if (_bezig || IsDisposed)
         {
-            if (_bezig && !IsDisposed)
+            if (_bezig && !IsDisposed && handmatig && !_verseBeurtGepland)
             {
-                Toast.Toon(this, "Er loopt al een verversbeurt — even geduld", Fluent.Klok);
+                // De lopende beurt is met oudere gegevens begonnen: na afloop meteen een
+                // verse beurt draaien, zodat een klik op ⟳ nooit stilletjes verdampt.
+                _verseBeurtGepland = true;
+                Toast.Toon(this, "Er loopt al een verversbeurt — daarna volgt meteen " +
+                    "een verse", Fluent.Klok);
+                try
+                {
+                    while (_bezig && !IsDisposed)
+                    {
+                        await Task.Delay(500, _cts.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // venster gesloten tijdens het wachten
+                }
+                finally
+                {
+                    _verseBeurtGepland = false;
+                }
+                await VerversAsync();
             }
             return;
         }
@@ -2555,6 +2824,17 @@ public class CockpitForm : Form
         }
     }
 
+    /// <summary>
+    /// Is dit de Gmail-meldingsmail "Nieuw bericht van …" van Smartschool? Die wordt in de
+    /// lijst vervangen door het échte schoolbericht zodra dat uit Smartschool is opgehaald;
+    /// alleen als dat mislukt, blijft de melding zelf zichtbaar.
+    /// </summary>
+    private static bool IsSmartschoolMelding(MailBericht m) =>
+        !m.IsChat &&
+        (m.VanAdres.Contains("smartschoolmail", StringComparison.OrdinalIgnoreCase) ||
+         m.Van.Contains("smartschool", StringComparison.OrdinalIgnoreCase)) &&
+        m.Onderwerp.Contains("nieuw bericht", StringComparison.OrdinalIgnoreCase);
+
     private async Task VerversBerichtenKernAsync()
     {
         var berichten = new List<MailBericht>();
@@ -2592,6 +2872,18 @@ public class CockpitForm : Form
             if (!versGehaald.Contains("outlook"))
             {
                 snapshot.AddRange(vorigeCache.Where(m => m.OutlookMail.Length > 0));
+            }
+            if (!versGehaald.Contains("smartschool"))
+            {
+                snapshot.AddRange(vorigeCache.Where(m => m.SmartschoolBericht.Length > 0));
+                // De Gmail-meldingsmail ("Nieuw bericht van …") nog niet laten opflitsen:
+                // zo meteen wordt eerst het échte bericht uit Smartschool gehaald en de
+                // melding gearchiveerd. Alleen als dat mislukt, komt de melding alsnog in
+                // de eindstand terecht.
+                if (SmartschoolLogin.Geconfigureerd)
+                {
+                    snapshot.RemoveAll(IsSmartschoolMelding);
+                }
             }
             snapshot.AddRange(vorigeCache.Where(m => !m.IsChat && m.VanAdres == "CC-map" &&
                 snapshot.All(s => s.MessageId != m.MessageId)));
@@ -2666,6 +2958,20 @@ public class CockpitForm : Form
             {
                 _ = t.Exception;
                 BronGezondheid.Klaar(bron, Duur());
+                // Bleek de sessie tijdens het ophalen niet (meer) aangemeld, dan moet de
+                // aanmeldknop nú in beeld — niet pas als de hele verversronde klaar is
+                // (de andere bronnen kunnen nog minuten bezig zijn).
+                if (bron is "Teams" or "Outlook" or "WhatsApp" && !IsDisposed)
+                {
+                    try
+                    {
+                        BeginInvoke(WerkAanmeldKnoppenBij);
+                    }
+                    catch
+                    {
+                        // Venster net gesloten: dan is er ook geen knop meer te tonen.
+                    }
+                }
             }, TaskScheduler.Default);
         }
 
@@ -2696,8 +3002,9 @@ public class CockpitForm : Form
             }
         }
         // Vaste regels: routinemails in Gmail meteen archiveren én als gelezen zetten —
-        // Netflix-bevestigingen en de JAAN bv "SMS credits bijgeschreven"-meldingen
-        // (het aantal in het onderwerp varieert, dus op de vaste kern matchen).
+        // Netflix-bevestigingen, de JAAN bv "SMS credits bijgeschreven"-meldingen
+        // (het aantal in het onderwerp varieert, dus op de vaste kern matchen) en de
+        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari).
         var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
         var netflix = berichten.Where(m => !m.IsChat && m.Uid > 0 &&
             (m.VanAdres.Contains("account.netflix.com", StringComparison.OrdinalIgnoreCase) ||
@@ -2705,6 +3012,7 @@ public class CockpitForm : Form
                  @"SMS[\s-]*credits zijn bijgeschreven",
                  System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
              AlarmMails.Matcht(m) ||
+             AppleFactuur.MoetArchiveren(m) ||
              ArchiveerRegels.Matcht(m, eigenRegels))).ToList();
         // Storingsmails (MailMobility/MailProperty van IT-support) éérst registreren: dat zet
         // de rode taak en houdt de laatste-mailtijd bij, ook als het archiveren zo mislukt.
@@ -2780,7 +3088,7 @@ public class CockpitForm : Form
                 // eerst op de achtergrond volledig geladen (StartWaVoorladen) en pas daarna
                 // getoond — het WaVers-register houdt ze vast tot ze gearchiveerd zijn.
                 var waHistorie = LaadWaHistorie();
-                var waVers = WaVers.Load();
+                var waVers = VersRegister.WaVers.Load();
                 var waVersGewijzigd = false;
                 var waRijen = new List<MailBericht>();
                 var waTeLaden = new List<MailBericht>();
@@ -2843,7 +3151,7 @@ public class CockpitForm : Form
                     else
                     {
                         // Nog niet volledig: eerst laden, daarna pas in de lijst.
-                        waVers[rij.MessageId] = new WaVers.Rij
+                        waVers[rij.MessageId] = new VersRegister.Rij
                         {
                             MessageId = rij.MessageId, Chat = c.Naam,
                             Onderwerp = rij.Onderwerp, Datum = rij.Datum,
@@ -2868,7 +3176,7 @@ public class CockpitForm : Form
                 }
                 if (waVersGewijzigd)
                 {
-                    WaVers.Bewaar(waVers);
+                    VersRegister.WaVers.Bewaar(waVers);
                 }
                 berichten.AddRange(waRijen);
                 if (waTeLaden.Count > 0)
@@ -2904,7 +3212,7 @@ public class CockpitForm : Form
             else if (TeamsClient.OoitGekoppeld)
             {
                 // Alleen signaleren (uitlezen); antwoorden gebeurt in Teams zelf.
-                var (totaal, ongelezen) = teamsTaak is not null
+                var (totaal, ongelezen, teamsPreviews) = teamsTaak is not null
                     ? await teamsTaak
                     : await TeamsClient.Instance.OngelezenAsync(_cts.Token);
                 if (totaal < 10)
@@ -2931,24 +3239,113 @@ public class CockpitForm : Form
                         "(Volledige chat en beantwoorden: in Teams zelf.)",
                     Datum = DateTimeOffset.Now,
                 }).ToList();
-                // De bubbelweergave meteen uit de cache meegeven (eerdere beurt of vorige
-                // sessie): klikken toont dan direct het gesprek, ook net na een herstart.
+                // Een rij verschijnt pas als het hele gesprek er is: klikken toont dan meteen
+                // alles (zelfde werking als WhatsApp). Chats waarvan de cache het nieuwste
+                // bericht nog niet kent, worden eerst op de achtergrond volledig geladen en
+                // pas daarna getoond — het TeamsVers-register houdt ze vast tot ze
+                // gearchiveerd zijn (het laden opent de chat, dus Teams zet hem op gelezen
+                // en de zijbalk noemt hem daarna niet meer).
                 var teamsHistorie = LaadTeamsHistorie();
+                var teamsVers = VersRegister.TeamsVers.Load();
+                var teamsVersGewijzigd = false;
+                // Afgehandeld in Teams zelf: heeft Maarten intussen in de chat geantwoord,
+                // dan begint de zijbalkpreview met "U:" (of "You:"/"Vous"). De wachtende
+                // rij is dan klaar en verdwijnt vanzelf — niet eindeloos blijven tonen tot
+                // er handmatig gearchiveerd wordt. Alleen bij een volwaardige scrape
+                // (totaal >= 10): een half gerenderde lijst heeft geen betrouwbare previews.
+                static bool BeantwoordInTeams(string preview) =>
+                    preview.StartsWith("U:", StringComparison.Ordinal) ||
+                    preview.StartsWith("You:", StringComparison.OrdinalIgnoreCase) ||
+                    preview.StartsWith("Vous", StringComparison.OrdinalIgnoreCase);
+                if (totaal >= 10)
+                {
+                    foreach (var beantwoord in teamsVers.Values
+                        .Where(v => teamsPreviews.TryGetValue(v.Chat, out var p) &&
+                            BeantwoordInTeams(p))
+                        .Select(v => v.MessageId).ToList())
+                    {
+                        teamsVers.Remove(beantwoord);
+                        teamsVersGewijzigd = true;
+                    }
+                }
+                var teamsKlaar = new List<MailBericht>();
+                var teamsTeLaden = new List<MailBericht>();
                 foreach (var rij in teamsRijen)
                 {
+                    // Een nieuwer bericht vervangt een eerdere wachtende rij van die chat.
+                    foreach (var oudId in teamsVers.Values
+                        .Where(v => v.Chat.Equals(rij.TeamsChat, StringComparison.OrdinalIgnoreCase) &&
+                            v.MessageId != rij.MessageId)
+                        .Select(v => v.MessageId).ToList())
+                    {
+                        teamsVers.Remove(oudId);
+                        teamsVersGewijzigd = true;
+                    }
                     if (vorigeCache.FirstOrDefault(m =>
                             m.MessageId == rij.MessageId) is { Html.Length: > 0 } oud)
                     {
                         rij.Html = oud.Html;
                         rij.Tekst = oud.Tekst;
                     }
-                    else if (teamsHistorie.TryGetValue(rij.TeamsChat, out var h) &&
-                        h.Berichten.Count > 0)
+                    else if (teamsVers.TryGetValue(rij.MessageId, out var geladen) && geladen.Geladen)
                     {
-                        rij.Html = BouwTeamsHtml(h.Berichten, rij.TeamsChat);
+                        rij.Html = geladen.Html;
+                        if (geladen.Tekst.Length > 0)
+                        {
+                            rij.Tekst = geladen.Tekst;
+                        }
+                        if (geladen.Html.Length == 0)
+                        {
+                            // De vorige laadbeurt leverde niets op: de rij gewoon tonen mét
+                            // preview, maar op de achtergrond opnieuw proberen.
+                            teamsTeLaden.Add(rij);
+                        }
                     }
+                    else if (teamsHistorie.TryGetValue(rij.TeamsChat, out var h) &&
+                        h.Berichten.Count > 0 && TeamsHistorieActueel(h, rij.Onderwerp))
+                    {
+                        // De cache kent het nieuwste bericht al: meteen volledig tonen.
+                        rij.Html = BouwTeamsHtml(h.Berichten, rij.TeamsChat);
+                        rij.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n", h.Berichten
+                            .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
+                                $"{(b.Beeld.Length > 0 ? "[📷 afbeelding] " : "")}{b.Tekst}"));
+                    }
+                    else
+                    {
+                        // Nog niet volledig: eerst laden, daarna pas in de lijst.
+                        teamsVers[rij.MessageId] = new VersRegister.Rij
+                        {
+                            MessageId = rij.MessageId, Chat = rij.TeamsChat,
+                            Onderwerp = rij.Onderwerp, Datum = rij.Datum,
+                        };
+                        teamsVersGewijzigd = true;
+                        teamsTeLaden.Add(rij);
+                        continue;
+                    }
+                    teamsKlaar.Add(rij);
                 }
-                berichten.AddRange(teamsRijen);
+                // Voorgeladen rijen die op afhandeling wachten: de chat staat in Teams al op
+                // gelezen (het laden opende hem), dus de zijbalk noemt hem niet meer — tonen
+                // tot Maarten archiveert.
+                foreach (var v in teamsVers.Values.Where(v => v.Geladen &&
+                             teamsKlaar.All(r => r.MessageId != v.MessageId)))
+                {
+                    teamsKlaar.Add(new MailBericht
+                    {
+                        MessageId = v.MessageId, TeamsChat = v.Chat, Van = v.Chat,
+                        VanAdres = "Teams", Onderwerp = v.Onderwerp, Tekst = v.Tekst,
+                        Html = v.Html, Datum = v.Datum,
+                    });
+                }
+                if (teamsVersGewijzigd)
+                {
+                    VersRegister.TeamsVers.Bewaar(teamsVers);
+                }
+                berichten.AddRange(teamsKlaar);
+                if (teamsTeLaden.Count > 0)
+                {
+                    _ = TeamsVoorladenAsync(teamsTeLaden); // géén Task.Run: WebView2 = UI-thread
+                }
                 BronGezondheid.Succes("Teams");
             }
         }
@@ -3017,7 +3414,11 @@ public class CockpitForm : Form
                         Onderwerp = b.Onderwerp.Length > 0 ? b.Onderwerp : "bericht",
                         Tekst = (b.Tekst.Length > 0
                             ? b.Tekst
-                            : "(Geen tekst gevonden — open de mail in Outlook.)") +
+                            : OutlookClient.Aangemeld
+                                ? "(Geen tekst gevonden — open de mail in Outlook.)"
+                                : "(Tekst nog niet opgehaald: Outlook is niet aangemeld " +
+                                  "(wachtwoord-/MFA-scherm). Klik 'Outlook aanmelden…' — " +
+                                  "daarna wordt de tekst vanzelf opgehaald en bewaard.)") +
                             "\n\n(Beantwoorden: in Outlook zelf.)",
                         Html = b.Html,
                         Datum = b.Datum,
@@ -3039,6 +3440,104 @@ public class CockpitForm : Form
             }
         }
         versGehaald.Add("outlook");
+        ToonTussenstand();
+
+        try
+        {
+            if (SmartschoolLogin.Geconfigureerd)
+            {
+                // Schoolberichten van Emilia en Lisa (elk hun eigen Postvak IN). Er wordt
+                // alleen écht bij Smartschool ingelogd als er een meldingsmail ("Nieuw
+                // bericht" van smartschoolmail.be) in de inbox staat of het uur om is;
+                // anders komt alles meteen uit de lokale cache.
+                var meldingsMail = berichten.Any(m => !m.Genegeerd && IsSmartschoolMelding(m));
+                var smartschoolBerichten =
+                    await SmartschoolClient.Instance.BerichtenAsync(meldingsMail, _cts.Token);
+                if (SmartschoolClient.Instance.LaatsteAutoGearchiveerd is { Count: > 0 } dubbels &&
+                    !IsDisposed)
+                {
+                    Toast.Toon(this, $"{dubbels.Count} dubbel schoolbericht(en) bij Emilia " +
+                        "gearchiveerd (zelfde bericht stond ook bij Lisa)", Fluent.Archive);
+                }
+                berichten.AddRange(smartschoolBerichten
+                    .Select(b => new MailBericht
+                    {
+                        MessageId = b.Sleutel,
+                        SmartschoolBericht = $"{b.Kind}|{b.MsgId}",
+                        Van = $"{b.Van} · {b.Kind}",
+                        VanAdres = "Smartschool",
+                        Onderwerp = b.Onderwerp.Length > 0 ? b.Onderwerp : "bericht",
+                        Tekst = (b.Tekst.Length > 0
+                            ? b.Tekst
+                            : "(Geen tekst gevonden — open het bericht in Smartschool.)") +
+                            (b.Bijlagen.Length > 0 ? $"\n\n📎 Bijlagen: {b.Bijlagen}" : "") +
+                            "\n\n(Beantwoorden: in Smartschool zelf.)",
+                        // Als chips in de berichtkop: aanklikken downloadt de bijlage via
+                        // de verborgen schoolsessie (de weergave zelf heeft geen links).
+                        Bijlagen = b.Bijlagen
+                            .Split("; ", StringSplitOptions.RemoveEmptyEntries).ToList(),
+                        Html = b.Html,
+                        Datum = b.Datum,
+                    }));
+                // De Gmail-meldingsmail ("Nieuw bericht van …: …") heeft zijn werk gedaan
+                // zodra het aangekondigde bericht hier staat: automatisch archiveren, net
+                // als de Netflix-routinemails. Alleen bij een match op het aangekondigde
+                // onderwerp — een melding waarvan het bericht (nog) niet opgehaald is,
+                // blijft staan voor een volgende beurt. Dubbels die deze beurt bij Emilia
+                // opgeruimd zijn tellen ook als opgehaald.
+                if (meldingsMail)
+                {
+                    static string NormOnderwerp(string s) => System.Text.RegularExpressions
+                        .Regex.Replace(s, @"\s+", " ").Trim().ToLowerInvariant();
+                    var opgehaald = smartschoolBerichten
+                        .Select(b => NormOnderwerp(b.Onderwerp))
+                        .Concat(SmartschoolClient.Instance.LaatsteAutoGearchiveerd
+                            .Select(NormOnderwerp))
+                        .ToHashSet();
+                    bool Aangekondigd(MailBericht m)
+                    {
+                        if (m.Onderwerp.Split(':', 2) is not { Length: 2 } delen)
+                        {
+                            return false;
+                        }
+                        // De melding kapt lange onderwerpen soms af: ook een prefix-match
+                        // op het opgehaalde onderwerp telt.
+                        var kern = NormOnderwerp(delen[1]).TrimEnd('…', '.', ' ');
+                        return kern.Length > 0 && opgehaald.Any(o =>
+                            o == kern || o.StartsWith(kern, StringComparison.Ordinal));
+                    }
+                    var klaar = berichten.Where(m => m.Uid > 0 && !m.Genegeerd &&
+                        IsSmartschoolMelding(m) && Aangekondigd(m)).ToList();
+                    if (klaar.Count > 0)
+                    {
+                        // Het definitieve bericht staat in de lijst: de melding hoort daar
+                        // sowieso niet meer naast — ook als het Gmail-archiveren zo faalt
+                        // (dan probeert de volgende poll het archiveren gewoon opnieuw).
+                        berichten.RemoveAll(klaar.Contains);
+                        try
+                        {
+                            await GmailClient.ArchiveerAsync(
+                                MailReplySettings.Load(), klaar, _cts.Token);
+                            if (!IsDisposed)
+                            {
+                                Toast.Toon(this, $"{klaar.Count} Smartschool-melding(en) " +
+                                    "in Gmail gearchiveerd", Fluent.Archive);
+                            }
+                        }
+                        catch
+                        {
+                            // Even niet gelukt: de volgende poll probeert opnieuw.
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            fouten.Add($"🎒 Smartschool: {ex.Message}");
+            berichten.AddRange(vorigeCache.Where(m => m.SmartschoolBericht.Length > 0));
+        }
+        versGehaald.Add("smartschool");
         ToonTussenstand();
 
         try
@@ -3175,6 +3674,12 @@ public class CockpitForm : Form
             WerkSignaal.Zet("sdworx", true);
         }
         _verlofKnop.Visible = WerkSignaal.Actief("sdworx");
+        // Docker-knop bijwerken: verschijnt als de engine intussen plat ligt, verdwijnt
+        // zodra hij (bv. handmatig) weer draait. Niet aankomen terwijl de start nog loopt.
+        if (!_dockerKnop.Bezig)
+        {
+            _dockerKnop.Visible = DockerStatus.Geinstalleerd && !DockerStatus.Draait;
+        }
 
         berichten.RemoveAll(m => m.IsChat && m.Genegeerd);
 
@@ -3546,6 +4051,7 @@ public class CockpitForm : Form
             var vlag = m.IsChat ? "" : TaalDetectie.Vlag(
                 m.Onderwerp + " " + (m.Tekst.Length > 400 ? m.Tekst[..400] : m.Tekst));
             var naamTekst = (vip ? "⭐ " : "") + (vlag.Length > 0 ? vlag + " " : "") +
+                (m.BronIcoon.Length > 0 ? m.BronIcoon + " " : "") +
                 (support ? $"🛟 {m.Van}" : m.Van);
             var item = new ListViewItem(naamTekst)
             {
@@ -3587,6 +4093,12 @@ public class CockpitForm : Form
         // Teller in de groepstitel: hoeveel berichten staan er (en hoeveel urgent).
         WerkBerichtenTitelBij(urgentAantal);
 
+        // Hoort de detailweergave niet bij deze lijst (taak-mail, chat-transcript,
+        // meetingdetail), dan blijft die gewoon staan zolang de gebruiker ermee bezig is.
+        if (_detailLosVanLijst)
+        {
+            return;
+        }
         // Hetzelfde bericht weer selecteren (het nieuwe object heeft het concept — inclusief
         // net getypte tekst — al uit de conceptcache meegekregen).
         if (geselecteerd.Length > 0 &&
@@ -3733,6 +4245,7 @@ public class CockpitForm : Form
     private void ToonDetail()
     {
         BewaarDetailConcept();
+        _detailLosVanLijst = false;
         _getoond = GeselecteerdBericht();
         var html = _getoond is null ? MailReplyForm.LegeWeergave : MailReplyForm.BouwWeergave(_getoond);
         if (_detail.CoreWebView2 is { } core)
@@ -3876,8 +4389,14 @@ public class CockpitForm : Form
                     "</div>");
             }
             sb.Append($"<div style=\"background:{kleur};border-radius:6px;padding:7px 11px;" +
-                "font-size:13.5px;color:#242424;white-space:pre-wrap;word-break:break-word\">" +
-                System.Net.WebUtility.HtmlEncode(b.Tekst));
+                "font-size:13.5px;color:#242424;white-space:pre-wrap;word-break:break-word\">");
+            // Foto's in de bubbel, zoals in Teams zelf (data-URL, dus offline zichtbaar).
+            if (b.Beeld.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append($"<img src=\"{b.Beeld}\" style=\"max-width:100%;max-height:340px;" +
+                    "border-radius:6px;display:block;margin:2px 0 4px\">");
+            }
+            sb.Append(System.Net.WebUtility.HtmlEncode(b.Tekst));
             if (b.Uitgaand && b.Tijd.Length > 0)
             {
                 sb.Append("<div style=\"font-size:10.5px;color:#616161;text-align:right;" +
@@ -3929,6 +4448,76 @@ public class CockpitForm : Form
         catch
         {
             // Cache is comfort, geen noodzaak.
+        }
+    }
+
+    /// <summary>
+    /// Kent de gecachte Teams-historiek het bericht uit de zijbalk-preview al? Zo ja, dan is
+    /// de bubbelweergave actueel en mag de rij meteen (volledig) getoond worden.
+    /// </summary>
+    private static bool TeamsHistorieActueel(TeamsHistorie h, string preview)
+    {
+        var kern = preview.Trim().TrimEnd('…');
+        // Zijbalkvorm "Naam: bericht" (of "Jij: bericht") → alleen het bericht zelf.
+        var dp = kern.IndexOf(": ", StringComparison.Ordinal);
+        if (dp > 0 && dp <= 30)
+        {
+            kern = kern[(dp + 2)..].Trim();
+        }
+        if (kern.Length < 4)
+        {
+            return false; // te weinig houvast (media zonder tekst): dan gewoon vers laden
+        }
+        if (kern.Length > 30)
+        {
+            kern = kern[..30];
+        }
+        return h.Berichten.TakeLast(3).Any(b =>
+            b.Tekst.Contains(kern, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private readonly HashSet<string> _teamsVoorladenBezig = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Laadt verse Teams-chats één voor één volledig (dat opent de chat in de verborgen
+    /// sessie), zet het resultaat in het TeamsVers-register en ververst daarna de lijst —
+    /// pas dan verschijnt de rij, compleet en klikklaar. Draait op de UI-thread (WebView2).
+    /// </summary>
+    private async Task TeamsVoorladenAsync(List<MailBericht> rijen)
+    {
+        var klaar = 0;
+        foreach (var rij in rijen)
+        {
+            if (!_teamsVoorladenBezig.Add(rij.MessageId))
+            {
+                continue; // vorige poging loopt nog
+            }
+            try
+            {
+                await LaadHistorieAsync(rij);
+            }
+            catch
+            {
+                // Mislukt: de rij verschijnt dan met alleen de preview — beter dan zoekraken,
+                // want de chat kan intussen al als gelezen gemarkeerd zijn.
+            }
+            finally
+            {
+                _teamsVoorladenBezig.Remove(rij.MessageId);
+            }
+            var vers = VersRegister.TeamsVers.Load();
+            if (vers.TryGetValue(rij.MessageId, out var v))
+            {
+                v.Geladen = true;
+                v.Html = rij.Html;
+                v.Tekst = rij.Tekst;
+                VersRegister.TeamsVers.Bewaar(vers);
+                klaar++;
+            }
+        }
+        if (klaar > 0 && !IsDisposed)
+        {
+            await VerversBerichtenAsync();
         }
     }
 
@@ -4030,13 +4619,13 @@ public class CockpitForm : Form
             {
                 _waVoorladenBezig.Remove(rij.MessageId);
             }
-            var vers = WaVers.Load();
+            var vers = VersRegister.WaVers.Load();
             if (vers.TryGetValue(rij.MessageId, out var v))
             {
                 v.Geladen = true;
                 v.Html = rij.Html;
                 v.Tekst = rij.Tekst;
-                WaVers.Bewaar(vers);
+                VersRegister.WaVers.Bewaar(vers);
                 klaar++;
             }
         }
@@ -4147,7 +4736,8 @@ public class CockpitForm : Form
                 bericht.Html = BouwTeamsHtml(tb, bericht.TeamsChat);
                 // Ook als tekst bewaren: daar leest Claude uit voor concepten.
                 bericht.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n", tb
-                    .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: {b.Tekst}"));
+                    .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
+                        $"{(b.Beeld.Length > 0 ? "[📷 afbeelding] " : "")}{b.Tekst}"));
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } tCore2)
                 {
                     tCore2.NavigateToString(MailReplyForm.BouwWeergave(bericht));
@@ -4201,6 +4791,7 @@ public class CockpitForm : Form
     {
         _teamsKoppelButton.Visible = !TeamsClient.Aangemeld;
         _outlookKoppelButton.Visible = !OutlookClient.Aangemeld;
+        _waKoppelButton.Visible = WhatsAppClient.OoitGekoppeld && !WhatsAppClient.Aangemeld;
         WerkSessieLampjesBij();
     }
 
@@ -4219,6 +4810,10 @@ public class CockpitForm : Form
         if (OutlookClient.OoitGekoppeld && !OutlookClient.Aangemeld)
         {
             problemen.Add("🟠 Outlook");
+        }
+        if (WhatsAppClient.OoitGekoppeld && !WhatsAppClient.Aangemeld)
+        {
+            problemen.Add("🟠 WhatsApp");
         }
         foreach (var bron in new[] { "Gmail", "Google Chat", "WhatsApp", "Teams", "Outlook" })
         {
@@ -4463,6 +5058,7 @@ public class CockpitForm : Form
             knop.Bezig = true;
         }
         List<TimesheetRegel> voorstel;
+        string toelichting;
         try
         {
             List<AgendaClient.AgendaItem> meetings;
@@ -4476,7 +5072,7 @@ public class CockpitForm : Form
             {
                 meetings = new List<AgendaClient.AgendaItem>(); // voorstel kan ook zonder agenda
             }
-            voorstel = await ActiviteitenLog.VoorstelAsync(dag, meetings, _cts.Token);
+            (voorstel, toelichting) = await ActiviteitenLog.VoorstelAsync(dag, meetings, _cts.Token);
         }
         catch (Exception ex)
         {
@@ -4496,7 +5092,7 @@ public class CockpitForm : Form
             return;
         }
 
-        using var dialog = new TimesheetVoorstelForm(dag, voorstel);
+        using var dialog = new TimesheetVoorstelForm(dag, voorstel, toelichting);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -5402,6 +5998,7 @@ public class CockpitForm : Form
             // Taak zonder bronbericht: niets om te beantwoorden, dus ook geen antwoordblok.
             BewaarDetailConcept(); // getypte tekst niet verliezen
             _getoond = null;
+            _detailLosVanLijst = true;
             ToonLegeWeergave();
             WerkAntwoordblokBij();
             return;
@@ -5426,6 +6023,7 @@ public class CockpitForm : Form
         };
         _berichten.SelectedItems.Clear();
         _getoond = bericht;
+        _detailLosVanLijst = true;
         _detailConcept.Clear();
         // Ligt er een concept klaar voor deze mail (bv. de taak-bevestiging "ik pak dit
         // dan op"), dan meteen in het antwoordvak zetten.
@@ -5493,7 +6091,8 @@ public class CockpitForm : Form
                 Onderwerp = "Directe chat",
                 Tekst = regels.Count > 0
                     ? string.Join("\n", regels.Select(r =>
-                        $"[{r.Tijd.ToLocalTime():d MMM HH:mm}] {r.Naam}: {r.Tekst}"))
+                        $"[{r.Tijd.ToLocalTime():d MMM HH:mm}] {r.Naam}: " +
+                        GoogleChatClient.TekstMetBijlagen(r.Tekst, r.Afbeeldingen, r.Bestanden)))
                     : "(Geen berichten in de afgelopen 7 dagen — typ hieronder om het gesprek te starten.)",
                 Html = regels.Count > 0 ? GoogleChatClient.BouwChatHtml(regels) : "",
                 Datum = DateTimeOffset.Now,
@@ -5502,6 +6101,7 @@ public class CockpitForm : Form
             // dan rechtstreeks naar deze DM.
             _berichten.SelectedItems.Clear();
             _getoond = bericht;
+            _detailLosVanLijst = true;
             var html = MailReplyForm.BouwWeergave(bericht);
             if (_detail.CoreWebView2 is { } core)
             {
@@ -7002,6 +7602,20 @@ public class CockpitForm : Form
                 _ = ArchiveerOutlookOpAchtergrondAsync(bericht);
                 return;
             }
+            else if (bericht.SmartschoolBericht.Length > 0)
+            {
+                // Optimistisch, zoals bij Outlook: de rij gaat direct uit de lijst, het
+                // verplaatsen naar "Berichten archief" op Smartschool loopt op de
+                // achtergrond (met een toast als het daar toch niet lukte).
+                bericht.Genegeerd = true;
+                _zojuistGearchiveerd.Add(bericht.MessageId);
+                SchrijfConceptCache(bericht);
+                VerwijderRijEnSelecteerVolgende(_berichten.SelectedItems.Count > 0
+                    ? _berichten.SelectedItems[0] : null);
+                Toast.Toon(this, "Archiveren in Smartschool…", Fluent.Archive);
+                _ = ArchiveerSmartschoolOpAchtergrondAsync(bericht);
+                return;
+            }
             else if ((bericht.TeamsChat.Length > 0 || bericht.WhatsAppChat.Length > 0) &&
                      bericht.MessageId.Length > 0)
             {
@@ -7013,7 +7627,11 @@ public class CockpitForm : Form
                 SchrijfConceptCache(bericht);
                 if (bericht.WhatsAppChat.Length > 0)
                 {
-                    WaVers.Verwijder(bericht.MessageId); // voorgeladen rij is nu afgehandeld
+                    VersRegister.WaVers.Verwijder(bericht.MessageId); // voorgeladen rij is afgehandeld
+                }
+                else
+                {
+                    VersRegister.TeamsVers.Verwijder(bericht.MessageId);
                 }
                 VerwijderRijEnSelecteerVolgende(_berichten.SelectedItems.Count > 0
                     ? _berichten.SelectedItems[0] : null);
@@ -7035,6 +7653,40 @@ public class CockpitForm : Form
         catch (Exception ex)
         {
             Toast.Toon(this, $"Archiveren mislukt: {ex.Message}", Fluent.Archive);
+        }
+    }
+
+    /// <summary>
+    /// Archiveert een Smartschool-bericht op de achtergrond (verplaatsing naar
+    /// "Berichten archief" op de site zelf); een mislukking meldt zich met een toast
+    /// en de rij komt bij de volgende verversbeurt vanzelf terug.
+    /// </summary>
+    private async Task ArchiveerSmartschoolOpAchtergrondAsync(MailBericht bericht)
+    {
+        try
+        {
+            var delen = bericht.SmartschoolBericht.Split('|', 2);
+            var gelukt = delen.Length == 2 &&
+                await SmartschoolClient.Instance.ArchiveerAsync(delen[0], delen[1], _cts.Token);
+            if (!gelukt && !IsDisposed)
+            {
+                _zojuistGearchiveerd.Remove(bericht.MessageId);
+                bericht.Genegeerd = false; // anders filtert de conceptcache hem blijvend weg
+                SchrijfConceptCache(bericht);
+                Toast.Toon(this,
+                    "Smartschool bevestigde het archiveren niet — het bericht komt terug in de lijst",
+                    Fluent.Archive);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+            {
+                _zojuistGearchiveerd.Remove(bericht.MessageId);
+                bericht.Genegeerd = false;
+                SchrijfConceptCache(bericht);
+                Toast.Toon(this, $"Smartschool-archivering mislukt: {ex.Message}", Fluent.Archive);
+            }
         }
     }
 
@@ -7865,19 +8517,24 @@ public class CockpitForm : Form
         {
             return rijen;
         }
-        var dag = DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset);
+        var vandaag = DateOnly.FromDateTime(DateTime.Now);
+        var dag = vandaag.AddDays(_meetingsOffset);
         var totEindeDag = new DateTimeOffset(dag.ToDateTime(new TimeOnly(23, 59, 59)));
-        var dagLabel = _meetingsOffset == 1 ? "morgen" : dag.ToString("ddd d MMM");
+        // Elke rij draagt zijn éígen datum: wie naar vrijdag bladert, ziet taken die al
+        // donderdag starten ook als "Start morgen"/"Start do 3 sep" — niet als vrijdag.
+        string DagLabel(DateOnly d) =>
+            d.DayNumber - vandaag.DayNumber == 1 ? "morgen" : d.ToString("ddd d MMM");
 
         foreach (var t in MijnTaakStore.Load().Taken.Where(t => !t.Klaar))
         {
             if (t.NogNietGestart && t.Startdatum is { } start && start <= dag)
             {
-                rijen.Add(new TaakRij($"⏳ Start {dagLabel}: {t.Tekst}", t.Deadline, "Later", t, "", t.Prioriteit));
+                rijen.Add(new TaakRij($"⏳ Start {DagLabel(start)}: {t.Tekst}", t.Deadline, "Later", t, "", t.Prioriteit));
             }
             else if (t.Gesnoozed && t.SnoozeTot is { } tot && tot <= totEindeDag)
             {
-                rijen.Add(new TaakRij($"💤 Terug {dagLabel}: {t.Tekst}", t.Deadline, "Later", t, "", t.Prioriteit));
+                rijen.Add(new TaakRij($"💤 Terug {DagLabel(DateOnly.FromDateTime(tot.LocalDateTime))}: {t.Tekst}",
+                    t.Deadline, "Later", t, "", t.Prioriteit));
             }
         }
 
@@ -7889,7 +8546,8 @@ public class CockpitForm : Form
             {
                 var wat = s.Onderwerp.Length > 0 ? s.Onderwerp : "(geen onderwerp)";
                 rijen.Add(new TaakRij(
-                    $"📬 Mail terug {dagLabel}: {wat} — {s.Van}", dag, "Snooze", null, ""));
+                    $"📬 Mail terug {DagLabel(DateOnly.FromDateTime(s.Tot.LocalDateTime))}: {wat} — {s.Van}",
+                    dag, "Snooze", null, ""));
             }
         }
         catch
@@ -8160,10 +8818,19 @@ public class CockpitForm : Form
         _taken.LegeTekst = takenLeeg ? ThemaStem.GeenTaken() : ThemaStem.NietsBinnenDeadline();
 
         ToonUitstelPor();
+        WerkTakenTitelBij();
+    }
 
-        // Titel toont wat er nu op de lijst staat. Loopt er een streak van leeggewerkte dagen,
-        // dan hangt die er als vlammetje achter, met daarachter de eerstvolgende actie uit de
-        // dagplanning — zo zie je zonder klikken wat je nu het best doet.
+    /// <summary>
+    /// Titel boven de takenlijst: het aantal moet altijd kloppen met de rijen die er op dat
+    /// moment écht onder staan (dus ook meteen na afvinken en na elke weergavewissel — de
+    /// lijst zelf is de waarheid, niet de laatste verversing). Loopt er een streak van
+    /// leeggewerkte dagen, dan hangt die er als vlammetje achter, met daarachter de
+    /// eerstvolgende actie uit de dagplanning — zo zie je zonder klikken wat je nu het
+    /// best doet.
+    /// </summary>
+    private void WerkTakenTitelBij()
+    {
         var streak = Vieringen.HuidigeStreak();
         var vlam = streak >= 2 ? $"   🔥 {streak} dagen" : "";
         var nu = VolgendeUitDagPlan();
@@ -8684,6 +9351,7 @@ public class CockpitForm : Form
         // Een meeting is geen bericht: het antwoordblok hoort er niet onder te blijven staan.
         BewaarDetailConcept();
         _getoond = null;
+        _detailLosVanLijst = true;
         WerkAntwoordblokBij();
 
         var start = m.Start.ToLocalTime();
@@ -9180,8 +9848,14 @@ public class CockpitForm : Form
         }
         // De rij meteen uit de lijst: het resultaat moet direct zichtbaar zijn, ook als het
         // boeken van de timer of de Asana-call hierna even duurt (trage wifi). Gaat er iets
-        // mis, dan zet de ververs in de catch de echte staat terug.
+        // mis, dan zet de ververs in de catch de echte staat terug. Ook uit _taakRijen, want
+        // elke tussentijdse VulTakenLijst() (dagplan-update, "▶ NU:"-klok) bouwt de lijst
+        // daaruit opnieuw op en zou de net afgevinkte rij meteen terugzetten.
         item.Remove();
+        _taakRijen.Remove(rij);
+        // De titel telt de rijen in de lijst: meteen mee laten zakken, niet pas bij de
+        // volgende vijfminutenverversing ("Open taken · 27" boven een veel korter lijstje).
+        WerkTakenTitelBij();
         try
         {
             // Zelfkennis en prijzenkast: klantsprong registreren + prestatiecheck.

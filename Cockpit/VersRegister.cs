@@ -3,15 +3,18 @@ using System.Text.Json;
 namespace WorkManager;
 
 /// <summary>
-/// Verse WhatsApp-berichten die eerst volledig geladen worden vóór ze in de cockpit
-/// verschijnen (klikken toont dan meteen het hele gesprek). Het laden opent de chat, en
-/// daarmee ziet WhatsApp hem als gelezen — de zijbalk noemt hem daarna dus niet meer.
+/// Verse chatberichten (WhatsApp én Teams) die eerst volledig geladen worden vóór ze in de
+/// cockpit verschijnen (klikken toont dan meteen het hele gesprek). Het laden opent de chat,
+/// en daarmee ziet de bron hem als gelezen — de zijbalk noemt hem daarna dus niet meer.
 /// Daarom onthoudt dit register de rij tot Maarten hem in de cockpit archiveert; anders
 /// zou het bericht na het voorladen spoorloos verdwijnen.
-/// Persistent in %APPDATA%\WorkManager\wa-vers.json.
+/// Persistent in %APPDATA%\WorkManager\wa-vers.json respectievelijk teams-vers.json.
 /// </summary>
-public static class WaVers
+public sealed class VersRegister
 {
+    public static readonly VersRegister WaVers = new("wa-vers.json");
+    public static readonly VersRegister TeamsVers = new("teams-vers.json");
+
     public sealed class Rij
     {
         public string MessageId { get; set; } = "";
@@ -24,17 +27,22 @@ public static class WaVers
         public DateTimeOffset Datum { get; set; }
     }
 
-    private static readonly string DataFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "WorkManager", "wa-vers.json");
+    private readonly string _dataFile;
 
-    public static Dictionary<string, Rij> Load()
+    private VersRegister(string bestandsnaam)
+    {
+        _dataFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "WorkManager", bestandsnaam);
+    }
+
+    public Dictionary<string, Rij> Load()
     {
         try
         {
-            if (File.Exists(DataFile) &&
+            if (File.Exists(_dataFile) &&
                 JsonSerializer.Deserialize<Dictionary<string, Rij>>(
-                    File.ReadAllText(DataFile)) is { } data)
+                    File.ReadAllText(_dataFile)) is { } data)
             {
                 return new Dictionary<string, Rij>(data, StringComparer.Ordinal);
             }
@@ -46,7 +54,7 @@ public static class WaVers
         return new Dictionary<string, Rij>(StringComparer.Ordinal);
     }
 
-    public static void Bewaar(Dictionary<string, Rij> data)
+    public void Bewaar(Dictionary<string, Rij> data)
     {
         try
         {
@@ -57,8 +65,8 @@ public static class WaVers
             {
                 data.Remove(sleutel);
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(DataFile)!);
-            File.WriteAllText(DataFile, JsonSerializer.Serialize(data));
+            Directory.CreateDirectory(Path.GetDirectoryName(_dataFile)!);
+            File.WriteAllText(_dataFile, JsonSerializer.Serialize(data));
         }
         catch
         {
@@ -66,7 +74,7 @@ public static class WaVers
         }
     }
 
-    public static void Verwijder(string messageId)
+    public void Verwijder(string messageId)
     {
         var data = Load();
         if (data.Remove(messageId))

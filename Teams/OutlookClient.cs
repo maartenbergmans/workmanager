@@ -168,6 +168,17 @@ public sealed class OutlookClient : IDisposable
                 Aangemeld = true;
                 return true;
             }
+            // Verlopen sessie ("uw organisatiebeleid vereist dat u zich opnieuw aanmeldt"):
+            // niet blijven wachten op handwerk, maar het Microsoft-scherm stil invullen —
+            // wachtwoord én (met TOTP-seed) de MFA-code. Alleen op échte aanmeldpagina's,
+            // nooit in OWA zelf: de "Ja"-fallback van het KmsI-scherm zou daar op een
+            // knop in een mail kunnen klikken.
+            if (i % 2 == 1 && await JsAsync(
+                    "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
+                    ".test(location.hostname)") == "true")
+            {
+                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), null);
+            }
             await Task.Delay(500, ct);
         }
         Aangemeld = false;
@@ -237,13 +248,41 @@ public sealed class OutlookClient : IDisposable
         // niet meer bij vensters die erachter zitten.
         try
         {
+            var jsFoutGelogd = false;
             for (var i = 0; i < 900; i++) // max. 7,5 min voor login + MFA
             {
                 ct.ThrowIfCancellationRequested();
                 await Task.Delay(500, ct);
-                // E-mail en wachtwoord vullen we in; alleen de MFA-stap blijft handwerk.
-                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), _venster);
-                if (await IsIngelogdAsync())
+                bool nuIngelogd;
+                try
+                {
+                    // E-mail en wachtwoord vullen we in; alleen de MFA-stap blijft handwerk.
+                    MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), _venster);
+                    nuIngelogd = await IsIngelogdAsync();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Eén mislukte JS-beurt — bv. de 2-min-poll die tegelijk dezelfde pagina
+                    // bestuurt, of een navigatie die net het document verving — mag de
+                    // aanmelding niet afbreken: de finally verborg dan meteen het venster,
+                    // alsof de knop niets deed (29 augustus 2026). Halve seconde later opnieuw.
+                    if (!jsFoutGelogd)
+                    {
+                        jsFoutGelogd = true;
+                        try
+                        {
+                            File.AppendAllText(Path.Combine(DataDir, "outlook-venster-log.txt"),
+                                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} KoppelAsync: JS-fout " +
+                                $"genegeerd, lus loopt door — {ex.Message}\r\n\r\n");
+                        }
+                        catch
+                        {
+                            // Alleen diagnose.
+                        }
+                    }
+                    continue;
+                }
+                if (nuIngelogd)
                 {
                     File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
                     MfaTijd.Noteer("outlook"); // een echte interactieve MFA-aanmelding
@@ -275,6 +314,7 @@ public sealed class OutlookClient : IDisposable
 
     private const string InboxPatroon = "postvak in|inbox|bo[iî]te de r[eé]ception";
     private const string ArchiefPatroon = "archief|archive";
+    private const string VerzondenPatroon = "verzonden items|sent items|envoy[eé]s";
 
     /// <summary>
     /// Klikt een map in de linker mappenbalk aan (op naam, hoofdletterongevoelig). Staat
@@ -485,6 +525,11 @@ public sealed class OutlookClient : IDisposable
     /// Alle mails in de zichtbare inboxlijst (gelezen én ongelezen), met afzender en
     /// onderwerp uit de rij-spans — zonder mails te openen.
     /// </summary>
+    // Beurten op rij waarin de lijst ook ná een extra herlaadbeurt leeg bleef, plus het
+    // moment van de laatste poging: samen de rem op het eindeloos herladen van een lege map.
+    private int _leegNaHerladen;
+    private DateTimeOffset _laatsteLegeHerlaadPoging;
+
     public async Task<List<OutlookBericht>> InboxAsync(CancellationToken ct)
     {
         await _slot.WaitAsync(ct);
@@ -506,10 +551,22 @@ public sealed class OutlookClient : IDisposable
             // Nul rijen vlak na een herlaadbeurt betekent bijna altijd "de lijst was nog niet
             // klaar", niet "de inbox is leeg". Eén keer opnieuw laden en opnieuw lezen scheelt
             // een hele pollronde waarin de cockpit met de oude cache blijft staan.
-            if (rijen.Count == 0 && !LaatsteScrapeEchtLeeg)
+            // Maar: blijft de lijst óók ná zo'n extra herlaadbeurt leeg (lege inbox waarvan
+            // de leeg-herkenning de DOM niet herkent), dan niet elke poll opnieuw herladen —
+            // dat maakte iedere verversronde ~45 s traag (2 sep 2026). Hooguit één poging
+            // per kwartier; een echte mail doorbreekt de teller meteen via de snelle leesweg.
+            if (rijen.Count == 0 && !LaatsteScrapeEchtLeeg &&
+                (_leegNaHerladen < 2 ||
+                 DateTimeOffset.Now - _laatsteLegeHerlaadPoging > TimeSpan.FromMinutes(15)))
             {
+                _laatsteLegeHerlaadPoging = DateTimeOffset.Now;
                 await HerlaadAsync(ct);
                 rijen = await LijstKernAsync(ct);
+                _leegNaHerladen = rijen.Count == 0 ? _leegNaHerladen + 1 : 0;
+            }
+            else if (rijen.Count > 0)
+            {
+                _leegNaHerladen = 0;
             }
             return rijen;
         }
@@ -753,6 +810,48 @@ public sealed class OutlookClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// De mails die op één dag vanuit CED-Outlook verstuurd zijn (map Verzonden items), als
+    /// signaalregels voor het dagvoorstel: tijdstip, ontvanger, onderwerp en een stukje
+    /// preview. Leest alleen de lijstrijen (mails worden niet geopend) en zet de weergave
+    /// daarna terug op Postvak IN, zodat de eerstvolgende poll de juiste map leest.
+    /// </summary>
+    public async Task<List<string>> VerzondenVanDagAsync(DateOnly dag, CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    "Outlook is niet aangemeld — klik op 'Outlook aanmelden…' (dagelijkse MFA).");
+            }
+            if (!await KlikMapAsync(VerzondenPatroon, ct))
+            {
+                return new List<string>();
+            }
+            try
+            {
+                // In de Verzonden-map is de eerste kolom (Van) de ontvanger van de mail.
+                return (await LijstKernAsync(ct))
+                    .Where(r => r.Datum is { } d && DateOnly.FromDateTime(d.LocalDateTime) == dag)
+                    .OrderBy(r => r.Datum)
+                    .Select(r => $"{r.Datum!.Value.LocalDateTime:HH:mm} aan {r.Van} — " +
+                        $"\"{r.Onderwerp}\"" +
+                        (r.Preview.Length > 0 ? $" · {r.Preview[..Math.Min(120, r.Preview.Length)]}" : ""))
+                    .ToList();
+            }
+            finally
+            {
+                await KlikMapAsync(InboxPatroon, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
     /// <summary>Vult het geduld-getal in het verzamelscript in (raw string, dus via Replace).</summary>
     private static string GeduldIn(string script, int geduld) =>
         script.Replace("__GEDULD__", geduld.ToString());
@@ -860,7 +959,9 @@ public sealed class OutlookClient : IDisposable
         {
             if (!await StartAsync(ct, wachtSeconden: 25))
             {
-                return "(niet aangemeld)";
+                // Tóch draaien: juist bij "niet aangemeld" wil je kunnen zien wat er dan
+                // wél op het scherm staat (MFA-prompt, foutpagina, gewijzigde DOM).
+                return "(niet aangemeld) " + await JsAsync(script);
             }
             return await JsAsync(script);
         }
@@ -1144,9 +1245,35 @@ public sealed class OutlookClient : IDisposable
         """;
 
     /// <summary>
-    /// Archiveert één mail in Outlook-web en markeert hem als gelezen: de rij in de lijst
+    /// De werkbalkknop "Als gelezen markeren" (alleen zichtbaar zolang de selectie ongelezen
+    /// is; "Als ongelezen markeren" matcht bewust níét). Fysiek aan te klikken via
+    /// KlikFysiekAsync — het lint negeert synthetische JS-kliks, waardoor gearchiveerde
+    /// mails eerder wél in Verwerkt belandden maar ongelezen bleven.
+    /// </summary>
+    private const string GelezenKnopExpr =
+        """
+        (function () {
+            // Niet via zoekKnop: "Alles als gelezen markeren" (hele map!) bevat dezelfde
+            // tekst en moet er expliciet uitgefilterd worden.
+            const tekst = x => ((x.getAttribute('aria-label') || '') + ' ' +
+                (x.getAttribute('title') || '') + ' ' + (x.textContent || '')).trim();
+            const b = [...document.querySelectorAll('button, [role="button"], [role="menuitem"]')]
+                .find(x => /als gelezen markeren|mark as read|marquer comme lu/i.test(tekst(x)) &&
+                    !/alles|\ball\b|tout/i.test(tekst(x)));
+            if (!b || b.getAttribute('aria-disabled') === 'true' || b.disabled) return null;
+            return b.matches('button') ? b : (b.querySelector('button') || b);
+        })()
+        """;
+
+    /// <summary>
+    /// Archiveert een mail in Outlook-web en markeert hem als gelezen: de rij in de lijst
     /// selecteren (openen in het leesvenster zet hem al op gelezen), daarna de werkbalkknoppen
     /// "Als gelezen markeren" (als die er nog staat) en "Archiveren" aanklikken.
+    /// Staan er méér mails van dezelfde afzender met hetzelfde onderwerp (zonder Re:/FW:) in
+    /// het postvak — storingsreeksen van IT-support, of een thread waarvan origineel én
+    /// antwoord allebei in de inbox staan — dan gaan die allemaal mee: de cockpit toont zo'n
+    /// reeks als één rij, dus één archiveerklik moet de hele reeks opruimen. Anders bleef er
+    /// elke poll weer een volgend exemplaar in de lijst opduiken.
     /// Resultaat: "ok", "rij-niet-gevonden" of "knop-niet-gevonden".
     /// </summary>
     public async Task<string> ArchiveerAsync(string van, string onderwerp, CancellationToken ct,
@@ -1160,12 +1287,22 @@ public sealed class OutlookClient : IDisposable
                 throw new InvalidOperationException(
                     "Outlook is niet aangemeld — klik op 'Outlook aanmelden…' (dagelijkse MFA).");
             }
+            // Matchen op de onderwerp-kern (zonder Re:/FW:-voorvoegsels): zo telt het hele
+            // groepje — origineel, antwoorden en herhaalde storingsmails — als één te
+            // archiveren geheel.
+            var ondKern = onderwerp.Equals("ongelezen bericht", StringComparison.OrdinalIgnoreCase)
+                ? ""
+                : System.Text.RegularExpressions.Regex.Replace(
+                    onderwerp, @"^\s*((re|fw|fwd|tr|aw)\s*:\s*)+", "",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
             // De koninklijke weg: is de directe link naar de mail bekend (bewaard bij het
             // ophalen), dan de mail rechtstreeks openen en daar op "verwerkt"/archiveren
-            // klikken — geen gevirtualiseerde lijst of zoekbalk nodig.
+            // klikken — geen gevirtualiseerde lijst of zoekbalk nodig. Blijven er daarna nog
+            // exemplaren van dezelfde reeks staan, dan meldt de controle "niet-verdwenen" en
+            // ruimt de lijst-route hieronder de rest op.
             if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
-                var viaUrl = await ArchiveerViaUrlAsync(url, van, onderwerp, ct);
+                var viaUrl = await ArchiveerViaUrlAsync(url, van, ondKern, ct);
                 if (viaUrl == "ok")
                 {
                     return "ok";
@@ -1173,12 +1310,11 @@ public sealed class OutlookClient : IDisposable
                 // Anders gewoon doorvallen naar de lijst/zoek-route hieronder.
             }
             var vanJs = JsonSerializer.Serialize(van);
-            var onderwerpJs = JsonSerializer.Serialize(
-                onderwerp.Equals("ongelezen bericht", StringComparison.OrdinalIgnoreCase) ? "" : onderwerp);
+            var onderwerpJs = JsonSerializer.Serialize(ondKern);
 
             // De rij vinden en aanklikken: direct in de lijst of via het zoekveld (met een
             // échte Enter — synthetische toetsen negeert OWA net als synthetische kliks).
-            if (await VindEnOpenRijAsync(van, onderwerp, ct) != "ok")
+            if (await VindEnOpenRijAsync(van, ondKern, ct) != "ok")
             {
                 try
                 {
@@ -1194,23 +1330,19 @@ public sealed class OutlookClient : IDisposable
             }
             await Task.Delay(1500, ct); // leesvenster laten openen (markeert doorgaans al als gelezen)
 
-            // Expliciet als gelezen markeren als die knop ergens staat (dan was hij nog ongelezen).
-            await JsAsync(
-                $$"""
-                (function () {
-                    {{KlikHelpers}}
-                    const b = zoekKnop(document, /als gelezen markeren|mark as read|marquer comme lu/i);
-                    if (b) klik(b);
-                })()
-                """);
-            await Task.Delay(400, ct);
+            // Expliciet als gelezen markeren als die knop ergens staat (dan was hij nog
+            // ongelezen). Fysiek klikken: het lint negeert synthetische JS-kliks.
+            if (await KlikFysiekAsync(GelezenKnopExpr))
+            {
+                await Task.Delay(600, ct);
+            }
 
             // Archiveren met échte muiskliks (de ribbon negeert synthetische JS-kliks) en
             // verificatie dat de rij daarna echt uit het postvak is. Voorkeur: de Quick
             // Step "Verwerkt"; anders de archiveerknop op de rij of in de werkbalk.
-            var vindRijExpr =
+            var matchRijJs =
                 $$"""
-                [...document.querySelectorAll('[data-convid], [role="option"]')].find(x => {
+                (x => {
                     // Witruimte normaliseren: de rijtekst bevat regeleinden tussen de
                     // tekstdelen, waardoor een letterlijke includes-match stil faalde.
                     const norm = s => (s + '').replace(/\s+/g, ' ').toLowerCase();
@@ -1219,6 +1351,14 @@ public sealed class OutlookClient : IDisposable
                     const t = norm((x.getAttribute('aria-label') || '') + ' ' + x.textContent);
                     return t.includes(van) && (!ond || t.includes(ond) || t.includes(ondKort));
                 })
+                """;
+            var vindRijExpr =
+                $$"""
+                [...document.querySelectorAll('[data-convid], [role="option"]')].find({{matchRijJs}})
+                """;
+            var telRijenExpr =
+                $$"""
+                [...document.querySelectorAll('[data-convid], [role="option"]')].filter({{matchRijJs}}).length
                 """;
             const string KnopExpr =
                 """
@@ -1255,7 +1395,12 @@ public sealed class OutlookClient : IDisposable
                 })()
                 """;
             var stand = "niet-verdwenen";
-            for (var poging = 0; poging < 3; poging++)
+            // Doorklikken zolang er nog een exemplaar van de reeks staat én er vooruitgang
+            // is (per klik verdwijnt er één rij). De teller bewaakt dat een kapotte knop of
+            // niet-reagerende lijst niet twaalf keer voor niets geklikt wordt.
+            var vorigeTel = int.MaxValue;
+            var zonderVooruitgang = 0;
+            for (var klik = 0; klik < 12; klik++)
             {
                 // Klaar? (rij weg, of in zoekresultaten verhuisd naar Verwerkt/Archief)
                 if (await JsAsync(klaarExpr) == "true")
@@ -1263,6 +1408,16 @@ public sealed class OutlookClient : IDisposable
                     stand = "ok";
                     break;
                 }
+                if (!int.TryParse(await JsAsync(telRijenExpr), out var tel))
+                {
+                    tel = vorigeTel;
+                }
+                zonderVooruitgang = tel < vorigeTel ? 0 : zonderVooruitgang + 1;
+                if (zonderVooruitgang >= 3)
+                {
+                    break; // drie kliks zonder dat er een rij verdween: opgeven
+                }
+                vorigeTel = tel;
                 // Rij selecteren (JS-klik werkt prima op rijen) zodat de werkbalk actief is.
                 await JsAsync(
                     $$"""
@@ -1274,6 +1429,13 @@ public sealed class OutlookClient : IDisposable
                     })()
                     """);
                 await Task.Delay(900, ct);
+                // Elk exemplaar van de reeks ook echt als gelezen markeren vóór het naar
+                // Verwerkt gaat — anders bleef alles behalve de eerst geopende mail
+                // ongelezen in die map achter (storingsreeksen van IT-support).
+                if (await KlikFysiekAsync(GelezenKnopExpr))
+                {
+                    await Task.Delay(600, ct);
+                }
                 if (!await KlikFysiekAsync(KnopExpr))
                 {
                     stand = "knop-niet-gevonden";
@@ -1468,6 +1630,7 @@ public sealed class OutlookClient : IDisposable
                 }
             }
         }
+        var paginaStuk = false;
         try
         {
             var rijen = await JsAsync(
@@ -1476,6 +1639,10 @@ public sealed class OutlookClient : IDisposable
                     .slice(0, 20).map(x => ((x.getAttribute('aria-label') || '') ||
                         x.textContent || '').replace(/\s+/g, ' ').slice(0, 90)))
                 """);
+            // Nul gerenderde rijen terwijl ook het zoekveld onvindbaar was: dan is de pagina
+            // zelf stuk (leeg of half geladen), niet deze specifieke mail. Zo raakte op
+            // 25 augustus 2026 een mail blijvend op Pogingen=3 door één kapotte avondsessie.
+            paginaStuk = boxKlaar != "true" && (Ontdubbel(rijen) is "[]" or "");
             File.WriteAllText(Path.Combine(DataDir, "outlook-zoek-debug.json"),
                 $"{{\"van\":{vanJs},\"onderwerp\":{onderwerpJs},\"boxKlaar\":{boxKlaar}," +
                 $"\"rijen\":{rijen}}}");
@@ -1488,7 +1655,7 @@ public sealed class OutlookClient : IDisposable
         {
             // Alleen diagnose.
         }
-        return "niet-gevonden";
+        return paginaStuk ? "pagina-stuk" : "niet-gevonden";
     }
 
     /// <summary>
@@ -1520,6 +1687,9 @@ public sealed class OutlookClient : IDisposable
     /// gemarkeerd — voorgoed in de inbox bleef staan zonder dat de cockpit het zag).
     /// Daarom wordt na afloop in het Postvak IN gecontroleerd of de mail werkelijk weg is;
     /// zo niet, dan valt de aanroeper terug op de lijst/zoek-route voor een tweede poging.
+    /// <paramref name="onderwerp"/> is de onderwerp-kern (zonder Re:/FW:): staan er na deze
+    /// ene mail nog andere exemplaren van dezelfde reeks, dan meldt de controle bewust
+    /// "niet-verdwenen" zodat de lijst-route van de aanroeper ook die opruimt.
     /// </summary>
     private async Task<string> ArchiveerViaUrlAsync(
         string url, string van, string onderwerp, CancellationToken ct)
@@ -1538,6 +1708,13 @@ public sealed class OutlookClient : IDisposable
             }
         }
         await Task.Delay(1500, ct); // lint laten renderen
+        // Eerst als gelezen markeren (fysieke klik) als die knop in het lint staat: het
+        // openen alleen zet de mail hier niet betrouwbaar op gelezen, en anders belandt
+        // hij ongelezen in Verwerkt.
+        if (await KlikFysiekAsync(GelezenKnopExpr))
+        {
+            await Task.Delay(800, ct);
+        }
         // Fysiek klikken (Win32-muisbericht): de ribbon negeert synthetische JS-kliks —
         // "verwerkt" leek eerder geklikt maar er gebeurde niets.
         const string KnopExpr =
@@ -2091,7 +2268,15 @@ public sealed class OutlookClient : IDisposable
             }
             // De rij vinden en aanklikken: direct in de lijst of via het zoekveld (met een
             // échte Enter — synthetische toetsen negeert OWA net als synthetische kliks).
-            if (await VindEnOpenRijAsync(van, onderwerp, ct) != "ok")
+            var vondst = await VindEnOpenRijAsync(van, onderwerp, ct);
+            if (vondst == "pagina-stuk")
+            {
+                // Zelfde route als "niet aangemeld": de aanroeper stopt de beurt en telt
+                // géén mislukte poging — de volgende poll (met verse pagina) probeert opnieuw.
+                throw new InvalidOperationException(
+                    "De Outlook-pagina toont geen maillijst (leeg of half geladen).");
+            }
+            if (vondst != "ok")
             {
                 try
                 {
@@ -2109,6 +2294,22 @@ public sealed class OutlookClient : IDisposable
             await Task.Delay(2500, ct); // leesvenster laten laden
             var gelezen = await LeesGeopendeMailKernAsync(ct);
             await SluitZoekweergaveAsync(); // was de mail via zoeken gevonden
+            if (gelezen.Tekst.Length == 0 && gelezen.Html.Length == 0)
+            {
+                // De rij was er wél (anders waren we hierboven al gestopt), maar het
+                // leesvenster gaf niets terug — dat pad was tot nu toe onzichtbaar in de
+                // logs en liet mails stil op "geen tekst gevonden" stranden (Rick, 25 aug).
+                try
+                {
+                    File.AppendAllText(Path.Combine(DataDir, "outlook-lees-debug.txt"),
+                        $"{DateTime.Now:HH:mm:ss} {van} | {onderwerp}: rij geopend maar " +
+                        "leesvenster leeg (body-selector matcht niet of laadde niet)\r\n");
+                }
+                catch
+                {
+                    // Alleen diagnose.
+                }
+            }
             return gelezen;
         }
         finally
@@ -2273,6 +2474,11 @@ public sealed class OutlookClient : IDisposable
         // zijn preview in de lijst en wordt de volgende ronde alsnog uitgelezen (de
         // retry-tak hieronder pikt entries zonder HTML vanzelf op).
         var leesBudget = MaxNieuweMailsPerBeurt;
+        // Verliest de sessie tussendoor zijn aanmelding (MFA/wachtwoordscherm), dan stoppen
+        // we met lezen én tellen we géén Pogingen: anders stond elke mail na een paar
+        // niet-aangemelde pollrondes blijvend op "geen tekst gevonden", ook nadat de
+        // aanmelding hersteld was (zo geraakte de cache eind augustus 2026 leeg).
+        var nietAangemeld = false;
         // Eén keer wegschrijven aan het eind, ook als het ophalen halverwege afbreekt: de
         // store per mail opslaan kostte bij een volle inbox tientallen megabytes schrijfwerk.
         try
@@ -2309,13 +2515,17 @@ public sealed class OutlookClient : IDisposable
                     var aan = "";
                     var cc = "";
                     DateTimeOffset? exact = null;
-                    if (leesBudget > 0)
+                    if (leesBudget > 0 && !nietAangemeld)
                     {
                         leesBudget--;
                         try
                         {
                             (tekst, html, exact, url, aan, cc) =
                                 await LeesMailAsync(b.Van, b.Onderwerp, ct);
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            nietAangemeld = true; // sessie kwijt: rest van de beurt overslaan
                         }
                         catch
                         {
@@ -2324,12 +2534,12 @@ public sealed class OutlookClient : IDisposable
                     }
                     bekend = new OutlookMailVol(sleutel, b.Van, b.Onderwerp,
                         tekst.Length > 0 ? tekst : b.Preview, exact ?? moment, html,
-                        Pogingen: tekst.Length > 0 || html.Length > 0 ? 0 : 1, Url: url,
-                        Aan: aan, Cc: cc);
+                        Pogingen: tekst.Length > 0 || html.Length > 0 || nietAangemeld ? 0 : 1,
+                        Url: url, Aan: aan, Cc: cc);
                     store.Add(bekend);
                     gewijzigd = true;
                 }
-                else if (bekend.Html.Length == 0 && bekend.Pogingen < 3)
+                else if (bekend.Html.Length == 0 && bekend.Pogingen < 3 && !nietAangemeld)
                 {
                     // Eerder (deels) mislukt — bv. omdat de rij toen buiten de gevirtualiseerde
                     // lijst viel: nog eens proberen, met een teller zodat het na 3 keer stopt.
@@ -2347,6 +2557,10 @@ public sealed class OutlookClient : IDisposable
                             Aan = aan2.Length > 0 ? aan2 : bekend.Aan,
                             Cc = cc2.Length > 0 ? cc2 : bekend.Cc,
                         };
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        nietAangemeld = true; // geen mislukte poging: na aanmelden gewoon opnieuw
                     }
                     catch
                     {

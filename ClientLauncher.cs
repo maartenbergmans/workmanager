@@ -16,11 +16,95 @@ public static class ClientLauncher
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WorkManager", "launcher.log");
 
     /// <summary>
-    /// Commando voor een interactieve Claude Code-sessie. Bewust zónder permission-mode:
-    /// sessies starten in de standaardmodus en vragen dus gewoon toestemming (Maarten wil
-    /// geen automodus, 2026-08-07).
+    /// Commando voor een interactieve Claude Code-sessie. Altijd in automodus
+    /// (auto-accept edits): bewerkingen lopen door zonder toestemmingsvragen
+    /// (Maarten wil automodus, 2026-09-01 — draait het besluit van 2026-08-07 om).
     /// </summary>
-    private const string ClaudeCommando = "claude";
+    private const string ClaudeCommando = "claude --permission-mode acceptEdits";
+
+    /// <summary>
+    /// Vaste promptbalkkleur (Claude Codes "/color") en klantnaam (tabtitel) per project,
+    /// zodat de terminals in één oogopslag herkenbaar zijn. Matcht op het begin van een
+    /// mapnaam in het pad.
+    /// </summary>
+    private static readonly (string MapDeel, string Kleur, string Klant)[] ClaudeKleuren =
+    {
+        ("aqurat", "blue", "Aqurat"),
+        ("workmanager", "red", "WorkManager"),
+        ("ced", "green", "CED"),
+        // De Outlook VBA-modules (Mobility/Property/MailModule) zijn CED-werk.
+        ("automaticmail", "green", "CED"),
+        // RadiologyPartners: cyan sluit aan bij de teal klantkleur in de cockpit.
+        ("bloom", "cyan", "RadiologyPartners"),
+        // Vriesveemlogistiek (Movaware) en Vriesveem (Cellaware) elk hun eigen kleur.
+        ("movaware", "yellow", "Vriesveemlogistiek"),
+        ("cellaware", "orange", "Vriesveem"),
+        // Lauryssens: drie projectmappen, één klantkleur.
+        ("laurapp", "purple", "Lauryssens"),
+        ("lauryssens", "purple", "Lauryssens"),
+        ("glascalculator", "purple", "Lauryssens"),
+    };
+
+    private static (string Kleur, string Klant) KlantVoor(string werkmap)
+    {
+        var segmenten = werkmap.Split('\\', '/');
+        var treffer = ClaudeKleuren.FirstOrDefault(k => segmenten.Any(s =>
+            s.StartsWith(k.MapDeel, StringComparison.OrdinalIgnoreCase)));
+        return (treffer.Kleur ?? "", treffer.Klant ?? "");
+    }
+
+    /// <summary>
+    /// Het volledige startcommando voor een sessie in deze map: "/color …" gaat als
+    /// startprompt mee — Claude Code voert een slash-commando in het promptargument
+    /// gewoon uit bij de start (getest op 2.1.186/2.1.220); /color zelf is niet
+    /// persistent op te slaan, dus dit is de enige route.
+    /// </summary>
+    private static string ClaudeStartCommando(string werkmap)
+    {
+        var kleur = KlantVoor(werkmap).Kleur;
+        return kleur.Length == 0 ? ClaudeCommando : $"{ClaudeCommando} \"/color {kleur}\"";
+    }
+
+    /// <summary>
+    /// Vaste tabtitel: de klantnaam, met de mapnaam erachter als die verschilt (zo blijven
+    /// twee sessies van één klant uit elkaar te houden, én blijft de titel-terugval van
+    /// ClaudeAandacht — zoeken op de mapnaam — werken). Leeg = geen titel afdwingen.
+    /// </summary>
+    private static string ClaudeTitel(string werkmap)
+    {
+        var klant = KlantVoor(werkmap).Klant;
+        if (klant.Length == 0)
+        {
+            return "";
+        }
+        var mapNaam = Path.GetFileName(werkmap.TrimEnd('\\', '/'));
+        return mapNaam.Equals(klant, StringComparison.OrdinalIgnoreCase)
+            ? klant
+            : $"{klant} — {mapNaam}";
+    }
+
+    /// <summary>Weergavelabel voor een sessie: de klanttitel, anders de kale mapnaam.</summary>
+    public static string SessieLabel(string werkmap)
+    {
+        var titel = ClaudeTitel(werkmap);
+        return titel.Length > 0 ? titel : Path.GetFileName(werkmap.TrimEnd('\\', '/'));
+    }
+
+    /// <summary>
+    /// De wt.exe-argumenten voor een interactieve sessie in deze projectmap: WSL-mappen
+    /// native in WSL, Windows-mappen via PowerShell in Windows Terminal. De starttitel is
+    /// de klanttitel; daarna mag Claude Code de titel overnemen (taakomschrijving tijdens
+    /// het werken) en zetten de Notification/Stop-hooks hem terug op "Klant · status".
+    /// </summary>
+    private static string ClaudeWtArgs(string werkmap)
+    {
+        var commando = ClaudeStartCommando(werkmap);
+        var titel = ClaudeTitel(werkmap);
+        var titelArgs = titel.Length == 0 ? "" : $"--title \"{titel}\" ";
+        return TryWslPad(werkmap, out var distro, out var linux)
+            ? $"{titelArgs}wsl.exe -d {distro} --cd \"{linux}\" -- {commando}"
+            : $"-d \"{werkmap}\" {titelArgs}powershell -NoLogo -NoExit -Command {commando}";
+    }
 
     /// <summary>Per context: annulering van een nog lopende launch (bv. wachten op de app-URL).</summary>
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> PendingLaunches =
@@ -97,9 +181,7 @@ public static class ClientLauncher
             {
                 return "al open";
             }
-            return Start(
-                dryRun, "wt.exe",
-                $"-d \"{cl.WorkingDirectory}\" powershell -NoLogo -NoExit -Command {ClaudeCommando}");
+            return Start(dryRun, "wt.exe", ClaudeWtArgs(cl.WorkingDirectory));
         });
 
         // Als laatste, want deze stap kan wachten tot de app (gestart vanuit PhpStorm) bereikbaar is.
@@ -172,18 +254,11 @@ public static class ClientLauncher
     /// Start een interactieve Claude Code-sessie in de gegeven projectmap. WSL-mappen
     /// (\\wsl.localhost\Distro\… of \\wsl$\Distro\…) worden ín WSL geopend zodat Claude
     /// native in Linux draait; Windows-mappen via PowerShell in Windows Terminal. De sessie
-    /// start in de standaardmodus (zie <see cref="ClaudeCommando"/>).
+    /// start in automodus (zie <see cref="ClaudeCommando"/>).
     /// </summary>
     public static void StartClaude(string werkmap)
     {
-        if (TryWslPad(werkmap, out var distro, out var linux))
-        {
-            Start(false, "wt.exe", $"wsl.exe -d {distro} --cd \"{linux}\" -- {ClaudeCommando}");
-        }
-        else
-        {
-            Start(false, "wt.exe", $"-d \"{werkmap}\" powershell -NoLogo -NoExit -Command {ClaudeCommando}");
-        }
+        Start(false, "wt.exe", ClaudeWtArgs(werkmap));
         Log($"Claude gestart in {werkmap}");
     }
 
@@ -243,6 +318,23 @@ public static class ClientLauncher
         }
         Start(false, exe, $"-new-tab \"{url}\"");
         Log($"Firefox geopend op {url}");
+    }
+
+    /// <summary>
+    /// Voert een shellscript uit de projectmap uit in een zichtbare WSL-console (bv. start.sh
+    /// dat de dev-app opstart). Na afloop of Ctrl-C blijft de shell openstaan zodat de uitvoer
+    /// en eventuele fouten leesbaar blijven.
+    /// </summary>
+    public static void StartWslScript(string werkmap, string script)
+    {
+        if (!TryWslPad(werkmap, out var distro, out var linux))
+        {
+            throw new ArgumentException($"Geen WSL-pad: {werkmap}");
+        }
+        // Bewust wsl.exe rechtstreeks (niet via wt.exe): Windows Terminal splitst zijn
+        // commandoregel op ';' en zou het script in stukken hakken.
+        Start(false, "wsl.exe", $"-d {distro} --cd \"{linux}\" -e bash -i -c \"./{script} ; exec bash -i\"");
+        Log($"{script} gestart in {werkmap}");
     }
 
     /// <summary>Opent een DataGrip-project (map onder C:\Users\...\DataGripProjects).</summary>

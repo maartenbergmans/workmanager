@@ -39,12 +39,27 @@ public sealed class MailBericht
     public string TeamsChat = ""; // gevuld (chatnaam) als dit een Teams-chat is (alleen uitlezen)
     public string OutlookMail = ""; // gevuld (omschrijving) als dit een CED-Outlookmail is (alleen uitlezen)
     public string OutlookUrl = ""; // directe OWA-link naar de mail (voor "Openen in browser" en mention-taken)
+    public string SmartschoolBericht = ""; // gevuld ("kind|msgid") als dit een Smartschool-bericht is
     public List<MailBericht> CcDetails = new(); // onderliggende mails van een CC-overzichtsrij (klikbaar detail)
     public string Vertaling = ""; // Nederlandse vertaling (gevuld als de mail Frans/Engels is)
     public bool VertaalVerborgen; // gebruiker zette de vertaling uit via de 🌐-knop
 
     public bool IsChat =>
-        ChatSpace.Length > 0 || WhatsAppChat.Length > 0 || TeamsChat.Length > 0 || OutlookMail.Length > 0;
+        ChatSpace.Length > 0 || WhatsAppChat.Length > 0 || TeamsChat.Length > 0 ||
+        OutlookMail.Length > 0 || SmartschoolBericht.Length > 0;
+
+    /// <summary>
+    /// Bron-icoontje voor lijstweergaven, met dezelfde symbolen als het gezondheids-
+    /// overzicht (🟢 WhatsApp, 💬 Google Chat, 🟪 Teams, 🔷 CED-Outlook, 🎒 Smartschool).
+    /// Gewone Gmail-mail blijft kaal — dat is verreweg de grootste groep.
+    /// </summary>
+    public string BronIcoon =>
+        WhatsAppChat.Length > 0 ? "🟢"
+        : ChatSpace.Length > 0 ? "💬"
+        : TeamsChat.Length > 0 ? "🟪"
+        : SmartschoolBericht.Length > 0 ? "🎒"
+        : OutlookMail.Length > 0 ? "🔷"
+        : "";
 }
 
 /// <summary>Downloadbare PDF-link in de mailtekst (bv. een Stripe-factuur) — gedraagt zich als bijlage.</summary>
@@ -698,6 +713,65 @@ public static class GmailClient
         }
 
         return verstuurd;
+    }
+
+    /// <summary>
+    /// De mails die Maarten op één dag zelf verstuurde (map Verzonden), als signaalregels
+    /// voor het dagvoorstel: tijdstip, ontvanger, onderwerp en de omvang van de eigen tekst
+    /// (het geciteerde deel onder "Op … schreef" telt niet mee). Het dagvoorstel rekent
+    /// per verzonden mail minstens een kwartier werktijd.
+    /// </summary>
+    public static async Task<List<string>> VerzondenVanDagAsync(
+        MailReplySettings s, DateOnly dag, CancellationToken ct)
+    {
+        using var imap = new ImapClient();
+        await imap.ConnectAsync(s.ImapHost, s.ImapPort, SecureSocketOptions.SslOnConnect, ct);
+        await imap.AuthenticateAsync(s.Email, s.AppWachtwoord, ct);
+        var map = imap.GetFolder(SpecialFolder.Sent);
+        await map.OpenAsync(FolderAccess.ReadOnly, ct);
+
+        var uids = await map.SearchAsync(SearchQuery.GMailRawSearch(
+            $"after:{dag:yyyy/MM/dd} before:{dag.AddDays(1):yyyy/MM/dd}"), ct);
+        var regels = new List<string>();
+        foreach (var uid in uids.Take(40))
+        {
+            try
+            {
+                var msg = await map.GetMessageAsync(uid, ct);
+                var aan = string.Join(", ", msg.To.Mailboxes
+                    .Select(m => string.IsNullOrWhiteSpace(m.Name) ? m.Address : m.Name)
+                    .Take(3));
+                regels.Add($"{msg.Date.ToLocalTime():HH:mm} aan {aan} — " +
+                    $"\"{msg.Subject}\" (±{EigenWoorden(ExtractTekst(msg))} woorden)");
+            }
+            catch
+            {
+                // Eén onleesbare mail mag het signaal niet breken.
+            }
+        }
+        await imap.DisconnectAsync(true, ct);
+        return regels.OrderBy(r => r, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>Woorden in de eigen tekst: citaten (">"-regels) en alles onder de citatiekop vallen af.</summary>
+    private static int EigenWoorden(string tekst)
+    {
+        var eigen = new List<string>();
+        foreach (var lijn in tekst.Split('\n'))
+        {
+            if (lijn.TrimStart().StartsWith('>'))
+            {
+                continue;
+            }
+            if (Regex.IsMatch(lijn,
+                @"^\s*(Op .+ schreef|On .+ wrote:|-{2,}\s*(Original|Oorspronkelijk|Forwarded|Doorgestuurd))"))
+            {
+                break;
+            }
+            eigen.Add(lijn);
+        }
+        return string.Join(" ", eigen)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
     }
 
     /// <summary>

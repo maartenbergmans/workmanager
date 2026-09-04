@@ -16,13 +16,13 @@ public sealed class TimesheetVoorstelForm : Form
     /// <summary>De aangevinkte regels, klaar om als timesheet weggeschreven te worden.</summary>
     public List<TimesheetRegel> Gekozen { get; } = new();
 
-    public TimesheetVoorstelForm(DateOnly dag, List<TimesheetRegel> voorstel)
+    public TimesheetVoorstelForm(DateOnly dag, List<TimesheetRegel> voorstel, string toelichting = "")
     {
         _dag = dag;
 
         Text = $"Dagvoorstel timesheets – {dag:dddd d MMMM yyyy}";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(820, 480);
+        Size = new Size(820, toelichting.Length > 0 ? 540 : 480);
         MinimizeBox = false;
 
         _grid = new DataGridView
@@ -70,9 +70,33 @@ public sealed class TimesheetVoorstelForm : Form
             Dock = DockStyle.Top,
             Height = 34,
             Padding = new Padding(10, 6, 10, 0),
-            Text = "Voorstel op basis van de activiteitenlog, contextswitches, launcher en agenda. " +
-                   "Vink uit wat niet geboekt moet worden; alles is aanpasbaar.",
+            Text = "Voorstel op basis van de activiteitenlog, agenda, Claude-opdrachten en " +
+                   "verzonden mails. Vink uit wat niet geboekt moet worden; alles is aanpasbaar.",
         };
+
+        // De uitleg van Claude bij het voorstel (keuzes, aannames) — informatief, komt
+        // nooit in de timesheets zelf terecht.
+        TextBox? uitleg = null;
+        Panel? uitlegPaneel = null;
+        if (toelichting.Length > 0)
+        {
+            uitleg = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                ScrollBars = ScrollBars.Vertical,
+                Text = toelichting,
+            };
+            uitlegPaneel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 74,
+                Padding = new Padding(10, 4, 10, 8),
+            };
+            uitlegPaneel.Controls.Add(uitleg);
+        }
 
         _totaal = new Label { Dock = DockStyle.Bottom, Height = 24, Padding = new Padding(10, 2, 10, 0) };
 
@@ -92,12 +116,21 @@ public sealed class TimesheetVoorstelForm : Form
         CancelButton = annuleer;
 
         Controls.Add(_grid);
+        if (uitlegPaneel is not null)
+        {
+            Controls.Add(uitlegPaneel); // tussen hint en grid (docking loopt achterstevoren)
+        }
         Controls.Add(hint);
         Controls.Add(_totaal);
         Controls.Add(knoppen);
         Theme.Apply(this);
         hint.ForeColor = Theme.Muted;
         _totaal.ForeColor = Theme.Muted;
+        if (uitleg is not null)
+        {
+            uitleg.BackColor = BackColor;
+            uitleg.ForeColor = Theme.Muted;
+        }
 
         foreach (var regel in voorstel)
         {

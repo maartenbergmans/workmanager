@@ -26,7 +26,12 @@ static class Program
         // de draaiende tray-app toont dan de klikbare melding (zie ClaudeAandacht).
         if (args.Length == 1 && args[0] == "--claude-aandacht")
         {
-            ClaudeAandacht.SchrijfSignaal(Console.In.ReadToEnd());
+            // Eventuele structured hook-output (zet de tabtitel) gaat terug via stdout.
+            var hookUit = ClaudeAandacht.SchrijfSignaal(Console.In.ReadToEnd());
+            if (hookUit.Length > 0)
+            {
+                Console.Out.Write(hookUit);
+            }
             return;
         }
 
@@ -153,6 +158,104 @@ static class Program
             return;
         }
 
+        // Zelfde als --owajs, maar dan in de verborgen Smartschool-sessie.
+        if (args.Length == 2 && args[0] == "--smsjs")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarSms = new TaskCompletionSource<string>();
+            var pompSms = new System.Windows.Forms.Timer { Interval = 50 };
+            pompSms.Tick += async (_, _) =>
+            {
+                pompSms.Stop();
+                try
+                {
+                    klaarSms.SetResult(await SmartschoolClient.Instance.DiagnoseJsAsync(
+                        args[1], CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarSms.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompSms.Start();
+            Application.Run();
+            Console.WriteLine(klaarSms.Task.Result);
+            return;
+        }
+
+        // Diagnose: één Smartschool-bericht archiveren en het resultaat tonen (true =
+        // rij is echt uit het Postvak IN verdwenen). De tray-app moet dicht zijn.
+        // Gebruik: WorkManager.exe --smsarchief Emilia 278474
+        if (args.Length == 3 && args[0] == "--smsarchief")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarArch = new TaskCompletionSource<string>();
+            var pompArch = new System.Windows.Forms.Timer { Interval = 50 };
+            pompArch.Tick += async (_, _) =>
+            {
+                pompArch.Stop();
+                try
+                {
+                    var gelukt = await SmartschoolClient.Instance.ArchiveerAsync(
+                        args[1], args[2], CancellationToken.None);
+                    klaarArch.SetResult($"archiveren {args[1]}/{args[2]}: " +
+                        (gelukt ? "GELUKT (rij weg uit Postvak IN)" : "MISLUKT"));
+                }
+                catch (Exception ex)
+                {
+                    klaarArch.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompArch.Start();
+            Application.Run();
+            Console.WriteLine(klaarArch.Task.Result);
+            foreach (var stap in SmartschoolClient.Instance.DebugStappen)
+            {
+                Console.WriteLine("stap: " + stap);
+            }
+            return;
+        }
+
+        // Diagnose: de bijlagen van één Smartschool-bericht naar de lokale bijlagenmap
+        // downloaden en de paden tonen. De tray-app moet dicht zijn.
+        // Gebruik: WorkManager.exe --smsbijlagen Lisa 279668
+        if (args.Length == 3 && args[0] == "--smsbijlagen")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarBijl = new TaskCompletionSource<string>();
+            var pompBijl = new System.Windows.Forms.Timer { Interval = 50 };
+            pompBijl.Tick += async (_, _) =>
+            {
+                pompBijl.Stop();
+                try
+                {
+                    var paden = await SmartschoolClient.Instance.DownloadBijlagenAsync(
+                        args[1], args[2], CancellationToken.None);
+                    klaarBijl.SetResult(paden.Count == 0
+                        ? "GEEN bestanden binnengekregen"
+                        : string.Join(Environment.NewLine, paden));
+                }
+                catch (Exception ex)
+                {
+                    klaarBijl.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompBijl.Start();
+            Application.Run();
+            Console.WriteLine(klaarBijl.Task.Result);
+            foreach (var stap in SmartschoolClient.Instance.DebugStappen)
+            {
+                Console.WriteLine("stap: " + stap);
+            }
+            return;
+        }
+
         // Zelfde als --owajs, maar dan in de verborgen Teams-sessie.
         if (args.Length == 2 && args[0] == "--teamsjs")
         {
@@ -180,6 +283,65 @@ static class Program
             return;
         }
 
+        // Diagnose: een Teams-chat openen en de DOM-opbouw van de berichten dumpen
+        // (auteurskandidaten). Zonder naam: de chatlijst tonen.
+        if (args.Length >= 1 && args[0] == "--teamschat")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarChat = new TaskCompletionSource<string>();
+            var pompChat = new System.Windows.Forms.Timer { Interval = 50 };
+            pompChat.Tick += async (_, _) =>
+            {
+                pompChat.Stop();
+                try
+                {
+                    klaarChat.SetResult(await TeamsClient.Instance.DiagnoseChatAsync(
+                        args.Length >= 2 ? args[1] : "", CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarChat.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompChat.Start();
+            Application.Run();
+            Console.WriteLine(klaarChat.Task.Result);
+            return;
+        }
+
+        // Diagnose: de bubbelweergave-leescode zelf draaien en het resultaat afdrukken.
+        if (args.Length == 2 && args[0] == "--teamsberichten")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarBer = new TaskCompletionSource<string>();
+            var pompBer = new System.Windows.Forms.Timer { Interval = 50 };
+            pompBer.Tick += async (_, _) =>
+            {
+                pompBer.Stop();
+                try
+                {
+                    var berichten = await TeamsClient.Instance.LaatsteBerichtenAsync(
+                        args[1], 15, CancellationToken.None);
+                    klaarBer.SetResult(string.Join(Environment.NewLine, berichten.Select(b =>
+                        $"[{b.Tijd}] {(b.Uitgaand ? "IK" : b.Auteur)}: " +
+                        $"{(b.Beeld.Length > 0 ? $"[📷 {b.Beeld.Length} tekens] " : "")}" +
+                        $"{b.Tekst[..Math.Min(60, b.Tekst.Length)]}")));
+                }
+                catch (Exception ex)
+                {
+                    klaarBer.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompBer.Start();
+            Application.Run();
+            Console.WriteLine(klaarBer.Task.Result);
+            return;
+        }
+
         // Diagnose: waarom toont de cockpit minder mails dan Gmail?
         if (args.Length == 1 && args[0] == "--mailcheck")
         {
@@ -191,6 +353,103 @@ static class Program
             }
             Console.WriteLine(GmailClient.DiagnoseAsync(instellingen, CancellationToken.None)
                 .GetAwaiter().GetResult());
+            return;
+        }
+
+        // Diagnose: welke bijlagen zitten er in recente Google Chat-berichten en lukt het
+        // downloaden van de afbeeldingen? Gebruik: WorkManager.exe --chatimg [dagen]
+        if (args.Length is 1 or 2 && args[0] == "--chatimg")
+        {
+            var chatS = GoogleChatSettings.Load();
+            if (!chatS.Gekoppeld)
+            {
+                Console.WriteLine("Google Chat is niet gekoppeld.");
+                return;
+            }
+            var dagenTerug = args.Length == 2 && int.TryParse(args[1], out var dg) ? dg : 3;
+            Console.WriteLine(GoogleChatClient
+                .DiagnoseAfbeeldingenAsync(chatS, dagenTerug, CancellationToken.None)
+                .GetAwaiter().GetResult());
+            return;
+        }
+
+        // Diagnose: wat maakt de chatweergave van een afbeeldingsbestand (verkleinen naar
+        // max 900 px / JPEG)? Gebruik: WorkManager.exe --imgverklein foto.jpg
+        if (args.Length == 2 && args[0] == "--imgverklein")
+        {
+            var invoer = File.ReadAllBytes(args[1]);
+            var dataUrl = GoogleChatClient.WeergaveDataUrl(invoer,
+                args[1].EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                    ? "image/png" : "image/jpeg");
+            Console.WriteLine($"invoer {invoer.Length:N0} bytes → data-URL {dataUrl.Length:N0} tekens " +
+                $"({(dataUrl.Length == 0 ? "MISLUKT" : dataUrl[..dataUrl.IndexOf(';')])})");
+            return;
+        }
+
+        // Diagnose: de echte chatweergave (bubbels + foto's) van één space als HTML-bestand,
+        // om los van de app te bekijken. Gebruik: WorkManager.exe --chathtml spaces/… uit.html
+        if (args.Length == 3 && args[0] == "--chathtml")
+        {
+            var chatS2 = GoogleChatSettings.Load();
+            var regels = GoogleChatClient
+                .TranscriptRegelsAsync(chatS2, args[1], 7, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            var html = MailReplyForm.BouwWeergave(new MailBericht
+            {
+                ChatSpace = args[1],
+                Van = "diagnose",
+                Onderwerp = "Chatweergave",
+                Datum = DateTimeOffset.Now,
+                Html = regels.Count > 0 ? GoogleChatClient.BouwChatHtml(regels) : "",
+            });
+            File.WriteAllText(args[2], html);
+            Console.WriteLine($"{regels.Count} regels; {regels.Sum(r => r.Afbeeldingen?.Count ?? 0)} " +
+                $"afbeelding(en); HTML {html.Length:N0} tekens → {args[2]}");
+            return;
+        }
+
+        // Ctrl,Ctrl-wachter: een miniproces dat alleen de dubbele-Ctrl-hook draagt. Draait
+        // de echte app niet (meer) — afgesloten, gecrasht of na een deploy — dan start een
+        // dubbele tik hem gewoon op; draait hij wel, dan opent zíjn eigen hook de cockpit
+        // en houdt de wachter zich stil. De tray-app start deze wachter zelf mee, en de
+        // eigen mutex houdt het altijd bij één exemplaar.
+        if (args.Length == 1 && args[0] == "--ctrlwachter")
+        {
+            using var wachterMutex = new Mutex(
+                true, @"Local\WorkManager.CtrlWachter", out var eersteWachter);
+            if (!eersteWachter)
+            {
+                return;
+            }
+            ApplicationConfiguration.Initialize();
+            var laatsteStart = DateTime.MinValue;
+            using var wachterHook = new DubbelCtrlHook();
+            wachterHook.Getikt += () =>
+            {
+                if (Mutex.TryOpenExisting(@"Local\WorkManager.SingleInstance", out var loopt))
+                {
+                    loopt.Dispose();
+                    return; // de app draait al en heeft zijn eigen hook
+                }
+                if (DateTime.UtcNow - laatsteStart < TimeSpan.FromSeconds(10))
+                {
+                    return; // de opstart loopt al; herhaalde tikken niet stapelen
+                }
+                laatsteStart = DateTime.UtcNow;
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = Application.ExecutablePath,
+                        UseShellExecute = true,
+                    });
+                }
+                catch
+                {
+                    // Volgende tik probeert het gewoon opnieuw.
+                }
+            };
+            Application.Run(); // berichtenlus: nodig voor de low-level-hook
             return;
         }
 
@@ -315,6 +574,7 @@ static class Program
                 "anticipeer" => new AnticipeerForm(),
                 "wadiag" => new WhatsAppDiagnoseForm(),
                 "owadiag" => new OutlookDiagnoseForm(),
+                "azurevm" => new AzureVmForm(),
                 "verjaardagen" => new VerjaardagenForm(),
                 "wmweb" => new WmWebForm(),
                 "mailvenster" => new MailReplyForm(),

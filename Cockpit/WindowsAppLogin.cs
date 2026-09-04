@@ -78,31 +78,39 @@ public static class WindowsAppLogin
         var laatsteOtp = "";
         var accountKnopGeprobeerd = false;
         var ooitActie = false;
-        var stilTeller = 0;
-        var dialoogPolls = 0;
         var dialoogHerstarts = 0;
         // Wordt gezet zodra een wachtwoordscherm een ánder account toont dan het doel:
         // dan stoppen we onmiddellijk (nooit een wachtwoord bij het verkeerde account).
         var verkeerdAccount = "";
 
-        for (var beurt = 0; beurt < 200; beurt++) // ~5 min: genoeg voor handmatige MFA
+        // Kort pollen (½ s) zodat elk nieuw scherm meteen bediend wordt; alle
+        // wachtdrempels hieronder gaan daarom op de klok, niet op het aantal polls.
+        var klok = System.Diagnostics.Stopwatch.StartNew();
+        TimeSpan? dialoogSinds = null;
+        var stilSinds = klok.Elapsed;
+
+        while (klok.Elapsed < TimeSpan.FromMinutes(5)) // genoeg voor handmatige MFA
         {
             ct.ThrowIfCancellationRequested();
-            Thread.Sleep(1500);
+            Thread.Sleep(500);
             var actie = false;
+            var kandidaten = KandidaatVensters();
             // De Microsoft-logindialoog in de Windows App is een BasicEmbeddedBrowser-
             // popup die zijn inhoud níét in de accessibility-boom zet. Daarvoor is er een
             // aparte route op basis van het gefocuste element (focus-events werken wél).
-            if (VindLoginDialoog() is { } dialoog)
+            var dialoog = VindLoginDialoog();
+            if (dialoog is not null)
             {
-                dialoogPolls++;
+                dialoogSinds ??= klok.Elapsed;
+                var dialoogOpen = klok.Elapsed - dialoogSinds.Value;
                 try
                 {
-                    // De eerste polls laten laden: direct typen belandt in de
+                    // De eerste seconden laten laden: direct typen belandt in de
                     // "Een ogenblik geduld…"-spinner en gaat verloren.
-                    if (dialoogPolls > 2)
+                    if (dialoogOpen > TimeSpan.FromSeconds(3))
                     {
-                        actie = HandelDialoogAf(dialoog, email, dialoogPolls,
+                        actie = HandelDialoogAf(dialoog, email,
+                            blindToegestaan: dialoogOpen > TimeSpan.FromSeconds(6),
                             ref emailIngevuld, ref wachtwoordIngevuld, ref laatsteOtp,
                             ref verkeerdAccount);
                     }
@@ -116,8 +124,8 @@ public static class WindowsAppLogin
                 // het accountmenu. Maar niet als er intussen een echt CED-/Microsoft-
                 // loginvenster openstaat (apart ApplicationFrameWindow) — dan is de
                 // "spinner" gewoon de wachtende ouder en handelt HandelSchermAf het af.
-                var extraLoginOpen = KandidaatVensters().Skip(1).Any(HeeftLoginVeld);
-                if (dialoogPolls >= 20 && dialoogHerstarts < 1 && !extraLoginOpen)
+                if (dialoogOpen > TimeSpan.FromSeconds(30) && dialoogHerstarts < 1 &&
+                    !kandidaten.Skip(1).Any(HeeftLoginVeld))
                 {
                     dialoogHerstarts++;
                     Log("dialoog hangt — Escape en opnieuw via het accountmenu");
@@ -127,19 +135,19 @@ public static class WindowsAppLogin
                         Thread.Sleep(300);
                         System.Windows.Forms.SendKeys.SendWait("{ESC}");
                     }
-                    dialoogPolls = 0;
+                    dialoogSinds = null;
                     emailIngevuld = 0;
                     accountKnopGeprobeerd = false;
                     ooitActie = false;
-                    stilTeller = 0;
+                    stilSinds = klok.Elapsed;
                     continue;
                 }
             }
             else
             {
-                dialoogPolls = 0;
+                dialoogSinds = null;
             }
-            foreach (var venster in KandidaatVensters())
+            foreach (var venster in kandidaten)
             {
                 try
                 {
@@ -174,14 +182,14 @@ public static class WindowsAppLogin
             if (actie)
             {
                 ooitActie = true;
-                stilTeller = 0;
+                stilSinds = klok.Elapsed;
                 continue;
             }
-            stilTeller++;
+            var stil = klok.Elapsed - stilSinds;
             // Na een afgeronde aanmelding is het een tijdje stil: klaar.
-            if (ooitActie && stilTeller >= 6)
+            if (ooitActie && stil > TimeSpan.FromSeconds(9))
             {
-                if (VindLoginDialoog() is not null)
+                if (dialoog is not null)
                 {
                     Log("dialoog blijft open zonder herkenbaar veld — handwerk gevraagd");
                     return "Windows App: e-mail is ingevuld, maar het vervolg kon ik niet " +
@@ -194,8 +202,8 @@ public static class WindowsAppLogin
             // account? Eén keer de accountwisselaar proberen; die toont het menu met
             // accounts waar de klik op het doelaccount (of "account toevoegen") de rest
             // van deze lus weer werk geeft.
-            if (!ooitActie && stilTeller == 4 && !accountKnopGeprobeerd &&
-                VindLoginDialoog() is null)
+            if (!ooitActie && stil > TimeSpan.FromSeconds(6) && !accountKnopGeprobeerd &&
+                dialoog is null)
             {
                 accountKnopGeprobeerd = true;
                 if (ProbeerAccountWissel(VindHoofdvenster(), email))
@@ -203,7 +211,7 @@ public static class WindowsAppLogin
                     ooitActie = true;
                     // Extra geduld: na de accountwissel kan de logindialoog ruim tien
                     // seconden op zich laten wachten — niet te vroeg "klaar" melden.
-                    stilTeller = -8;
+                    stilSinds = klok.Elapsed + TimeSpan.FromSeconds(12);
                 }
                 else
                 {
@@ -213,7 +221,7 @@ public static class WindowsAppLogin
                         "aanmeldscherm verder in";
                 }
             }
-            if (!ooitActie && stilTeller >= 20)
+            if (!ooitActie && stil > TimeSpan.FromSeconds(30))
             {
                 return "Windows App geopend — er verscheen geen aanmeldscherm " +
                     "(waarschijnlijk al aangemeld)";
@@ -252,21 +260,20 @@ public static class WindowsAppLogin
     /// blind typen zou het anders zichtbaar in een gewoon veld zetten.
     /// </summary>
     private static bool HandelDialoogAf(AutomationElement dialoog, string email,
-        int dialoogPolls,
+        bool blindToegestaan,
         ref int emailIngevuld, ref int wachtwoordIngevuld, ref string laatsteOtp,
         ref string verkeerdAccount)
     {
         var pids = System.Diagnostics.Process.GetProcessesByName("Windows365")
             .Select(p => p.Id).ToHashSet();
-        if (VindHoofdvenster() is { } hoofd)
+        // Alleen naar de voorgrond halen (met bijbehorende wachttijd) als de app daar
+        // niet al staat — meestal staat hij er al en scheelt dat 0,3 s per poll.
+        if (!VoorgrondVanApp(pids) && VindHoofdvenster() is { } hoofd)
         {
             ZetVoorgrond(hoofd);
             Thread.Sleep(300);
         }
-        var voorgrond = NativeMethods.GetForegroundWindow();
-        var voorgrondPid = 0;
-        _ = NativeMethods.GetWindowThreadProcessId(voorgrond, ref voorgrondPid);
-        if (!pids.Contains(voorgrondPid))
+        if (!VoorgrondVanApp(pids))
         {
             Log("dialoog: voorgrond hoort niet bij de Windows App — niets getypt");
             return false;
@@ -361,7 +368,7 @@ public static class WindowsAppLogin
             Log("dialoog: focus staat niet op een invoerveld (wsl. accountkeuze) — niets getypt");
             return false;
         }
-        if (emailIngevuld == 0 && wachtwoordIngevuld == 0 && dialoogPolls >= 4)
+        if (emailIngevuld == 0 && wachtwoordIngevuld == 0 && blindToegestaan)
         {
             emailIngevuld++;
             Log("dialoog: geen focusinfo — e-mail blind getypt (autofocusveld)");
@@ -391,7 +398,8 @@ public static class WindowsAppLogin
         // Staat het te bedienen scherm in een apart loginvenster (niet het app-hoofd),
         // dan dat naar voren halen: de SendKeys-terugval van Vul/Klik/Enter typt naar het
         // actieve venster.
-        if (edits.Count > 0 && Veilig(() => venster.Current.ClassName) != "MainWindow")
+        if (edits.Count > 0 && Veilig(() => venster.Current.ClassName) != "MainWindow" &&
+            !IsVoorgrond(venster))
         {
             ZetVoorgrond(venster);
             Thread.Sleep(300);
@@ -675,7 +683,18 @@ public static class WindowsAppLogin
             {
                 var naam = Veilig(() => top.Current.Name) ?? "";
                 if (Regex.IsMatch(naam, "aanmelden bij|sign in to your account",
-                        RegexOptions.IgnoreCase) || HeeftLoginVeld(top))
+                        RegexOptions.IgnoreCase))
+                {
+                    vensters.Add(top);
+                    continue;
+                }
+                // De inhoudscheck (HeeftLoginVeld) doorzoekt álle descendants en is bij
+                // grote vensters (Chrome, Explorer) tergend traag; alleen doen bij de
+                // venstertypes waarin zo'n login echt opent.
+                var klasse = Veilig(() => top.Current.ClassName) ?? "";
+                if ((klasse == "ApplicationFrameWindow" ||
+                        klasse.Contains("Credential", StringComparison.OrdinalIgnoreCase)) &&
+                    HeeftLoginVeld(top))
                 {
                     vensters.Add(top);
                 }
@@ -838,6 +857,19 @@ public static class WindowsAppLogin
         }
         return sb.ToString();
     }
+
+    /// <summary>True als het voorgrondvenster bij een van de app-processen hoort.</summary>
+    private static bool VoorgrondVanApp(HashSet<int> pids)
+    {
+        var voorgrond = NativeMethods.GetForegroundWindow();
+        var pid = 0;
+        _ = NativeMethods.GetWindowThreadProcessId(voorgrond, ref pid);
+        return pids.Contains(pid);
+    }
+
+    private static bool IsVoorgrond(AutomationElement venster) =>
+        Veilig(() => (IntPtr)venster.Current.NativeWindowHandle) ==
+            NativeMethods.GetForegroundWindow();
 
     private static void ZetVoorgrond(AutomationElement venster)
     {

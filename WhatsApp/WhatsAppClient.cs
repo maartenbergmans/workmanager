@@ -35,6 +35,13 @@ public sealed class WhatsAppClient : IDisposable
     public static bool OoitGekoppeld => File.Exists(MarkerFile);
 
     /// <summary>
+    /// Zag de laatste start een ingelogde chatlijst? WhatsApp Web logt gekoppelde apparaten
+    /// na ±14 dagen inactiviteit (of via de telefoon) uit; dan is een nieuwe QR-scan nodig
+    /// en toont de cockpit de knop "WhatsApp koppelen…".
+    /// </summary>
+    public static bool Aangemeld { get; private set; }
+
+    /// <summary>
     /// Nachtelijk onderhoud: de sessie bij de eerstvolgende beurt volledig vers opbouwen
     /// (zelfde route als het crash-herstel; het profiel met de QR-koppeling blijft staan).
     /// </summary>
@@ -147,10 +154,12 @@ public sealed class WhatsAppClient : IDisposable
             if (await IsIngelogdAsync())
             {
                 File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                Aangemeld = true;
                 return true;
             }
             await Task.Delay(500, ct);
         }
+        Aangemeld = false;
         return false;
     }
 
@@ -176,6 +185,7 @@ public sealed class WhatsAppClient : IDisposable
             if (await IsIngelogdAsync())
             {
                 File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                Aangemeld = true;
                 await Task.Delay(1500, ct); // chatlijst even laten laden
                 _venster!.Size = new Size(900, 1500); // terug naar de hoge leesstand
                 Verberg();
@@ -788,6 +798,35 @@ public sealed class WhatsAppClient : IDisposable
                         let delen = [...m.querySelectorAll('span.selectable-text')];
                         if (delen.length === 0) delen = [...m.querySelectorAll('.copyable-text span')];
                         delen = delen.filter(s => !delen.some(o => o !== s && o.contains(s)));
+                        // Reactie op een eerder bericht: WhatsApp zet het geciteerde bericht
+                        // als blok bovenin de bubbel. Zonder onderscheid leek dat citaat de
+                        // tekst van de afzender zelf ("Els zegt X" terwijl X jouw bericht
+                        // was). Het citaatblok herkennen, uit de eigen tekst filteren en er
+                        // los als "↪ antwoord op …" vóór zetten.
+                        let citaat = '';
+                        const qm = m.querySelector('.quoted-mention, [class*="quoted"], ' +
+                            '[data-testid="quoted-message"], [aria-label*="geciteerd" i], ' +
+                            '[aria-label*="quoted" i]');
+                        if (qm) {
+                            let citaatEl = qm.closest('[role="button"]') ||
+                                qm.parentElement?.parentElement || qm;
+                            // Te hoog gegrepen (hele bubbel)? Dan alleen het quote-element
+                            // zelf nemen, anders bleef er geen eigen tekst over.
+                            if (delen.length > 0 && delen.every(s => citaatEl.contains(s))) {
+                                citaatEl = qm;
+                            }
+                            delen = delen.filter(s => !citaatEl.contains(s));
+                            const regels = (citaatEl.innerText || '')
+                                .split('\n').map(r => r.trim()).filter(Boolean);
+                            let wie = regels.length > 1 ? regels[0] : '';
+                            if (/^(jij|you|vous|u)$/i.test(wie)) wie = 'jou';
+                            const wat = (regels.length > 1
+                                ? regels.slice(1).join(' ') : regels[0] || '').slice(0, 120);
+                            if (wat) {
+                                citaat = '↪ antwoord op ' + (wie ? wie + ': ' : '') +
+                                    '“' + wat + '”';
+                            }
+                        }
                         // Richting, van sterk naar zwak signaal: de message-in/out-class,
                         // het data-id (begint bij eigen berichten met "true_", inkomend
                         // "false_"), en anders de positie — eigen bubbels staan rechts van
@@ -907,7 +946,8 @@ public sealed class WhatsAppClient : IDisposable
                         msgs.push({
                             pre: c ? c.getAttribute('data-pre-plain-text') : '',
                             uit,
-                            txt: delen.map(s => s.innerText).join(' ').trim(),
+                            txt: ((citaat ? citaat + '\n' : '') +
+                                delen.map(s => s.innerText).join(' ').trim()).trim(),
                             beeld,
                             reacties,
                         });

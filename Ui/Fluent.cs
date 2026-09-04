@@ -32,6 +32,7 @@ public static class Fluent
     public static readonly string Terug = Teken(0xE72B);
     public static readonly string EtenDrinken = Teken(0xE807); // mes en vork
     public static readonly string Huis = Teken(0xE80F);
+    public static readonly string Play = Teken(0xE768);
 
     private static string Teken(int codepoint) => char.ConvertFromUtf32(codepoint);
 }

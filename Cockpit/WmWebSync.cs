@@ -317,12 +317,14 @@ public class WmWebSync
             () => ClientLauncher.StartClaude(Wsl + "movaware-backend")),
         ("cellaware-claude", "Claude — cellaware-backend", "Vriesveem",
             () => ClientLauncher.StartClaude(Wsl + "cellaware-backend")),
-        ("laurapp-claude", "Claude — laurapp-backend", "Lauryssens",
-            () => ClientLauncher.StartClaude(Wsl + "laurapp-backend")),
+        ("laurapp-claude", "Claude — laurapp", "Lauryssens",
+            () => ClientLauncher.StartClaude(Wsl + "laurapp")),
         ("glascalculator-claude", "Claude — glascalculator", "Lauryssens",
             () => ClientLauncher.StartClaude(@"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator")),
         ("wm-claude", "Claude — WorkManager zelf", "UrbanIT",
             () => ClientLauncher.StartClaude(@"C:\Data\Projecten\Workmanager")),
+        ("automaticmail-claude", "Claude — automaticmail", "CED",
+            () => ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail")),
     };
 
     /// <summary>Wat je op afstand op de pc kunt starten (zelfde lijst als het Projecten-menu).</summary>
@@ -1209,7 +1211,8 @@ public class WmWebSync
             meetings = new List<AgendaClient.AgendaItem>();
         }
         using var afbreken = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        var voorstel = await ActiviteitenLog.VoorstelAsync(dag, meetings, afbreken.Token);
+        // De toelichting is voor het pc-venster; op de gsm volstaan de regels zelf.
+        var (voorstel, _) = await ActiviteitenLog.VoorstelAsync(dag, meetings, afbreken.Token);
         VoorstelStore.Bewaar(voorstel);
         if (voorstel.Count == 0)
         {
