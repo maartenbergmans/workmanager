@@ -367,6 +367,12 @@ public sealed class VerjaardagenForm : Form
 
     private void SchaalKolommen()
     {
+        // OnResize vuurt al bij het zetten van Size bovenin de constructor, vóórdat de
+        // lijsten bestaan — dat legde het hele venster stilletjes om (klik "deed niets").
+        if (_ideeen is null || _gegeven is null)
+        {
+            return;
+        }
         if (_ideeen.Columns.Count > 0)
         {
             _ideeen.Columns[0].Width = Math.Max(200, _ideeen.ClientSize.Width - 4);
