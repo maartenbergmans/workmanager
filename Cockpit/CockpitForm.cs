@@ -2548,9 +2548,12 @@ public class CockpitForm : Form
                         terugCore.NavigateToString(MailReplyForm.BouwWeergave(ccLijst));
                     }
                 }
-                else if (e.Uri.StartsWith("wm-verjaardag:", StringComparison.OrdinalIgnoreCase))
+                // De knop "Cadeau-ideeën openen" bij een taak van de cadeauradar. Bewust een
+                // https-pseudo-adres: navigatie naar een onbekend schema ("wm-verjaardag:")
+                // blokkeert Chromium stilletjes zónder dat dit event vuurt, een https-klik
+                // komt hier gegarandeerd langs. Vóór de algemene http-tak afvangen.
+                else if (e.Uri.StartsWith("https://wm-actie/verjaardag", StringComparison.OrdinalIgnoreCase))
                 {
-                    // De knop "Cadeau-ideeën openen" bij een taak van de cadeauradar.
                     e.Cancel = true;
                     new VerjaardagenForm().Show(this);
                 }
@@ -6039,7 +6042,7 @@ public class CockpitForm : Form
             bericht.Html =
                 "<pre style=\"white-space:pre-wrap;font-family:inherit;font-size:13px;margin:0\">" +
                 System.Net.WebUtility.HtmlEncode(bericht.Tekst) + "</pre>" +
-                "<div style=\"margin-top:16px\"><a href=\"wm-verjaardag:\" " +
+                "<div style=\"margin-top:16px\"><a href=\"https://wm-actie/verjaardag\" " +
                 "style=\"display:inline-block;padding:8px 16px;background:#1a56c4;color:#ffffff;" +
                 "border-radius:8px;text-decoration:none;font-size:13px;font-weight:600\">" +
                 "🎁 Cadeau-ideeën openen</a></div>";
