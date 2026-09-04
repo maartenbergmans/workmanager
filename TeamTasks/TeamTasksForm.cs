@@ -20,6 +20,7 @@ public class TeamTasksForm : Form
     private TextBox _preview = null!; // live weekmail-preview
     private bool _loading;
     private bool _negeerCheck; // dubbelklik mag de checkbox niet omzetten
+    private bool _sorteerOpPrio; // weergave op ★★★ eerst; de eigen (sleep)volgorde blijft bewaard
 
     /// <summary>Inspring-/bulletprefix waarmee subtaakrijen onder hun hoofdtaak verschijnen.</summary>
     private const string SubPrefix = "        ◦  ";
@@ -104,12 +105,24 @@ public class TeamTasksForm : Form
         var beheerButton = new ModernButton { Text = "Beheren", Width = 110, Glyph = Fluent.Settings };
         beheerButton.Click += (_, _) => beheerMenu.Show(beheerButton, new Point(0, beheerButton.Height + 4));
 
+        // Weergavesortering: hoge prioriteit (★★★) bovenaan binnen elk teamlid. De
+        // opgeslagen (sleep)volgorde blijft ongemoeid — uitvinken zet alles terug.
+        var prioSort = new CheckBox
+        {
+            Text = "Op ★ sorteren", AutoSize = true, Margin = new Padding(8, 8, 3, 3),
+        };
+        prioSort.CheckedChanged += (_, _) =>
+        {
+            _sorteerOpPrio = prioSort.Checked;
+            VulLijst();
+        };
+
         _status = new Label { AutoSize = true };
         Theme.AsStatus(_status);
         toolbar.Controls.AddRange(new Control[]
         {
             _lidCombo, _nieuweTaak, addButton, claudeButton, _mailButton, vakantiesButton,
-            beheerButton, _status,
+            beheerButton, prioSort, _status,
         });
 
         // Takenlijst: één groep per teamlid, vinkje = klaar
@@ -472,8 +485,14 @@ public class TeamTasksForm : Form
 
             // Afgevinkte taken niet meer tonen (per ongeluk afvinken is terug te draaien via
             // de undo-toast direct na het afvinken; opruimen gebeurt via "Afgevinkte opruimen").
-            foreach (var taak in _data.Taken.Where(t => !t.Klaar &&
-                         string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase)))
+            var taken = _data.Taken.Where(t => !t.Klaar &&
+                string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase));
+            if (_sorteerOpPrio)
+            {
+                // OrderBy is stabiel: binnen dezelfde prioriteit blijft de eigen volgorde staan.
+                taken = taken.OrderBy(t => t.Prioriteit);
+            }
+            foreach (var taak in taken)
             {
                 var item = new ListViewItem(taak.Tekst, group)
                 {
@@ -491,7 +510,9 @@ public class TeamTasksForm : Form
 
                 // Subtaken als ingesprongen rijen eronder, elk met eigen checkbox en sterren.
                 // Een afgevinkte hoofdtaak klapt zijn subtaken in (overzicht bij de weekmail).
-                foreach (var sub in taak.Klaar ? Enumerable.Empty<SubTaak>() : taak.Subtaken)
+                foreach (var sub in taak.Klaar ? Enumerable.Empty<SubTaak>()
+                             : _sorteerOpPrio ? taak.Subtaken.OrderBy(s => s.Prioriteit)
+                             : taak.Subtaken)
                 {
                     var subItem = new ListViewItem(SubPrefix + sub.Tekst, group)
                     {
