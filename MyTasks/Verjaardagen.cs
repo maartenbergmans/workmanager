@@ -233,11 +233,19 @@ public static class Verjaardagen
             Budget: {{(jarige.Budget > 0 ? $"ongeveer € {jarige.Budget}" : "geen vast bedrag, houd het redelijk")}}.
             Interesses en aandachtspunten: {{(jarige.Notities.Length > 0 ? jarige.Notities : "niet opgegeven")}}.
 
-            Wat er nu op het eigen online verlanglijstje staat (dit is de actuele smaak —
-            gebruik het als inspiratie: kies er gerust iets van, of stel iets voor dat er
-            logisch bij aansluit):
+            Wat er nu op het eigen online verlanglijstje staat. LET OP: dit is UITSLUITEND
+            inspiratie voor smaak en interesses — stel NIETS voor dat hierop staat of er
+            sterk op lijkt (wat op het lijstje staat wordt toch al gekocht). Bedenk juist
+            iets wat er níét op staat maar er qua stijl mooi bij aansluit:
             {{(lijstje.Count > 0 ? string.Join("\n", lijstje.Select(i => $"- {i}"))
                 : "- (geen verlanglijstje bekend of niet op te halen)")}}
+
+            Al eerder voorgestelde ideeën — kom met écht iets anders, geen variaties of
+            herformuleringen hiervan:
+            {{(jarige.Ideeen.Count > 0
+                ? string.Join("\n", jarige.Ideeen.Take(40).Select(i =>
+                    $"- {(i.Length > 120 ? i[..120] + "…" : i)}"))
+                : "- (nog geen)")}}
 
             Eerder gegeven cadeaus (NIET herhalen, en niet te dicht in de buurt komen):
             {{eerder}}

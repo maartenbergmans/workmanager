@@ -202,17 +202,18 @@ public sealed class VerjaardagenForm : Form
         };
         ideeMenu.Items.Add(ideeKopieer);
         var ideeWeg = new ToolStripMenuItem("Verwijderen");
-        ideeWeg.Click += (_, _) =>
-        {
-            if (_huidig is { } j && _ideeen.SelectedItems.Count > 0)
-            {
-                j.Ideeen.Remove(_ideeen.SelectedItems[0].Text);
-                Verjaardagen.Save(_data);
-                ToonSelectie();
-            }
-        };
+        ideeWeg.Click += (_, _) => VerwijderGeselecteerdeIdeeen();
         ideeMenu.Items.Add(ideeWeg);
         _ideeen.ContextMenuStrip = ideeMenu;
+        // Wegklikken moet vlot gaan: meerdere rijen selecteren en Delete (of de knop).
+        _ideeen.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Delete)
+            {
+                VerwijderGeselecteerdeIdeeen();
+                e.Handled = true;
+            }
+        };
 
         _ideeKnop = new ModernButton
         {
@@ -221,12 +222,17 @@ public sealed class VerjaardagenForm : Form
         _ideeKnop.Click += async (_, _) => await IdeeenVragenAsync();
         var eigenIdee = new ModernButton { Text = "Eigen idee…", Width = 130, Glyph = Fluent.Add };
         eigenIdee.Click += (_, _) => EigenIdee();
+        var ideeVerwijderKnop = new ModernButton { Text = "Verwijderen", Width = 120 };
+        ideeVerwijderKnop.Click += (_, _) => VerwijderGeselecteerdeIdeeen();
+        new ToolTip().SetToolTip(ideeVerwijderKnop,
+            "Geselecteerde ideeën weg (meerdere selecteren kan; Delete-toets werkt ook)");
         var ideeBalk = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom, Height = 42, Padding = new Padding(0, 6, 0, 0), WrapContents = false,
         };
         ideeBalk.Controls.Add(_ideeKnop);
         ideeBalk.Controls.Add(eigenIdee);
+        ideeBalk.Controls.Add(ideeVerwijderKnop);
 
         var ideeGroup = new ModernGroupBox
         {
@@ -463,6 +469,21 @@ public sealed class VerjaardagenForm : Form
     }
 
     // ---------------------------------------------------------------- ideeën
+
+    /// <summary>Haalt alle geselecteerde ideeën weg (knop, Delete-toets en contextmenu).</summary>
+    private void VerwijderGeselecteerdeIdeeen()
+    {
+        if (_huidig is not { } jarige || _ideeen.SelectedItems.Count == 0)
+        {
+            return;
+        }
+        foreach (ListViewItem item in _ideeen.SelectedItems)
+        {
+            jarige.Ideeen.Remove(item.Text);
+        }
+        Verjaardagen.Save(_data);
+        ToonSelectie();
+    }
 
     private async Task IdeeenVragenAsync()
     {
