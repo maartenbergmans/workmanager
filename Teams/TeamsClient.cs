@@ -529,8 +529,13 @@ public sealed class TeamsClient : IDisposable
     /// aanzetten, de (korte) gefilterde lijst lezen, weer uitzetten. Nodig sinds Teams de
     /// rijen zelf geen badge of "ongelezen"-label meer geeft. Retourneert null als de knop
     /// er niet is of de gefilterde lijst ongeloofwaardig blijft (dan geldt de heuristiek).
+    /// Rijen zonder tijdstip én zonder preview (ook niet in de volledige scrape) zijn geen
+    /// echte chats: na een meeting laat Teams soms kale naam-items van de deelnemers achter
+    /// ("Henny", "Kevin") die de filter als ongelezen toont — die hielden een cockpitrij
+    /// eindeloos in leven omdat elke sessie-herbouw ze opnieuw aanleverde.
     /// </summary>
-    private async Task<List<TeamsBericht>?> FilterOngelezenAsync(CancellationToken ct)
+    private async Task<List<TeamsBericht>?> FilterOngelezenAsync(
+        Dictionary<string, string> scrapePreviews, CancellationToken ct)
     {
         var vooraf = int.TryParse(
             await JsAsync($"document.querySelectorAll({RijSelector}).length"), out var v) ? v : 0;
@@ -605,7 +610,7 @@ public sealed class TeamsClient : IDisposable
                             it.querySelector('span[title]'))?.getAttribute('title');
                         if (titelAttr) naam = titelAttr;
                         naam = naam.replace(/[,.]$/, '').slice(0, 60).trim();
-                        return { naam, preview: preview.slice(0, 300) };
+                        return { naam, preview: preview.slice(0, 300), hadTijd: !!tijd };
                     }).filter(r => r.naam));
                 })()
                 """));
@@ -630,12 +635,28 @@ public sealed class TeamsClient : IDisposable
                 "de opname is klaar|opname is klaar|recording is (ready|available)|" +
                 "transcript is (ready|available|now available)",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            var rijen = doc.RootElement.EnumerateArray()
-                .Select(e => new TeamsBericht(
-                    e.GetProperty("naam").GetString() ?? "",
-                    e.GetProperty("preview").GetString() ?? ""))
-                .Where(b => b.Naam.Length > 0 && !ruis.IsMatch(b.Naam + " " + b.Preview))
-                .DistinctBy(b => b.Naam)
+            var kandidaten = doc.RootElement.EnumerateArray()
+                .Select(e => (Bericht: new TeamsBericht(
+                        e.GetProperty("naam").GetString() ?? "",
+                        e.GetProperty("preview").GetString() ?? ""),
+                    HadTijd: e.TryGetProperty("hadTijd", out var t) && t.GetBoolean()))
+                .Where(k => k.Bericht.Naam.Length > 0 &&
+                    !ruis.IsMatch(k.Bericht.Naam + " " + k.Bericht.Preview))
+                .DistinctBy(k => k.Bericht.Naam)
+                .ToList();
+            // Alleen rijen die op een echte chat lijken: met tijdstip of met een preview
+            // (desnoods uit de volledige scrape). Kale naam-items houden anders eeuwig een
+            // cockpitrij in leven.
+            var spook = kandidaten.Where(k => !k.HadTijd && k.Bericht.Preview.Length == 0 &&
+                    !(scrapePreviews.TryGetValue(k.Bericht.Naam, out var sp) && sp.Length > 0))
+                .Select(k => k.Bericht.Naam).ToList();
+            if (spook.Count > 0)
+            {
+                diagnose.Add($"spookrijen={string.Join(",", spook)}");
+            }
+            var rijen = kandidaten
+                .Where(k => !spook.Contains(k.Bericht.Naam))
+                .Select(k => k.Bericht)
                 .ToList();
             // Meer dan 30 "ongelezen" chats is geen geloofwaardige filteruitkomst.
             diagnose.Add($"uitslag={rijen.Count}");
@@ -1215,7 +1236,7 @@ public sealed class TeamsClient : IDisposable
             // wél een ongelezen-teller toont — de heuristiek hierboven vindt dan niets.
             // De filterknop "Ongelezen" boven de chatlijst ís er nog: die even aanzetten
             // toont uitsluitend de ongelezen chats, wat elke DOM-gok overbodig maakt.
-            var gefilterd = await FilterOngelezenAsync(ct);
+            var gefilterd = await FilterOngelezenAsync(previews, ct);
             if (gefilterd is not null)
             {
                 uitslag.Ongelezen.Clear();
