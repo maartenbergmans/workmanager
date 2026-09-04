@@ -21,6 +21,10 @@ public sealed class VerjaardagenForm : Form
     private readonly TextBox _notities;
     private readonly ModernListView _ideeen;
     private readonly ModernListView _gegeven;
+    private readonly ModernListView _lijstjeItems;
+    /// <summary>Opgehaalde verlanglijstjes per URL — één fetch per sessie volstaat.</summary>
+    private static readonly Dictionary<string, List<string>> LijstjeCache = new();
+    private int _lijstjeVersie; // wisselt de selectie tijdens het laden, dan wint de laatste
     private readonly ModernButton _ideeKnop;
     private readonly CancellationTokenSource _cts = new();
     private VerjaardagData _data;
@@ -279,12 +283,52 @@ public sealed class VerjaardagenForm : Form
         gegevenGroup.Controls.Add(gegevenKnop);
         gegevenGroup.Accent = Theme.KlantLauryssens;
 
+        // Het verlanglijstje zelf, ter info naast de geschiedenis: dit wordt al gekocht,
+        // de ideeën hierboven moeten er juist naast liggen.
+        _lijstjeItems = new ModernListView
+        {
+            Dock = DockStyle.Fill,
+            LegeTekst = "Geen verlanglijstje gekoppeld (veld \"Lijstje\" hierboven).",
+            LeegGlyph = "📝",
+        };
+        _lijstjeItems.Columns.Add("Item", 360);
+        _lijstjeItems.DoubleClick += (_, _) =>
+        {
+            if (_huidig?.Verlanglijst is { Length: > 0 } url &&
+                url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                }
+                catch
+                {
+                    // Browser niet te starten: dan niet.
+                }
+            }
+        };
+        var lijstjeGroup = new ModernGroupBox
+        {
+            Text = "Op het verlanglijstje (wordt al gekocht — dubbelklik opent de lijst)",
+            Dock = DockStyle.Fill, Padding = new Padding(10, 8, 10, 10),
+        };
+        lijstjeGroup.Controls.Add(_lijstjeItems);
+        lijstjeGroup.Accent = Theme.KlantPrive;
+
+        var onderSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 300,
+        };
+        onderSplit.Panel1.Controls.Add(gegevenGroup);
+        onderSplit.Panel2.Controls.Add(lijstjeGroup);
+
         var rechtsSplit = new SplitContainer
         {
             Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 260,
         };
         rechtsSplit.Panel1.Controls.Add(ideeGroup);
-        rechtsSplit.Panel2.Controls.Add(gegevenGroup);
+        rechtsSplit.Panel2.Controls.Add(onderSplit);
 
         var rechts = new Panel { Dock = DockStyle.Fill };
         rechts.Controls.Add(rechtsSplit);
@@ -316,6 +360,7 @@ public sealed class VerjaardagenForm : Form
         {
             split.SplitterDistance = 400;
             rechtsSplit.SplitterDistance = Math.Max(200, (int)(rechtsSplit.ClientSize.Height * 0.55));
+            onderSplit.SplitterDistance = Math.Max(220, onderSplit.ClientSize.Width / 2);
         };
         FormClosing += (_, _) => _cts.Cancel();
         VulLijst();
@@ -390,6 +435,8 @@ public sealed class VerjaardagenForm : Form
             {
                 _ideeen.Items.Add(new ListViewItem(idee));
             }
+            _ = VulLijstjeAsync(_huidig); // het online lijstje mag rustig nakomen
+
             _gegeven.Items.Clear();
             foreach (var cadeau in (_huidig?.Gegeven ?? new List<GegevenCadeau>())
                      .OrderByDescending(g => g.Jaar))
@@ -421,6 +468,10 @@ public sealed class VerjaardagenForm : Form
         if (_gegeven.Columns.Count > 1)
         {
             _gegeven.Columns[1].Width = Math.Max(200, _gegeven.ClientSize.Width - 70);
+        }
+        if (_lijstjeItems is { Columns.Count: > 0 })
+        {
+            _lijstjeItems.Columns[0].Width = Math.Max(200, _lijstjeItems.ClientSize.Width - 4);
         }
     }
 
@@ -469,6 +520,56 @@ public sealed class VerjaardagenForm : Form
     }
 
     // ---------------------------------------------------------------- ideeën
+
+    /// <summary>
+    /// Toont het online verlanglijstje van de geselecteerde jarige (best effort, met
+    /// cache per URL). Wisselt de selectie tijdens het ophalen, dan wint de laatste.
+    /// </summary>
+    private async Task VulLijstjeAsync(Jarige? jarige)
+    {
+        var versie = ++_lijstjeVersie;
+        _lijstjeItems.Items.Clear();
+        _lijstjeItems.LegeTekst = "Geen verlanglijstje gekoppeld (veld \"Lijstje\" hierboven).";
+        var url = jarige?.Verlanglijst.Trim() ?? "";
+        if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        List<string>? items;
+        lock (LijstjeCache)
+        {
+            LijstjeCache.TryGetValue(url, out items);
+        }
+        if (items is null)
+        {
+            _lijstjeItems.LegeTekst = "Lijstje ophalen…";
+            try
+            {
+                items = await Verjaardagen.VerlanglijstItemsAsync(url, _cts.Token);
+            }
+            catch
+            {
+                if (versie == _lijstjeVersie && !IsDisposed)
+                {
+                    _lijstjeItems.LegeTekst = "Lijstje niet op te halen (site onbereikbaar?).";
+                }
+                return;
+            }
+            lock (LijstjeCache)
+            {
+                LijstjeCache[url] = items;
+            }
+        }
+        if (versie != _lijstjeVersie || IsDisposed)
+        {
+            return;
+        }
+        _lijstjeItems.LegeTekst = "Het lijstje is (nog) leeg.";
+        foreach (var item in items)
+        {
+            _lijstjeItems.Items.Add(new ListViewItem(item));
+        }
+    }
 
     /// <summary>Haalt alle geselecteerde ideeën weg (knop, Delete-toets en contextmenu).</summary>
     private void VerwijderGeselecteerdeIdeeen()
