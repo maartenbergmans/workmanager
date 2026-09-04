@@ -102,6 +102,7 @@ public class CockpitForm : Form
     private readonly ModernButton _verstuurButton;
     private readonly ModernButton _uitschrijfButton;
     private readonly ModernButton _openButton;
+    private readonly ModernButton _cadeauButton;
     private readonly ModernButton _outlookLeesButton;
     private ModernButton _vertaalButton = null!;
     private readonly ModernButton _teamsKoppelButton;
@@ -1567,6 +1568,13 @@ public class CockpitForm : Form
             Text = "Openen in browser", Width = 165, Dock = DockStyle.Left, Visible = false,
         };
         _openButton.Click += (_, _) => OpenBerichtInBrowser();
+        // Echte WinForms-knop voor cadeauradartaken: de link in het detailpaneel bleek
+        // onbetrouwbaar (WebView-navigatie komt niet altijd door), een knop faalt nooit.
+        _cadeauButton = new ModernButton
+        {
+            Text = "🎁 Cadeau-ideeën", Width = 150, Dock = DockStyle.Left, Visible = false,
+        };
+        _cadeauButton.Click += (_, _) => new VerjaardagenForm().Show(this);
         _outlookLeesButton = new ModernButton
         {
             Text = "Volledige mail ophalen", Width = 175, Dock = DockStyle.Left, Visible = false,
@@ -1613,8 +1621,8 @@ public class CockpitForm : Form
         };
         foreach (var knop in new Control[]
         {
-            _claudeButton, _openButton, _outlookLeesButton, _vertaalButton, _uitschrijfButton,
-            archiefKnop, kopieerKnop, archiveerKnop, _verstuurButton,
+            _claudeButton, _openButton, _cadeauButton, _outlookLeesButton, _vertaalButton,
+            _uitschrijfButton, archiefKnop, kopieerKnop, archiveerKnop, _verstuurButton,
         })
         {
             knop.Dock = DockStyle.None;
@@ -2516,6 +2524,17 @@ public class CockpitForm : Form
             };
             core.NavigationStarting += async (_, e) =>
             {
+                // Diagnose: welke kliks/navigaties komen hier echt aan? (Custom wm-schema's
+                // bleken Chromium soms stilletjes te blokkeren — zie de cadeauknop-saga.)
+                try
+                {
+                    File.AppendAllText(Path.Combine(DataDir, "detail-nav-debug.txt"),
+                        $"{DateTime.Now:HH:mm:ss} {e.Uri}\r\n");
+                }
+                catch
+                {
+                    // Alleen diagnose.
+                }
                 if (e.Uri.StartsWith("wm-bijlage:", StringComparison.OrdinalIgnoreCase))
                 {
                     e.Cancel = true;
@@ -4273,6 +4292,7 @@ public class CockpitForm : Form
         }
         _uitschrijfButton.Visible = _getoond is { UitschrijfUrl.Length: > 0 };
         _openButton.Visible = _getoond is not null;
+        _cadeauButton.Visible = false; // alleen bij een taak van de cadeauradar
         _outlookLeesButton.Visible = _getoond is { OutlookMail.Length: > 0 };
         _vertaalButton.Visible = _getoond is { Tekst.Length: > 3 };
         _vertaalButton.Text = _getoond is { Vertaling.Length: > 0, VertaalVerborgen: false }
@@ -6034,18 +6054,19 @@ public class CockpitForm : Form
             ChatSpace = mail.ChatSpace,
             WhatsAppChat = mail.WhatsAppChat,
         };
-        // Een taak van de cadeauradar krijgt een échte knop in het detailpaneel: de hint
-        // "dubbelklik op deze taak" leidde tot dubbelklikken in dit paneel, en daar
-        // selecteert een dubbelklik alleen maar tekst (de lijstrij ernaast werkt wél).
+        // Een taak van de cadeauradar krijgt een échte knop naast het antwoordvak
+        // (_cadeauButton): de hint "dubbelklik op deze taak" leidde tot dubbelklikken in
+        // dit paneel (dat selecteert alleen tekst), en een link in de HTML bleek Chromium
+        // stilletjes te blokkeren. De weergave verwijst nu alleen nog naar die knop.
         if (Verjaardagen.IsRadarTaak(lokaal.Tekst))
         {
             bericht.Html =
                 "<pre style=\"white-space:pre-wrap;font-family:inherit;font-size:13px;margin:0\">" +
                 System.Net.WebUtility.HtmlEncode(bericht.Tekst) + "</pre>" +
-                "<div style=\"margin-top:16px\"><a href=\"https://wm-actie/verjaardag\" " +
-                "style=\"display:inline-block;padding:8px 16px;background:#1a56c4;color:#ffffff;" +
-                "border-radius:8px;text-decoration:none;font-size:13px;font-weight:600\">" +
-                "🎁 Cadeau-ideeën openen</a></div>";
+                "<div style=\"margin-top:16px;padding:10px 14px;background:#eef4ff;" +
+                "border:1px solid #d3e0f7;border-radius:10px;font-size:13px;color:#1f1f1f\">" +
+                "🎁 Klik op de knop <b>Cadeau-ideeën</b> hieronder (naast het antwoordvak) " +
+                "voor ideeën, de cadeaugeschiedenis en het budget.</div>";
         }
         _berichten.SelectedItems.Clear();
         _getoond = bericht;
@@ -6062,6 +6083,7 @@ public class CockpitForm : Form
         _detailFeedback.Clear();
         _verstuurButton.Enabled = beantwoordbaar;
         _openButton.Visible = mail.Link.Length > 0;
+        _cadeauButton.Visible = Verjaardagen.IsRadarTaak(lokaal.Tekst);
         _uitschrijfButton.Visible = false;
         _outlookLeesButton.Visible = false;
         WerkAntwoordblokBij();
@@ -6141,6 +6163,7 @@ public class CockpitForm : Form
             _detailFeedback.Clear();
             _verstuurButton.Enabled = true;
             _openButton.Visible = true;
+            _cadeauButton.Visible = false;
             _uitschrijfButton.Visible = false;
             _outlookLeesButton.Visible = false;
             WerkAntwoordblokBij();
