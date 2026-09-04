@@ -162,49 +162,64 @@ public static class ActiviteitenLog
         DateOnly dag, List<AgendaClient.AgendaItem> meetings, CancellationToken ct)
     {
         var bestaand = TimesheetStore.Load().Where(r => r.Datum == dag && r.Minuten > 0).ToList();
-        // Verzonden mails zijn een hard signaal (elke mail = minstens een kwartier), maar
-        // het voorstel moet ook zonder Gmail-verbinding blijven werken.
-        var verzonden = new List<string>();
-        try
+
+        // De drie externe ophalers (Gmail-IMAP, OWA-scrape, Teams-scrape) kunnen elk
+        // tientallen seconden duren; in serie liep dat op tot minuten wachten vóór de
+        // Claude-run überhaupt begon. Ze starten daarom tegelijk (géén Task.Run: de
+        // WebView2-clients zijn thread-gebonden en interleaven prima via async op de
+        // UI-thread). Elke ophaler vangt zijn eigen fouten: het voorstel moet ook zonder
+        // die bron blijven werken.
+        async Task<List<string>> GmailVerzondenAsync()
         {
-            var mailSettings = MailReplySettings.Load();
-            if (mailSettings.AppWachtwoord.Length > 0)
+            try
             {
-                verzonden = (await GmailClient.VerzondenVanDagAsync(mailSettings, dag, ct))
-                    .Select(r => $"{r} [Gmail]").ToList();
+                var mailSettings = MailReplySettings.Load();
+                return mailSettings.AppWachtwoord.Length > 0
+                    ? (await GmailClient.VerzondenVanDagAsync(mailSettings, dag, ct))
+                        .Select(r => $"{r} [Gmail]").ToList()
+                    : new List<string>();
+            }
+            catch
+            {
+                return new List<string>(); // dan zonder maillijst
             }
         }
-        catch
+        // CED-Outlook: mails die dáár verstuurd zijn, ziet Gmail niet.
+        async Task<List<string>> OutlookVerzondenAsync()
         {
-            // Dan zonder maillijst.
-        }
-        // Zelfde verhaal voor CED-Outlook: mails die dáár verstuurd zijn, ziet Gmail niet.
-        try
-        {
-            if (OutlookClient.OoitGekoppeld)
+            try
             {
-                verzonden.AddRange((await OutlookClient.Instance.VerzondenVanDagAsync(dag, ct))
-                    .Select(r => $"{r} [CED-Outlook]"));
+                return OutlookClient.OoitGekoppeld
+                    ? (await OutlookClient.Instance.VerzondenVanDagAsync(dag, ct))
+                        .Select(r => $"{r} [CED-Outlook]").ToList()
+                    : new List<string>();
             }
-        }
-        catch
-        {
-            // Outlook niet aangemeld (dagelijkse MFA) of OWA hapert: dan zonder.
+            catch
+            {
+                return new List<string>(); // niet aangemeld (MFA) of OWA hapert
+            }
         }
         // Teams toont alleen het laatste bericht per chat, en alleen vandaag is uit de
         // chatlijst af te lezen — voor een eerdere dag valt dit signaal gewoon weg.
-        var teamsChats = new List<string>();
-        try
+        async Task<List<string>> TeamsChatsAsync()
         {
-            if (TeamsClient.OoitGekoppeld && dag == DateOnly.FromDateTime(DateTime.Now))
+            try
             {
-                teamsChats = await TeamsClient.Instance.MijnChatsVanVandaagAsync(ct);
+                return TeamsClient.OoitGekoppeld && dag == DateOnly.FromDateTime(DateTime.Now)
+                    ? await TeamsClient.Instance.MijnChatsVanVandaagAsync(ct)
+                    : new List<string>();
+            }
+            catch
+            {
+                return new List<string>(); // niet ingelogd of DOM gewijzigd
             }
         }
-        catch
-        {
-            // Teams niet ingelogd of DOM gewijzigd: dan zonder.
-        }
+        var gmailTaak = GmailVerzondenAsync();
+        var outlookTaak = OutlookVerzondenAsync();
+        var teamsTaak = TeamsChatsAsync();
+        await Task.WhenAll(gmailTaak, outlookTaak, teamsTaak);
+        var verzonden = gmailTaak.Result.Concat(outlookTaak.Result).ToList();
+        var teamsChats = teamsTaak.Result;
         var prompt = $$"""
             Je zet de werkdag van Maarten (freelance IT'er, UrbanIT) om in timesheetregels.
 
