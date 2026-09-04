@@ -17,6 +17,7 @@ public sealed class VerjaardagenForm : Form
     private readonly TextBox _relatie;
     private readonly NumericUpDown _budget;
     private readonly NumericUpDown _dagenVooraf;
+    private readonly TextBox _verlanglijst;
     private readonly TextBox _notities;
     private readonly ModernListView _ideeen;
     private readonly ModernListView _gegeven;
@@ -121,6 +122,34 @@ public sealed class VerjaardagenForm : Form
             Text = "dagen vooraf", AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(6, 6, 0, 0),
         });
 
+        // Het online verlanglijstje (mijnverlanglijst.eu): de items gaan als inspiratie
+        // mee naar Claude bij "Ideeën vragen".
+        _verlanglijst = new TextBox
+        {
+            Dock = DockStyle.Fill, PlaceholderText = "https://www.mijnverlanglijst.eu/v/…",
+        };
+        _verlanglijst.TextChanged += (_, _) => Bewaar(j => j.Verlanglijst = _verlanglijst.Text.Trim());
+        var lijstOpenKnop = new ModernButton { Text = "Openen", Width = 90, Dock = DockStyle.Right };
+        lijstOpenKnop.Click += (_, _) =>
+        {
+            if (_verlanglijst.Text.Trim() is { Length: > 0 } url &&
+                url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                }
+                catch
+                {
+                    Toast.Toon(this, "Link openen mislukte", Fluent.Globe);
+                }
+            }
+        };
+        var lijstRij = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+        lijstRij.Controls.Add(_verlanglijst);
+        lijstRij.Controls.Add(lijstOpenKnop);
+
         _notities = new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical,
@@ -137,12 +166,17 @@ public sealed class VerjaardagenForm : Form
         fiche.Controls.Add(datumRij, 1, 1);
         fiche.Controls.Add(Lbl("Budget"), 2, 1);
         fiche.Controls.Add(budgetRij, 3, 1);
-        fiche.Controls.Add(Lbl("Notities"), 0, 2);
-        fiche.Controls.Add(_notities, 1, 2);
+        fiche.Controls.Add(Lbl("Lijstje"), 0, 2);
+        fiche.Controls.Add(lijstRij, 1, 2);
+        fiche.SetColumnSpan(lijstRij, 3);
+        fiche.Controls.Add(Lbl("Notities"), 0, 3);
+        fiche.Controls.Add(_notities, 1, 3);
         fiche.SetColumnSpan(_notities, 3);
         fiche.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         fiche.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        fiche.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         fiche.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        fiche.Height += 34; // extra rij voor het lijstje
 
         // Ideeën
         _ideeen = new ModernListView
@@ -330,7 +364,7 @@ public sealed class VerjaardagenForm : Form
         {
             var aan = _huidig is not null;
             foreach (Control c in new Control[]
-                     { _naam, _relatie, _notities, _dag, _maand, _jaar, _budget, _dagenVooraf })
+                     { _naam, _relatie, _notities, _dag, _maand, _jaar, _budget, _dagenVooraf, _verlanglijst })
             {
                 c.Enabled = aan;
             }
@@ -338,6 +372,7 @@ public sealed class VerjaardagenForm : Form
             _naam.Text = _huidig?.Naam ?? "";
             _relatie.Text = _huidig?.Relatie ?? "";
             _notities.Text = _huidig?.Notities ?? "";
+            _verlanglijst.Text = _huidig?.Verlanglijst ?? "";
             _dag.Value = Math.Clamp(_huidig?.Dag ?? 1, 1, 31);
             _maand.SelectedIndex = Math.Clamp((_huidig?.Maand ?? 1) - 1, 0, 11);
             _jaar.Value = Math.Clamp(_huidig?.Jaar ?? 0, 0, 2100);
