@@ -1422,14 +1422,18 @@ public class MailReplyForm : Form
                  box-shadow:0 6px 28px rgba(0,0,0,{(Theme.Palet.Donker ? ".5" : ".14")})">
             <div style="padding:12px 16px;background:#f6f8fc;border-bottom:1px solid #e0e0e0;font-size:13px">
               <div style="font-size:16px;font-weight:600;color:#1f1f1f;margin-bottom:6px">{WebUtility.HtmlEncode(mail.Onderwerp)}</div>
-              <div><b>{WebUtility.HtmlEncode(mail.Van)}</b> <span style="color:#5f6368">&lt;{WebUtility.HtmlEncode(mail.VanAdres)}&gt;</span></div>
+            {(mail.Van.Length == 0 && mail.VanAdres.Length == 0
+                ? "" // taak zonder bronbericht: geen afzender, dus ook geen lege "<>"-regel
+                : $"<div><b>{WebUtility.HtmlEncode(mail.Van)}</b> <span style=\"color:#5f6368\">&lt;{WebUtility.HtmlEncode(mail.VanAdres)}&gt;</span></div>")}
             {(mail.Aan.Count > 1
                 ? $"<div style=\"color:#5f6368\">Aan: {WebUtility.HtmlEncode(string.Join("; ", mail.Aan))}</div>"
                 : "")}
             {(mail.Cc.Count > 0
                 ? $"<div style=\"color:#5f6368\">Cc: {WebUtility.HtmlEncode(string.Join("; ", mail.Cc))}</div>"
                 : "")}
-              <div style="color:#5f6368">{mail.Datum.ToLocalTime():dddd d MMMM yyyy 'om' HH:mm}</div>
+            {(mail.Datum == default
+                ? "" // taak zonder bronbericht: "maandag 1 januari 0001" is alleen maar raar
+                : $"<div style=\"color:#5f6368\">{mail.Datum.ToLocalTime():dddd d MMMM yyyy 'om' HH:mm}</div>")}
             {(mail.Bijlagen.Count + mail.LinkBijlagen.Count > 0
                 ? "<div style=\"margin-top:7px\">" + string.Join("", mail.Bijlagen
                     .Select((n, i) => $"<a href=\"wm-bijlage:{i}\" style=\"{ChipStijl}\">📎 " +

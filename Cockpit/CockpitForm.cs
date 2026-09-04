@@ -2548,6 +2548,12 @@ public class CockpitForm : Form
                         terugCore.NavigateToString(MailReplyForm.BouwWeergave(ccLijst));
                     }
                 }
+                else if (e.Uri.StartsWith("wm-verjaardag:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // De knop "Cadeau-ideeën openen" bij een taak van de cadeauradar.
+                    e.Cancel = true;
+                    new VerjaardagenForm().Show(this);
+                }
                 else if (e.Uri.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                 {
                     e.Cancel = true;
@@ -6013,7 +6019,11 @@ public class CockpitForm : Form
             Onderwerp = mail.Onderwerp, // bewust zonder 📌: het antwoord wordt "Re: <onderwerp>"
             Tekst = mail.Tekst +
                 (mail.Link.Length > 0 ? $"\n\nBron: {mail.Link}" : "") +
-                (beantwoordbaar ? "" : "\n\n(Beantwoorden kan niet: deze taak is met een " +
+                // De "oudere versie"-uitleg slaat alleen op taken die echt uit een mail
+                // kwamen; bij radartaken (verjaardagen, vaste taken) zonder afzender is
+                // hij pure ruis.
+                (beantwoordbaar || mail.Van.Length == 0 ? "" :
+                    "\n\n(Beantwoorden kan niet: deze taak is met een " +
                     "oudere versie gemaakt — maak hem opnieuw vanuit de mail.)"),
             Datum = mail.Datum,
             MessageId = mail.MessageId,
@@ -6021,6 +6031,19 @@ public class CockpitForm : Form
             ChatSpace = mail.ChatSpace,
             WhatsAppChat = mail.WhatsAppChat,
         };
+        // Een taak van de cadeauradar krijgt een échte knop in het detailpaneel: de hint
+        // "dubbelklik op deze taak" leidde tot dubbelklikken in dit paneel, en daar
+        // selecteert een dubbelklik alleen maar tekst (de lijstrij ernaast werkt wél).
+        if (Verjaardagen.IsRadarTaak(lokaal.Tekst))
+        {
+            bericht.Html =
+                "<pre style=\"white-space:pre-wrap;font-family:inherit;font-size:13px;margin:0\">" +
+                System.Net.WebUtility.HtmlEncode(bericht.Tekst) + "</pre>" +
+                "<div style=\"margin-top:16px\"><a href=\"wm-verjaardag:\" " +
+                "style=\"display:inline-block;padding:8px 16px;background:#1a56c4;color:#ffffff;" +
+                "border-radius:8px;text-decoration:none;font-size:13px;font-weight:600\">" +
+                "🎁 Cadeau-ideeën openen</a></div>";
+        }
         _berichten.SelectedItems.Clear();
         _getoond = bericht;
         _detailLosVanLijst = true;

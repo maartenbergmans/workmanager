@@ -143,7 +143,8 @@ public static class Verjaardagen
                     gewijzigd |= VoegToe(data, taken, jarige, dag, "bedenk",
                         $"{BedenkPrefix} voor {jarige.Naam} ({dag:d MMM}{leeftijd})",
                         dag.AddDays(-7),
-                        $"Over {dagen} dagen jarig. Dubbelklik op deze taak voor cadeau-ideeën.");
+                        $"Over {dagen} dagen jarig. Dubbelklik op deze taak in de takenlijst " +
+                        "(of klik hieronder op de knop) voor cadeau-ideeën.");
                 }
                 // 2) Kopen: de laatste vijf dagen, met de verjaardag als deadline.
                 if (dagen is <= 5 and >= 0)
