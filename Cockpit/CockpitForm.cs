@@ -3266,6 +3266,16 @@ public class CockpitForm : Form
                     berichten.AddRange(vorigeCache.Where(m => m.TeamsChat.Length > 0));
                     ongelezen = new List<TeamsClient.TeamsBericht>();
                 }
+                if (totaal >= 10)
+                {
+                    // Zelf al geantwoord: de zijbalkpreview wordt live bijgewerkt, maar de
+                    // ongelezen-filter van de verborgen sessie ziet een elders gelezen chat
+                    // pas na de volgende herlaadbeurt (tot ±5-8 min later). Een chat waarvan
+                    // het laatste bericht van Maarten zelf is, is afgehandeld en hoeft die
+                    // herlaadbeurt niet af te wachten.
+                    ongelezen.RemoveAll(t => BeantwoordInTeams(
+                        teamsPreviews.TryGetValue(t.Naam, out var p) ? p : t.Preview));
+                }
                 var teamsRijen = ongelezen.Select(t => new MailBericht
                 {
                     // Zelfde werking als Google Chat: sleutel = naam + laatste preview, dus
@@ -3297,6 +3307,7 @@ public class CockpitForm : Form
                 // (totaal >= 10): een half gerenderde lijst heeft geen betrouwbare previews.
                 static bool BeantwoordInTeams(string preview) =>
                     preview.StartsWith("U:", StringComparison.Ordinal) ||
+                    preview.StartsWith("Jij:", StringComparison.OrdinalIgnoreCase) ||
                     preview.StartsWith("You:", StringComparison.OrdinalIgnoreCase) ||
                     preview.StartsWith("Vous", StringComparison.OrdinalIgnoreCase);
                 if (totaal >= 10)
