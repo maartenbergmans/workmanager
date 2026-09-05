@@ -178,6 +178,7 @@ public class TrayAppContext : ApplicationContext
             TeamVakantieCheck.ProbeerOpDonderdag(); // do: teamvakanties op de achtergrond ophalen
             DownloadsCleaner.ZorgVoorMaandelijks(); // 1×/maand Downloads > 1 week naar prullenbak
             _ = UpdateCheck.ZorgVoorAsync(CancellationToken.None); // PhpStorm/Claude-updates als taak
+            _ = GitPullTaken.ZorgVoorAsync(CancellationToken.None); // 1×/dag: main achter op remote → pull voorstellen
             _ = CheckAhBonusAsync(); // 1×/week: vaste AH-producten in de Bonus melden
             Verjaardagen.ZorgVoorTaken(); // cadeau bedenken/kopen + feliciteren (eigen lijst)
             _ = VerjaardagRadar.ZorgVoorAsync(CancellationToken.None); // 🎂-taak uit de agenda

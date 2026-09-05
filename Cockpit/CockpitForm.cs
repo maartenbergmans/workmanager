@@ -1865,6 +1865,20 @@ public class CockpitForm : Form
                 }
                 return;
             }
+            // De pulltaak werkt de achterlopende projecten meteen bij (alleen fast-forward).
+            if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij pullRij &&
+                pullRij.Tekst.StartsWith(GitPullTaken.TaakPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                Toast.Toon(this, "Git pull gestart…", Fluent.Sync);
+                var (allesKlaar, melding) = await GitPullTaken.PullAsync(pullRij.Tekst, _cts.Token);
+                if (allesKlaar)
+                {
+                    UpdateCheck.VinkTaakAf(GitPullTaken.TaakPrefix);
+                    await VerversTakenAsync();
+                }
+                Toast.Toon(this, melding, Fluent.Sync);
+                return;
+            }
             // De automatische opruimtaak opent de bureaubladcleaner.
             if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij bureaubladRij &&
                 bureaubladRij.Tekst.StartsWith(VasteTaken.BureaubladTaak, StringComparison.OrdinalIgnoreCase))
