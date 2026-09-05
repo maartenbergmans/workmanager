@@ -340,6 +340,26 @@ public class TrayAppContext : ApplicationContext
         {
             var item = new ToolStripMenuItem(name) { Tag = name, Image = MaakKleurStip(color) };
             item.Click += (_, _) => ToggleClient(name);
+            if (name == "CED")
+            {
+                // Onder CED: de verborgen Outlook- en Teams-sessies starten, de
+                // aanmeldstatus zien en zo nodig meteen aanmelden (dagelijkse MFA).
+                var outlookSessie = new ToolStripMenuItem();
+                outlookSessie.Click += async (_, _) => await StartOfMeldAanAsync("Outlook");
+                var teamsSessie = new ToolStripMenuItem();
+                teamsSessie.Click += async (_, _) => await StartOfMeldAanAsync("Teams");
+                item.DropDownItems.Add(outlookSessie);
+                item.DropDownItems.Add(teamsSessie);
+                item.DropDownOpening += (_, _) =>
+                {
+                    // De vlaggen zijn de laatst bekende stand (bijgewerkt bij elke poll);
+                    // de klik controleert het écht en meldt zo nodig aan.
+                    outlookSessie.Text = SessieMenuTekst(
+                        "Outlook", OutlookClient.OoitGekoppeld, OutlookClient.Aangemeld);
+                    teamsSessie.Text = SessieMenuTekst(
+                        "Teams", TeamsClient.OoitGekoppeld, TeamsClient.Aangemeld);
+                };
+            }
             menu.Items.Add(item);
         }
 
@@ -480,6 +500,47 @@ public class TrayAppContext : ApplicationContext
         };
 
         return menu;
+    }
+
+    /// <summary>Menutekst met de laatst bekende sessiestatus (CED-submenu).</summary>
+    private static string SessieMenuTekst(string wat, bool ooitGekoppeld, bool aangemeld) =>
+        !ooitGekoppeld ? $"{wat} starten (nog nooit gekoppeld)…"
+        : aangemeld ? $"{wat} · ✅ aangemeld"
+        : $"{wat} starten / aanmelden… 🟠";
+
+    /// <summary>
+    /// CED-submenu: start de verborgen sessie, controleer écht of hij aangemeld is en open
+    /// zo nodig meteen het aanmeldvenster (met CED-autofill; alleen MFA blijft handwerk).
+    /// </summary>
+    private static async Task StartOfMeldAanAsync(string wat)
+    {
+        try
+        {
+            TrayMelding.Toon($"{wat} (CED)", "Sessie starten en controleren…", duurMs: 5000);
+            var aangemeld = wat == "Outlook"
+                ? await OutlookClient.Instance.StartAsync(CancellationToken.None)
+                : await TeamsClient.Instance.StartAsync(CancellationToken.None);
+            if (aangemeld)
+            {
+                TrayMelding.Toon($"{wat} (CED)", "✅ Aangemeld — de sessie draait");
+                return;
+            }
+            TrayMelding.Toon($"{wat} (CED)",
+                "🟠 Niet aangemeld — het aanmeldvenster opent (MFA op je telefoon)");
+            if (wat == "Outlook")
+            {
+                await OutlookClient.Instance.KoppelAsync(CancellationToken.None);
+            }
+            else
+            {
+                await TeamsClient.Instance.KoppelAsync(CancellationToken.None);
+            }
+            TrayMelding.Toon($"{wat} (CED)", "✅ Aangemeld — de sessie draait");
+        }
+        catch (Exception ex)
+        {
+            TrayMelding.Toon($"{wat} (CED)", $"Aanmelden niet gelukt: {ex.Message}");
+        }
     }
 
     /// <summary>Rond kleurstipje als menu-icoon voor een klantcontext.</summary>
