@@ -28,9 +28,13 @@ public class AgendaSettings
 
     public string UrlsVersleuteld { get; set; } = "";
     public string HilkeUrlsVersleuteld { get; set; } = "";
+    public string KidsUrlsVersleuteld { get; set; } = "";
 
     /// <summary>Hilkes afspraken in de cockpit tonen (de knop in het meetingpaneel togglet dit).</summary>
     public bool HilkeTonen { get; set; } = true;
+
+    /// <summary>De "Lisa - Emilia"-agenda in de cockpit tonen (eigen knop in het meetingpaneel).</summary>
+    public bool KidsTonen { get; set; } = true;
 
     [JsonIgnore]
     public List<string> Urls
@@ -55,6 +59,19 @@ public class AgendaSettings
                         r.StartsWith("caldav:", StringComparison.OrdinalIgnoreCase))
             .ToList();
         set => HilkeUrlsVersleuteld = Encrypt(string.Join("\n", value));
+    }
+
+    /// <summary>De gedeelde "Lisa - Emilia"-agenda (kinderen): apart getoond, net als Hilke.</summary>
+    [JsonIgnore]
+    public List<string> KidsUrls
+    {
+        get => Decrypt(KidsUrlsVersleuteld)
+            .Split('\n')
+            .Select(r => r.Trim())
+            .Where(r => r.StartsWith("http", StringComparison.OrdinalIgnoreCase) ||
+                        r.StartsWith("caldav:", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        set => KidsUrlsVersleuteld = Encrypt(string.Join("\n", value));
     }
 
     [JsonIgnore]

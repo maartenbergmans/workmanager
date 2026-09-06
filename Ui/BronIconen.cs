@@ -96,6 +96,7 @@ public static class BronIconen
         var (letter, kleur) = sleutel switch
         {
             "hilke" => ("H", Theme.Mix(Theme.Bg, Theme.Muted, 0.75f)),
+            "kids" => ("LE", Theme.Mix(Theme.Bg, Theme.Muted, 0.75f)),
             _ => ("•", Theme.Mix(Theme.Bg, Theme.Muted, 0.6f)),
         };
         var bmp = new Bitmap(18, 18);

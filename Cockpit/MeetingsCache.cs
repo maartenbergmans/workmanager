@@ -25,6 +25,7 @@ public static class MeetingsCache
     {
         public List<AgendaClient.AgendaItem> Eigen { get; set; } = new();
         public List<AgendaClient.AgendaItem> Hilke { get; set; } = new();
+        public List<AgendaClient.AgendaItem> Kids { get; set; } = new();
         /// <summary>CED-afspraken per dag (sleutel: yyyy-MM-dd).</summary>
         public Dictionary<string, List<AgendaClient.AgendaItem>> Ced { get; set; } = new();
         public DateOnly Tot { get; set; }
@@ -52,6 +53,7 @@ public static class MeetingsCache
 
     public static void Save(
         List<AgendaClient.AgendaItem> eigen, List<AgendaClient.AgendaItem> hilke,
+        List<AgendaClient.AgendaItem> kids,
         IEnumerable<KeyValuePair<DateOnly, List<AgendaClient.AgendaItem>>> ced, DateOnly tot)
     {
         try
@@ -60,6 +62,7 @@ public static class MeetingsCache
             {
                 Eigen = eigen,
                 Hilke = hilke,
+                Kids = kids,
                 Ced = ced.ToDictionary(kv => kv.Key.ToString("yyyy-MM-dd"), kv => kv.Value),
                 Tot = tot,
                 Bewaard = DateTimeOffset.Now,

@@ -48,6 +48,7 @@ public class CockpitForm : Form
     // de 5-min-poll en "Nu verversen" halen wél altijd vers op.
     private List<AgendaClient.AgendaItem> _agendaEigen = new();
     private List<AgendaClient.AgendaItem> _agendaHilke = new();
+    private List<AgendaClient.AgendaItem> _agendaKids = new();
     private DateTimeOffset _agendaGeladen = DateTimeOffset.MinValue;
     private DateOnly _agendaTot = DateOnly.MinValue;
 
@@ -2270,7 +2271,8 @@ public class CockpitForm : Form
             }
             var titel = meeting.Titel
                 .Replace("CED · ", "", StringComparison.Ordinal)
-                .Replace("Hilke · ", "", StringComparison.Ordinal);
+                .Replace("Hilke · ", "", StringComparison.Ordinal)
+                .Replace("Lisa & Emilia · ", "", StringComparison.Ordinal);
             await MaakTimesheetAsync(
                 _meetings.SelectedItems[0].Name == "outlook" ? "CED" : null,
                 DateOnly.FromDateTime(meeting.Start.LocalDateTime),
@@ -2346,6 +2348,20 @@ public class CockpitForm : Form
             hilkeKnop.Text = agenda.HilkeTonen ? "Hilke ✓" : "Hilke";
             await VerversMeetingsAsync(forceer: false);
         };
+        // De "Lisa - Emilia"-agenda (kinderen) aan/uit, zelfde patroon als Hilke.
+        var kidsKnop = new ModernButton
+        {
+            Text = AgendaSettings.Load().KidsTonen ? "Lisa & Emilia ✓" : "Lisa & Emilia",
+            Width = 135, Dock = DockStyle.Right,
+        };
+        kidsKnop.Click += async (_, _) =>
+        {
+            var agenda = AgendaSettings.Load();
+            agenda.KidsTonen = !agenda.KidsTonen;
+            agenda.Save();
+            kidsKnop.Text = agenda.KidsTonen ? "Lisa & Emilia ✓" : "Lisa & Emilia";
+            await VerversMeetingsAsync(forceer: false);
+        };
         // Weersvoorspelling voor de getoonde dag: op dezelfde regel als de dag-navigatie,
         // in de ruimte tussen "Vandaag ◀ ▶" en de knoppen rechts. Een eigen regel eronder
         // kostte hoogte die de meetinglijst beter kan gebruiken.
@@ -2366,6 +2382,8 @@ public class CockpitForm : Form
         morgenPanel.Controls.Add(voorbijeKnop);
         morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 8 });
         morgenPanel.Controls.Add(hilkeKnop);
+        morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 4 });
+        morgenPanel.Controls.Add(kidsKnop);
         morgenPanel.Controls.Add(volgendeDag);
         morgenPanel.Controls.Add(vorigeDag);
         morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Left, Width = 8 });
@@ -8230,9 +8248,10 @@ public class CockpitForm : Form
     /// <summary>De meetings die nu in de lijst staan (voor de dagplanning).</summary>
     private List<AgendaClient.AgendaItem> HuidigeMeetings() =>
         _meetings.Items.Cast<ListViewItem>()
-            // Hilkes afspraken staan er ter info bij, maar zijn niet Maartens agenda: ze horen
-            // niet in de dagplanning en de reisassistent hoeft er niet voor te rekenen.
-            .Where(i => i.Name != "hilke")
+            // De afspraken van Hilke en de kinderen staan er ter info bij, maar zijn niet
+            // Maartens agenda: ze horen niet in de dagplanning en de reisassistent hoeft er
+            // niet voor te rekenen.
+            .Where(i => i.Name is not ("hilke" or "kids"))
             .Select(i => i.Tag).OfType<AgendaClient.AgendaItem>().ToList();
 
     /// <summary>
@@ -8950,6 +8969,17 @@ public class CockpitForm : Form
                         // Hilkes agenda even niet bereikbaar; eigen agenda gewoon tonen.
                     }
                 }
+                if (agenda.KidsUrls.Count > 0)
+                {
+                    try
+                    {
+                        _agendaKids = await AgendaClient.OphalenAsync(agenda.KidsUrls, vandaag, tot, _cts.Token);
+                    }
+                    catch
+                    {
+                        // Kinderagenda even niet bereikbaar; de rest gewoon tonen.
+                    }
+                }
                 _agendaGeladen = DateTimeOffset.Now;
                 _agendaTot = tot;
                 // De CED-cache niet leegmaken: verlopen dagen halen zichzelf hieronder
@@ -8977,6 +9007,12 @@ public class CockpitForm : Form
         // Afspraken die in beide agenda's staan (bv. de AH-levering) horen maar één keer in de
         // lijst — de eigen agenda wint, Hilkes exemplaar valt weg.
         hilkeItems = hilkeItems.Where(h => !items.Any(e => ZelfdeAfspraak(e, h))).ToList();
+        var kidsItems = agenda.KidsTonen
+            ? ItemsVoorDag(_agendaKids, dag)
+                .Where(k => !items.Any(e => ZelfdeAfspraak(e, k)) &&
+                            !hilkeItems.Any(h => ZelfdeAfspraak(h, k)))
+                .ToList()
+            : new List<AgendaClient.AgendaItem>();
 
         var cedFout = false;
         if (OutlookClient.OoitGekoppeld)
@@ -9034,6 +9070,7 @@ public class CockpitForm : Form
         {
             items = items.Where(m => m.HeleDag || m.Einde > nu).ToList();
             hilkeItems = hilkeItems.Where(m => m.HeleDag || m.Einde > nu).ToList();
+            kidsItems = kidsItems.Where(m => m.HeleDag || m.Einde > nu).ToList();
         }
         var snoozes = LaadMeetingSnoozes();
         _meetings.BeginUpdate();
@@ -9087,6 +9124,26 @@ public class CockpitForm : Form
             titel.ForeColor = Theme.Muted;
             _meetings.Items.Add(item);
         }
+        // De kinderafspraken ("Lisa - Emilia") eronder, in dezelfde gedempte stijl.
+        foreach (var m in kidsItems)
+        {
+            if (snoozes.Any(s => s.Sleutel == MeetingSleutel(m) && s.Tot > nu))
+            {
+                continue;
+            }
+            var item = new ListViewItem(m.HeleDag
+                ? "hele dag"
+                : $"{m.Start.ToLocalTime():HH:mm}–{m.Einde.ToLocalTime():HH:mm}")
+            {
+                UseItemStyleForSubItems = false,
+                Tag = m,
+                ForeColor = Theme.Muted,
+                Name = "kids",
+            };
+            var titel = item.SubItems.Add($"Lisa & Emilia · {m.Titel}");
+            titel.ForeColor = Theme.Muted;
+            _meetings.Items.Add(item);
+        }
         _meetings.EndUpdate();
 
         // Lege agenda in de toon van het thema ("Niets op de radar vandaag").
@@ -9126,7 +9183,7 @@ public class CockpitForm : Form
         }
 
         // De actuele stand naar schijf, zodat de lijst bij een herstart meteen gevuld is.
-        MeetingsCache.Save(_agendaEigen, _agendaHilke,
+        MeetingsCache.Save(_agendaEigen, _agendaHilke, _agendaKids,
             _cedCache.Where(kv => kv.Value.Taak.IsCompletedSuccessfully)
                 .Select(kv => new KeyValuePair<DateOnly, List<AgendaClient.AgendaItem>>(
                     kv.Key, kv.Value.Taak.Result)),
@@ -9181,6 +9238,7 @@ public class CockpitForm : Form
         }
         _agendaEigen = cache.Eigen;
         _agendaHilke = cache.Hilke;
+        _agendaKids = cache.Kids;
         _agendaTot = cache.Tot;
         foreach (var (sleutel, items) in cache.Ced)
         {

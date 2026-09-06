@@ -9,6 +9,7 @@ public class AgendaSettingsForm : Form
     private readonly AgendaSettings _settings;
     private readonly TextBox _urls;
     private readonly TextBox _hilkeUrls;
+    private readonly TextBox _kidsUrls;
     private readonly ModernButton _testButton;
     private readonly Label _statusLabel;
     private readonly CancellationTokenSource _cts = new();
@@ -48,6 +49,23 @@ public class AgendaSettingsForm : Form
             Padding = new Padding(10, 8, 10, 0),
             Text = "Agenda van Hilke (apart, lichter grijs in de cockpit) — zelfde soort iCal-adressen:",
         };
+        _kidsUrls = new TextBox
+        {
+            Dock = DockStyle.Bottom,
+            Height = 64,
+            Multiline = true,
+            AcceptsReturn = true,
+            ScrollBars = ScrollBars.Vertical,
+            Font = Theme.MonoSmall,
+            Text = string.Join(Environment.NewLine, _settings.KidsUrls),
+        };
+        var kidsLabel = new Label
+        {
+            Dock = DockStyle.Bottom,
+            Height = 26,
+            Padding = new Padding(10, 8, 10, 0),
+            Text = "Agenda \"Lisa - Emilia\" (kinderen) — iCal-adres of caldav:<agenda-id>:",
+        };
 
         var hint = new Label
         {
@@ -85,29 +103,37 @@ public class AgendaSettingsForm : Form
 
         Controls.Add(_urls);
         Controls.Add(hint);
+        Controls.Add(kidsLabel);
+        Controls.Add(_kidsUrls);
         Controls.Add(hilkeLabel);
         Controls.Add(_hilkeUrls);
         Controls.Add(buttons);
-        Size = new Size(680, 520);
+        Size = new Size(680, 620);
         FormClosed += (_, _) => _cts.Cancel();
         Theme.Apply(this);
         hint.ForeColor = Theme.Muted;
         hilkeLabel.ForeColor = Theme.Muted;
+        kidsLabel.ForeColor = Theme.Muted;
         _statusLabel.ForeColor = Theme.Muted;
     }
 
-    private List<string> IngevuldeUrls => _urls.Lines
+    /// <summary>
+    /// Bruikbare regels uit een invoerveld: iCal-adressen én "caldav:&lt;agenda-id&gt;"-regels
+    /// (die laatste gooide het opslaan vroeger per ongeluk weg).
+    /// </summary>
+    private static List<string> ParseUrls(IEnumerable<string> regels) => regels
         .Select(r => r.Trim())
-        .Where(r => r.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        .Where(r => r.StartsWith("http", StringComparison.OrdinalIgnoreCase) ||
+                    r.StartsWith("caldav:", StringComparison.OrdinalIgnoreCase))
         .ToList();
+
+    private List<string> IngevuldeUrls => ParseUrls(_urls.Lines);
 
     private void Opslaan()
     {
         _settings.Urls = IngevuldeUrls;
-        _settings.HilkeUrls = _hilkeUrls.Lines
-            .Select(r => r.Trim())
-            .Where(r => r.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        _settings.HilkeUrls = ParseUrls(_hilkeUrls.Lines);
+        _settings.KidsUrls = ParseUrls(_kidsUrls.Lines);
         _settings.Save();
     }
 
