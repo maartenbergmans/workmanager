@@ -404,6 +404,10 @@ public class TrayAppContext : ApplicationContext
         verlof.Click += (_, _) => OpenSdWorxPortaal();
         menu.Items.Add(verlof);
 
+        var ebox = new ToolStripMenuItem("e-Box Enterprise (BerMaCon)…");
+        ebox.Click += (_, _) => OpenEbox();
+        menu.Items.Add(ebox);
+
         // Vast startpunt voor de boodschappen: de cockpit-taak staat er niet elke dag.
         var ah = new ToolStripMenuItem("AH-bestelling…");
         ah.Click += (_, _) =>
@@ -704,10 +708,29 @@ public class TrayAppContext : ApplicationContext
             case "verlof":
                 OpenSdWorxPortaal();
                 break;
+            case "ebox":
+                OpenEbox();
+                break;
             case "azurevm":
                 OpenAzureVm();
                 break;
         }
+    }
+
+    private EboxForm? _eboxForm;
+
+    /// <summary>e-Box Enterprise openen (met automatische CSAM-login incl. beveiligingscode).</summary>
+    private void OpenEbox()
+    {
+        if (_eboxForm is { IsDisposed: false })
+        {
+            _eboxForm.Activate();
+            return;
+        }
+
+        _eboxForm = new EboxForm();
+        _eboxForm.FormClosed += (_, _) => _eboxForm = null;
+        _eboxForm.Show();
     }
 
     private AzureVmForm? _azureVmForm;

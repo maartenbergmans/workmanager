@@ -78,6 +78,7 @@ public class CockpitForm : Form
     private readonly ModernButton _devopsKnop;
     /// <summary>Alleen in de werkbalk zolang het SD Worx-verlofsignaal aan staat.</summary>
     private readonly ModernButton _verlofKnop;
+    private readonly ModernButton _eboxKnop;
     /// <summary>Rode alarmknop, alleen zichtbaar zolang de Docker-engine niet draait.</summary>
     private readonly ModernButton _dockerKnop;
     /// <summary>Per klant een eigen projectknop; op een smal venster vervangt "Projecten ▾" ze.</summary>
@@ -907,6 +908,12 @@ public class CockpitForm : Form
         verlofKnop.KrimpNaarInhoud();
         verlofKnop.Visible = WerkSignaal.Actief("sdworx");
         verlofKnop.Click += (_, _) => _openVenster("verlof");
+        // Zelfde patroon voor e-Box Enterprise: de meldingsmail zet de knop aan; het
+        // venster logt automatisch in bij CSAM (wachtwoord + berekende beveiligingscode).
+        var eboxKnop = _eboxKnop = new ModernButton { Text = "e-Box…", Glyph = Fluent.Mail };
+        eboxKnop.KrimpNaarInhoud();
+        eboxKnop.Visible = WerkSignaal.Actief("ebox");
+        eboxKnop.Click += (_, _) => _openVenster("ebox");
         // Docker-check bij het openen van de cockpit: ligt de engine plat, dan staat hier
         // een opvallend rode startknop (devenv-mysql en de projectstacks draaien in Docker).
         // De knop verdwijnt zodra de engine draait; elke ophaalronde kijkt opnieuw.
@@ -1074,6 +1081,7 @@ public class CockpitForm : Form
         toolbar.Controls.Add(topdeskKnop);
         toolbar.Controls.Add(devopsKnop);
         toolbar.Controls.Add(verlofKnop);
+        toolbar.Controls.Add(eboxKnop);
         toolbar.Controls.Add(dockerKnop);
         toolbar.Controls.Add(timesheetKnop);
         toolbar.Controls.Add(timesheetDashboardKnop);
@@ -1136,6 +1144,7 @@ public class CockpitForm : Form
             Venster("Mijn taken…", "mijntaken"),
             Actie("Taken team…", () => _openTeamTasks()),
             Venster("Verlof goedkeuren (SD Worx)…", "verlof"),
+            Venster("e-Box Enterprise (BerMaCon)…", "ebox"),
             Venster("Wacht op antwoord…", "followup"),
             new ToolStripSeparator(),
 
@@ -3066,8 +3075,16 @@ public class CockpitForm : Form
         // (het aantal in het onderwerp varieert, dus op de vaste kern matchen) en de
         // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari).
         var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
+        // e-Box Enterprise: de meldingsmail "Nieuw e-Box bericht" zet eerst de cockpitknop
+        // aan en wordt daarna meteen mee gearchiveerd — het e-Box-venster logt automatisch
+        // in (CSAM + TOTP), dus de knop is de kortste weg naar het bericht zelf.
+        if (berichten.Any(m => !m.IsChat && EboxForm.IsMeldingsmail(m)))
+        {
+            WerkSignaal.Zet("ebox", true);
+        }
         var netflix = berichten.Where(m => !m.IsChat && m.Uid > 0 &&
             (m.VanAdres.Contains("account.netflix.com", StringComparison.OrdinalIgnoreCase) ||
+             EboxForm.IsMeldingsmail(m) ||
              System.Text.RegularExpressions.Regex.IsMatch(m.Onderwerp,
                  @"SMS[\s-]*credits zijn bijgeschreven",
                  System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
@@ -3745,6 +3762,7 @@ public class CockpitForm : Form
             WerkSignaal.Zet("sdworx", true);
         }
         _verlofKnop.Visible = WerkSignaal.Actief("sdworx");
+        _eboxKnop.Visible = WerkSignaal.Actief("ebox");
         // Docker-knop bijwerken: verschijnt als de engine intussen plat ligt, verdwijnt
         // zodra hij (bv. handmatig) weer draait. Niet aankomen terwijl de start nog loopt.
         if (!_dockerKnop.Bezig)
