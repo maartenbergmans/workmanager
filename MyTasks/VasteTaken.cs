@@ -9,6 +9,8 @@ namespace WorkManager;
 /// <see cref="ZorgVoorWeektaken"/> periodiek aan; per dag wordt maar één exemplaar
 /// aangemaakt (ook als de taak intussen afgevinkt en opgeruimd is). De weektaken worden
 /// automatisch afgevinkt zodra de bijbehorende flow gelopen is.
+/// Daarnaast zijn er jaartaken (opvang schoolvakanties plannen) met een vaste triggerdatum;
+/// stond de pc die dag uit (1 januari!), dan komt de taak alsnog bij de eerstvolgende start.
 /// </summary>
 public static class VasteTaken
 {
@@ -20,6 +22,26 @@ public static class VasteTaken
     /// <summary>Vanaf zoveel losse bestanden op het bureaublad komt er een opruimtaak.</summary>
     private const int BureaubladDrempel = 20;
 
+    /// <summary>
+    /// Jaartaken: kinderopvang voor de schoolvakanties plannen, telkens ruim op voorhand
+    /// (kampjes en opvang zitten snel vol). De triggerdatum is de dag waarop de taak
+    /// verschijnt; de vakantie zelf volgt maanden later.
+    /// </summary>
+    private static readonly (int Maand, int Dag, string Tekst)[] Jaartaken =
+    [
+        (1, 1, "Opvang paasvakantie plannen"),
+        (1, 1, "Opvang zomervakantie plannen"),
+        (9, 1, "Opvang herfstvakantie plannen"),
+        (9, 1, "Opvang kerstvakantie plannen"),
+        (11, 15, "Opvang krokusvakantie plannen"),
+    ];
+
+    /// <summary>
+    /// Zo lang na de triggerdatum wordt een gemiste jaartaak nog ingehaald (pc uit op
+    /// 1 januari). Daarna heeft plannen geen zin meer en wachten we op volgend jaar.
+    /// </summary>
+    private const int JaartaakInhaaldagen = 60;
+
     private static readonly string StateFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "WorkManager", "vaste-taken.json");
@@ -30,6 +52,9 @@ public static class VasteTaken
         public string WeekmailAangemaakt { get; set; } = "";
         public string BermaconAangemaakt { get; set; } = "";
         public string BureaubladAangemaakt { get; set; } = "";
+
+        /// <summary>Per jaartaak de triggerdatum (yyyy-MM-dd) waarvoor hij al aangemaakt is.</summary>
+        public Dictionary<string, string> JaartaakAangemaakt { get; set; } = new();
     }
 
     /// <summary>Maakt de vaste taak van vandaag aan als dat nog niet gebeurd is.</summary>
@@ -55,6 +80,53 @@ public static class VasteTaken
                 (s, d) => s.BermaconAangemaakt = d);
         }
         ZorgVoorBureaubladTaak(vandaag);
+        ZorgVoorJaartaken(vandaag);
+    }
+
+    /// <summary>
+    /// Maakt de jaartaken aan waarvan de meest recente triggerdatum bereikt is en die voor
+    /// die datum nog niet aangemaakt zijn. Eén exemplaar per jaar, ook na afvinken.
+    /// </summary>
+    private static void ZorgVoorJaartaken(DateOnly vandaag)
+    {
+        var state = LoadState();
+        var stateGewijzigd = false;
+        foreach (var (maand, dag, tekst) in Jaartaken)
+        {
+            // Meest recente triggerdatum: dit jaar als hij al gepasseerd is, anders vorig jaar.
+            var jaar = vandaag.Month > maand || (vandaag.Month == maand && vandaag.Day >= dag)
+                ? vandaag.Year : vandaag.Year - 1;
+            var trigger = new DateOnly(jaar, maand, dag);
+            if (vandaag > trigger.AddDays(JaartaakInhaaldagen))
+            {
+                continue;
+            }
+            var sleutel = trigger.ToString("yyyy-MM-dd");
+            if (state.JaartaakAangemaakt.TryGetValue(tekst, out var laatst) && laatst == sleutel)
+            {
+                continue;
+            }
+
+            var data = MijnTaakStore.Load();
+            if (!data.Taken.Any(t => !t.Klaar && t.Tekst.Equals(tekst, StringComparison.OrdinalIgnoreCase)))
+            {
+                data.Taken.Add(new MijnTaak
+                {
+                    Tekst = tekst,
+                    Categorie = "Privé",
+                    Prioriteit = 1,
+                    Deadline = vandaag.AddDays(7),
+                });
+                MijnTaakStore.Save(data);
+            }
+
+            state.JaartaakAangemaakt[tekst] = sleutel;
+            stateGewijzigd = true;
+        }
+        if (stateGewijzigd)
+        {
+            SaveState(state);
+        }
     }
 
     /// <summary>Hoeveel losse bestanden staan er nu op het bureaublad? (-1 = niet leesbaar.)</summary>
