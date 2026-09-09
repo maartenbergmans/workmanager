@@ -5,6 +5,10 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Als WorkManager vanuit een Claude-sessie is herstart (deployflow), mogen de
+        // geërfde Claude-markers niet doorsijpelen naar alles wat de app verder opstart.
+        ClientLauncher.WisClaudeErfenis();
+
         // Een onverwachte UI-fout (zoals de bekende ListView.HitTest-uitglijder) mag nooit
         // de "Continue/Quit"-crashdialoog tonen: loggen en gewoon doordraaien.
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

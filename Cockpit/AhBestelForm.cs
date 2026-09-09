@@ -193,8 +193,9 @@ public class AhBestelForm : Form
     {
         Text = "Albert Heijn – bestelling voorbereiden";
         StartPosition = FormStartPosition.CenterParent;
-        // Breed genoeg voor drie fotokaarten naast elkaar (HelloFresh-gevoel).
-        Size = new Size(860, 860);
+        // Breed genoeg voor vier fotokaarten naast elkaar (HelloFresh-gevoel):
+        // 4 × (252 + 2×6 marge) + gridpadding + scrollbalk + vensterrand.
+        Size = new Size(1130, 860);
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimumSize = new Size(600, 480);
         MinimizeBox = false;
@@ -717,28 +718,32 @@ public class AhBestelForm : Form
 
         // Verjaardagstraditie: rond de verjaardagen van Emilia (13/9) en Lisa (23/5) staan de
         // pannenkoeken gegarandeerd tussen de suggesties, wat de weekrotatie ook zegt.
-        if (RondEenVerjaardag(DateOnly.FromDateTime(vandaag)) &&
+        var datum = DateOnly.FromDateTime(vandaag);
+        if ((RondVerjaardag(datum, 9, 13) || RondVerjaardag(datum, 5, 23)) &&
             voorraad.Keys.FirstOrDefault(
                 n => n.Contains("pannenkoek", StringComparison.OrdinalIgnoreCase)) is { } pannenkoeken &&
             !suggesties.ContainsKey(pannenkoeken))
         {
             suggesties[pannenkoeken] = voorraad[pannenkoeken];
         }
+
+        // Rond Emilia's verjaardag hoort ook haar favoriete gerecht ("Emilia's favoriet: …")
+        // gegarandeerd tussen de suggesties.
+        if (RondVerjaardag(datum, 9, 13) &&
+            voorraad.Keys.FirstOrDefault(
+                n => n.Contains("Emilia", StringComparison.OrdinalIgnoreCase)) is { } favoriet &&
+            !suggesties.ContainsKey(favoriet))
+        {
+            suggesties[favoriet] = voorraad[favoriet];
+        }
         return suggesties;
     }
 
-    /// <summary>Vanaf een week vóór tot en met de dag na de verjaardag van Emilia (13/9) of Lisa (23/5).</summary>
-    private static bool RondEenVerjaardag(DateOnly vandaag)
+    /// <summary>Vanaf een week vóór tot en met de dag na de verjaardag op dag/maand.</summary>
+    private static bool RondVerjaardag(DateOnly vandaag, int maand, int dag)
     {
-        foreach (var (maand, dag) in new[] { (9, 13), (5, 23) })
-        {
-            var verjaardag = new DateOnly(vandaag.Year, maand, dag);
-            if (vandaag >= verjaardag.AddDays(-7) && vandaag <= verjaardag.AddDays(1))
-            {
-                return true;
-            }
-        }
-        return false;
+        var verjaardag = new DateOnly(vandaag.Year, maand, dag);
+        return vandaag >= verjaardag.AddDays(-7) && vandaag <= verjaardag.AddDays(1);
     }
 
     /// <summary>

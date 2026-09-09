@@ -51,7 +51,7 @@ public static class DagAfsluiter
             var ongeboekt = meetingsVandaag
                 .Where(m => !m.HeleDag && m.Einde <= nu &&
                             (m.Einde - m.Start).TotalMinutes >= 25 &&
-                            !m.Titel.StartsWith("🍴", StringComparison.Ordinal) &&
+                            !GeenWerktijd.Is(m.Titel) &&
                             !geboekt.Any(r => Overlapt(r, m, vandaag)))
                 .ToList();
             var ongeboekteMinuten = ongeboekt.Sum(m => (int)(m.Einde - m.Start).TotalMinutes);

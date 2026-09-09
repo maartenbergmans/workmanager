@@ -175,6 +175,7 @@ public class TrayAppContext : ApplicationContext
             WerkAanmeldBadgeBij(); // oranje stip zolang Teams/Outlook op aanmelding wacht
             VasteTaken.ZorgVoorWeektaken(); // wo: facturen goedkeuren, vr: weekmail team
             AfvalTaken.ZorgVoorReminder(); // zo: afvalbakken buitenzetten (ophaling maandag)
+            GrasTaken.ZorgVoorMaaitaak(); // om de ~3 weken (weersafhankelijk) gras maaien, in het seizoen
             TeamVakantieCheck.ProbeerOpDonderdag(); // do: teamvakanties op de achtergrond ophalen
             DownloadsCleaner.ZorgVoorMaandelijks(); // 1×/maand Downloads > 1 week naar prullenbak
             _ = UpdateCheck.ZorgVoorAsync(CancellationToken.None); // PhpStorm/Claude-updates als taak

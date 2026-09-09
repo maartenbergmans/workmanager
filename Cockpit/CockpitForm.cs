@@ -385,9 +385,6 @@ public class CockpitForm : Form
                 ("Claude — glascalculator (Drive)", () => ClientLauncher.StartClaude(
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
-                ("Map — glascalculator (Drive)", () => System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo(
-                        @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator") { UseShellExecute = true }), null),
             }),
             // WorkManager zelf als "klant": zo krijgt hij dezelfde eigen knop in de brede
             // werkbalk als de echte klanten, mét 🟢-lampje, git-status en sluiten-item.
@@ -431,7 +428,8 @@ public class CockpitForm : Form
                 }
                 // Git-status per projectmap: het aantal ongecommitte bestanden komt in het
                 // label te staan (asynchroon, want een git-call in WSL duurt bijna een
-                // seconde) en klikken opent de volledige lijst.
+                // seconde) en klikken opent de volledige lijst. Daaronder per map een
+                // verkenner-item (ook WSL-mappen openen gewoon via hun \\wsl.localhost-pad).
                 var gitItems = new List<(ToolStripMenuItem Item, string Map, string Naam)>();
                 if (claudeMappen.Count > 0)
                 {
@@ -449,6 +447,26 @@ public class CockpitForm : Form
                         gitItems.Add((git, map, projectNaam));
                         _gitMenuItems.Add((git, map, projectNaam));
                         WerkGitLabelBij(git, map, projectNaam); // laatst bekende stand meteen erbij
+                    }
+                    foreach (var map in claudeMappen)
+                    {
+                        var projectNaam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
+                        var verkenner = new ToolStripMenuItem($"📂 Verkenner — {projectNaam}");
+                        verkenner.Click += (_, _) =>
+                        {
+                            try
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(map)
+                                {
+                                    UseShellExecute = true,
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                Toast.Toon(this, $"Map openen mislukt: {ex.Message}", Fluent.Globe);
+                            }
+                        };
+                        menu.Items.Add(verkenner);
                     }
                 }
                 // Per Claude-projectmap een sluiten-item dat alleen aan staat als er een sessie draait.
@@ -3072,8 +3090,9 @@ public class CockpitForm : Form
         }
         // Vaste regels: routinemails in Gmail meteen archiveren én als gelezen zetten —
         // Netflix-bevestigingen, de JAAN bv "SMS credits bijgeschreven"-meldingen
-        // (het aantal in het onderwerp varieert, dus op de vaste kern matchen) en de
-        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari).
+        // (het aantal in het onderwerp varieert, dus op de vaste kern matchen), de
+        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari) en de
+        // Seety-bon van gratis parkeersessies (€ 0,00).
         var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
         // e-Box Enterprise: de meldingsmail "Nieuw e-Box bericht" zet eerst de cockpitknop
         // aan en wordt daarna meteen mee gearchiveerd — het e-Box-venster logt automatisch
@@ -3090,6 +3109,7 @@ public class CockpitForm : Form
                  System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
              AlarmMails.Matcht(m) ||
              AppleFactuur.MoetArchiveren(m) ||
+             SeetyBon.IsGratisBon(m) ||
              ArchiveerRegels.Matcht(m, eigenRegels))).ToList();
         // Storingsmails (MailMobility/MailProperty van IT-support) éérst registreren: dat zet
         // de rode taak en houdt de laatste-mailtijd bij, ook als het archiveren zo mislukt.
@@ -8274,7 +8294,8 @@ public class CockpitForm : Form
 
     /// <summary>
     /// Houdt de volgende-meeting-balk bij: zichtbaar zodra vandaag een echte meeting (geen
-    /// recept, geen "werkbaar") binnen het uur begint of bezig is, met de videolink als knop.
+    /// recept of AH-levering, geen "werkbaar") binnen het uur begint of bezig is, met de
+    /// videolink als knop.
     /// </summary>
     private void WerkVolgendeMeetingBalkBij()
     {
@@ -8287,7 +8308,7 @@ public class CockpitForm : Form
             ? null
             : HuidigeMeetings()
                 .Where(m => !m.HeleDag && m.Einde > nu && !DagPlan.KanDoorwerken(m) &&
-                            !IsReceptTitel(m.Titel) && m.Start <= nu.AddMinutes(60))
+                            !GeenWerktijd.Is(m.Titel) && m.Start <= nu.AddMinutes(60))
                 .MinBy(m => m.Start);
         if (volgende is null)
         {
@@ -8509,10 +8530,10 @@ public class CockpitForm : Form
         // toast alleen is te vluchtig voor iets dat letterlijk geld waard is.
         try
         {
-            // Geplande avondmaaltijden (🍴-recepten) zijn geen werk — nooit een timesheet voor
-            // voorstellen, hoe blokkerend ze ook in de agenda staan.
+            // Geplande avondmaaltijden (🍴-recepten) en de AH-levering zijn geen werk — nooit
+            // een timesheet voor voorstellen, hoe blokkerend ze ook in de agenda staan.
             if (_meetingsOffset == 0 && TimesheetGaten.Controleer(
-                    HuidigeMeetings().Where(m => !IsReceptTitel(m.Titel)).ToList()) is { Count: > 0 } gaten)
+                    HuidigeMeetings().Where(m => !GeenWerktijd.Is(m.Titel)).ToList()) is { Count: > 0 } gaten)
             {
                 var regels = gaten.Select(m =>
                     $"{m.Start.ToLocalTime():HH:mm}–{m.Einde.ToLocalTime():HH:mm} " +
@@ -9106,7 +9127,7 @@ public class CockpitForm : Form
                 UseItemStyleForSubItems = false,
                 Tag = m,
                 Name = m.Titel.StartsWith("CED · ", StringComparison.Ordinal) ? "outlook"
-                    : IsReceptTitel(m.Titel) ? "recept"
+                    : GeenWerktijd.IsRecept(m.Titel) ? "recept"
                     : "gagenda",
             };
             var titel = item.SubItems.Add(m.Titel);
@@ -9441,28 +9462,6 @@ public class CockpitForm : Form
         _taakRijen.AddRange(VooruitblikRijen());
         VulTakenLijst();
     }
-
-    /// <summary>Gerechtnamen uit ah-gerechten.json, voor het recept-icoon in de meetinglijst.</summary>
-    private static readonly Lazy<HashSet<string>> GerechtNamen = new(() =>
-    {
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(
-                File.ReadAllText(Path.Combine(DataDir, "ah-gerechten.json")));
-            return doc.RootElement.GetProperty("gerechten").EnumerateObject()
-                .Select(p => p.Name)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        }
-    });
-
-    /// <summary>Is deze agenda-afspraak een gepland avondeten (AH-gerecht)?</summary>
-    private static bool IsReceptTitel(string titel) =>
-        titel.StartsWith("🍴", StringComparison.Ordinal) ||
-        GerechtNamen.Value.Contains(titel.Trim());
 
     /// <summary>
     /// Videolink van een meeting: Teams of Google Meet, uit locatie/omschrijving

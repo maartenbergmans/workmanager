@@ -237,7 +237,7 @@ public static class ActiviteitenLog
             {{Blok(LauncherRegels(dag), "niets gestart")}}
 
             4) Meetings (agenda):
-            {{Blok(meetings.Where(m => !m.HeleDag)
+            {{Blok(meetings.Where(m => !m.HeleDag && !GeenWerktijd.Is(m.Titel))
                 .Select(m => $"{m.Start.LocalDateTime:HH:mm}–{m.Einde.LocalDateTime:HH:mm} {m.Titel}"),
                 "geen meetings")}}
 
@@ -263,8 +263,8 @@ public static class ActiviteitenLog
             Lauryssens laurapp; Lauryssens-advies, -overleg of -mails → Lauryssens advies.
             WorkManager-ontwikkeling, urbanadmin, facturatie/administratie → UrbanIT.
             Privézaken (AH-boodschappen, agenda gezin, …) → Niet factureerbaar.
-            Geplande maaltijden (🍴-recepten, avondeten, koken) zijn géén werktijd: daar komt
-            helemaal geen regel voor — ook niet als "Niet factureerbaar".
+            Geplande maaltijden (🍴-recepten, avondeten, koken) en de AH-levering zijn géén
+            werktijd: daar komt helemaal geen regel voor — ook niet als "Niet factureerbaar".
 
             MEETREGELS — zo meet je de tijd:
             - Elke meeting uit de agenda hoort als regel in het voorstel (duur = de

@@ -23,6 +23,27 @@ public static class ClientLauncher
     private const string ClaudeCommando = "claude --permission-mode acceptEdits";
 
     /// <summary>
+    /// Omgevingsvariabelen die Claude Code in zijn subprocessen zet. Wordt WorkManager of
+    /// Windows Terminal ooit vanuit een Claude-sessie (her)start (bv. bij een deploy), dan
+    /// erven álle latere sessies die markers en gedragen ze zich als kindsessie ("inherited
+    /// CLAUDE_CODE_CHILD_SESSION marker": geen transcript, afwijkende instellingen). Daarom
+    /// wist WorkManager ze bij zijn eigen start én vlak vóór elke nieuwe claude-sessie.
+    /// </summary>
+    private static readonly string[] ClaudeErfVars =
+    {
+        "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
+    };
+
+    /// <summary>Wist de geërfde Claude-markers uit dit proces (aanroepen bij de app-start).</summary>
+    public static void WisClaudeErfenis()
+    {
+        foreach (var naam in ClaudeErfVars)
+        {
+            Environment.SetEnvironmentVariable(naam, null);
+        }
+    }
+
+    /// <summary>
     /// Vaste promptbalkkleur (Claude Codes "/color") en klantnaam (tabtitel) per project,
     /// zodat de terminals in één oogopslag herkenbaar zijn. Matcht op het begin van een
     /// mapnaam in het pad.
@@ -56,13 +77,16 @@ public static class ClientLauncher
     /// <summary>
     /// Het volledige startcommando voor een sessie in deze map: "/color …" gaat als
     /// startprompt mee — Claude Code voert een slash-commando in het promptargument
-    /// gewoon uit bij de start (getest op 2.1.186/2.1.220); /color zelf is niet
-    /// persistent op te slaan, dus dit is de enige route.
+    /// gewoon uit bij de start; /color zelf is niet persistent op te slaan, dus dit is
+    /// de enige route. Bewust met enkele quotes: die overleven zowel PowerShell als bash,
+    /// zodat claude "/color rood" als één promptargument krijgt. (Dubbele quotes werden
+    /// door de -Command-keten opgegeten; oudere CLI's plakten de twee losse argumenten
+    /// stilzwijgend weer aan elkaar, sinds ±2.1.3xx kiest /color zonder kleur er zelf een.)
     /// </summary>
     private static string ClaudeStartCommando(string werkmap)
     {
         var kleur = KlantVoor(werkmap).Kleur;
-        return kleur.Length == 0 ? ClaudeCommando : $"{ClaudeCommando} \"/color {kleur}\"";
+        return kleur.Length == 0 ? ClaudeCommando : $"{ClaudeCommando} '/color {kleur}'";
     }
 
     /// <summary>
@@ -101,9 +125,20 @@ public static class ClientLauncher
         var commando = ClaudeStartCommando(werkmap);
         var titel = ClaudeTitel(werkmap);
         var titelArgs = titel.Length == 0 ? "" : $"--title \"{titel}\" ";
-        return TryWslPad(werkmap, out var distro, out var linux)
-            ? $"{titelArgs}wsl.exe -d {distro} --cd \"{linux}\" -- {commando}"
-            : $"-d \"{werkmap}\" {titelArgs}powershell -NoLogo -NoExit -Command {commando}";
+        if (TryWslPad(werkmap, out var distro, out var linux))
+        {
+            // Windows-omgevingsvariabelen komen WSL niet in (geen WSLENV), dus daar is
+            // geen opruimwerk nodig.
+            return $"{titelArgs}wsl.exe -d {distro} --cd \"{linux}\" -- {commando}";
+        }
+
+        // Windows: eerst de geërfde Claude-markers wissen, dan claude starten. Als
+        // -EncodedCommand, want Windows Terminal hakt zijn commandoregel op ';' in
+        // stukken en de quotes rond de /color-prompt overleven de -Command-keten niet.
+        var opruimen = string.Join(" ",
+            ClaudeErfVars.Select(v => $"Remove-Item Env:{v} -ErrorAction Ignore;"));
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes($"{opruimen} {commando}"));
+        return $"-d \"{werkmap}\" {titelArgs}powershell -NoLogo -NoExit -EncodedCommand {encoded}";
     }
 
     /// <summary>Per context: annulering van een nog lopende launch (bv. wachten op de app-URL).</summary>

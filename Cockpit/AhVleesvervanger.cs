@@ -41,13 +41,18 @@ public static class AhVleesvervanger
     /// </summary>
     public static (string Naam, string Url)? Voor(IEnumerable<AhIngredient> ingredienten)
     {
-        foreach (var ing in ingredienten)
+        var lijst = ingredienten.ToList();
+        // Bevat het gerecht al een plantaardig product (bv. een expliciet "(voor Maarten)"-
+        // alternatief in de ingrediëntenlijst), dan is er al voor de pescotariër gezorgd en
+        // hoeft er geen automatische vervanger meer bij.
+        if (lijst.Any(ing =>
+                ing.Naam.Contains("plantaardig", StringComparison.OrdinalIgnoreCase) ||
+                ing.Naam.Contains("terra", StringComparison.OrdinalIgnoreCase)))
         {
-            if (ing.Naam.Contains("plantaardig", StringComparison.OrdinalIgnoreCase) ||
-                ing.Naam.Contains("terra", StringComparison.OrdinalIgnoreCase))
-            {
-                continue; // dit bestanddeel is al goed voor de pescotariër
-            }
+            return null;
+        }
+        foreach (var ing in lijst)
+        {
             foreach (var vervanger in Vervangers)
             {
                 if (vervanger.Patroon.IsMatch(ing.Naam))

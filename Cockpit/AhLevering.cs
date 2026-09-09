@@ -4,9 +4,10 @@ using System.Text.RegularExpressions;
 namespace WorkManager;
 
 /// <summary>
-/// Verwerkt AH-leveringsbevestigingen die in de inbox opduiken: de taak "Albert Heijn
-/// bestelling plaatsen" schuift vier dagen de toekomst in, en het levermoment (als het
-/// uit de mail te lezen valt) gaat als afspraak in de Google-agenda. Elke mail wordt
+/// Verwerkt AH-mails die in de inbox opduiken: een bestelbevestiging vinkt de taak
+/// "Albert Heijn bestelling plaatsen" af en zet een nieuwe klaar (vier dagen verder);
+/// vervolgmails over de levering verschuiven alleen de deadline. Het levermoment (als
+/// het uit de mail te lezen valt) gaat als afspraak in de Google-agenda. Elke mail wordt
 /// maar één keer verwerkt (Message-ID's in ah-levering-status.json).
 /// </summary>
 public static class AhLevering
@@ -41,11 +42,27 @@ public static class AhLevering
         foreach (var mail in kandidaten.Where(m => !verwerkt.Contains(m.MessageId)))
         {
             teArchiveren.Add(mail);
-            // 1. AH-taak vier dagen opschuiven (of opnieuw aanmaken als hij al weg is).
+            // 1. AH-taak bijwerken. Een échte bestelbevestiging betekent dat de bestelling
+            //    geplaatst is: de openstaande taak wordt dan afgevinkt (staat als "gedaan"
+            //    in de lijst) en er komt een verse taak voor de volgende bestelling.
+            //    Vervolgmails over dezelfde levering (onderweg, geleverd, aangepast,
+            //    herinnering) verschuiven alleen de deadline, anders vinkt de herinnering
+            //    op de leverdag de vólgende besteltaak onterecht af.
+            var isBestelbevestiging =
+                Regex.IsMatch(mail.Onderwerp, "bestell", RegexOptions.IgnoreCase) &&
+                !Regex.IsMatch(mail.Onderwerp,
+                    "komt|onderweg|geleverd|bezorgd|aangepast|gewijzigd|herinner",
+                    RegexOptions.IgnoreCase);
             var nieuweDeadline = DateOnly.FromDateTime(DateTime.Now).AddDays(4);
             var data = MijnTaakStore.Load();
             var taak = data.Taken.FirstOrDefault(t => !t.Klaar &&
                 t.Tekst.Contains("Albert Heijn", StringComparison.OrdinalIgnoreCase));
+            if (taak is not null && isBestelbevestiging)
+            {
+                taak.Klaar = true;
+                taak.KlaarOp = DateTimeOffset.Now;
+                taak = null; // hieronder komt een nieuwe taak voor de volgende bestelling
+            }
             if (taak is not null)
             {
                 taak.Deadline = nieuweDeadline;
@@ -60,7 +77,9 @@ public static class AhLevering
                 });
             }
             MijnTaakStore.Save(data);
-            melding = $"AH-levering herkend: besteltaak verschoven naar {nieuweDeadline:ddd d/M}";
+            melding = isBestelbevestiging
+                ? $"AH-bestelbevestiging: besteltaak afgevinkt, volgende klaar voor {nieuweDeadline:ddd d/M}"
+                : $"AH-levering herkend: besteltaak verschoven naar {nieuweDeadline:ddd d/M}";
 
             // 2. Levermoment in de Google-agenda (best effort; AH zet het moment vaak in
             // het onderwerp: "… dinsdag 28 juli 2026 16:00-20:00").
