@@ -1212,8 +1212,13 @@ public class WmWebSync
         }
         using var afbreken = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         // De toelichting is voor het pc-venster; op de gsm volstaan de regels zelf.
-        var (voorstel, _) = await ActiviteitenLog.VoorstelAsync(dag, meetings, afbreken.Token);
+        var (voorstel, toelichting) = await ActiviteitenLog.VoorstelAsync(dag, meetings, afbreken.Token);
         VoorstelStore.Bewaar(voorstel);
+        // Ook in de pc-cache: dan opent de cockpitknop "Dagvoorstel…" dit voorstel meteen.
+        if (voorstel.Count > 0)
+        {
+            DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
+        }
         if (voorstel.Count == 0)
         {
             return "Geen voorstel — te weinig activiteit vandaag om iets van te maken.";

@@ -186,6 +186,7 @@ public class TrayAppContext : ApplicationContext
             _ = PresentatieTaken.ZorgVoorTaakAsync(CancellationToken.None); // wo: Aqurat-presentatie bij vrijdagmeeting
             _ = MeetingPrep.ZorgVoorAsync(CancellationToken.None); // afspraak voorbereiden + vertrektijd bewaken
             CheckMijnTakenHerinnering();
+            _ = DagvoorstelCache.ZorgVoorVoorbereidingAsync(); // 16:30: dagvoorstel alvast klaarzetten
             _ = CheckDagBriefingAsync();
             _ = FollowUpRadar.ZorgVoorMeldingAsync(CancellationToken.None); // wie wacht er op antwoord
             _ = OnbeantwoordRadar.ZorgVoorTakenAsync(CancellationToken.None); // ma: vragen die bij mij blijven liggen

@@ -16,11 +16,19 @@ public sealed class TimesheetVoorstelForm : Form
     /// <summary>De aangevinkte regels, klaar om als timesheet weggeschreven te worden.</summary>
     public List<TimesheetRegel> Gekozen { get; } = new();
 
-    public TimesheetVoorstelForm(DateOnly dag, List<TimesheetRegel> voorstel, string toelichting = "")
+    /// <param name="gemaaktOp">
+    /// Tijdstip waarop dit voorstel op de achtergrond klaargezet is (16:30-voorbereiding of
+    /// gsm-run); null bij een verse run. Bij een klaargezet voorstel komt er een
+    /// "Vernieuwen"-knop bij die met DialogResult.Retry om een verse Claude-run vraagt.
+    /// </param>
+    public TimesheetVoorstelForm(
+        DateOnly dag, List<TimesheetRegel> voorstel, string toelichting = "",
+        DateTimeOffset? gemaaktOp = null)
     {
         _dag = dag;
 
-        Text = $"Dagvoorstel timesheets – {dag:dddd d MMMM yyyy}";
+        Text = $"Dagvoorstel timesheets – {dag:dddd d MMMM yyyy}" +
+            (gemaaktOp is { } klaargezet ? $" (klaargezet om {klaargezet:HH:mm})" : "");
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(820, toelichting.Length > 0 ? 540 : 480);
         MinimizeBox = false;
@@ -112,6 +120,16 @@ public sealed class TimesheetVoorstelForm : Form
         ok.Click += (_, _) => Bevestig();
         knoppen.Controls.Add(annuleer);
         knoppen.Controls.Add(ok);
+        if (gemaaktOp is not null)
+        {
+            // Alleen bij een klaargezet voorstel: een verse run duurt minuten, dus dat
+            // doe je bewust — bv. omdat er na het klaarzetten nog doorgewerkt is.
+            var vernieuw = new ModernButton
+            {
+                Text = "Vernieuwen", Width = 115, DialogResult = DialogResult.Retry,
+            };
+            knoppen.Controls.Add(vernieuw);
+        }
         AcceptButton = ok;
         CancelButton = annuleer;
 

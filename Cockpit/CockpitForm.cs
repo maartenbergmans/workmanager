@@ -5163,66 +5163,90 @@ public class CockpitForm : Form
     {
         var dag = DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset);
 
-        if (knop is not null)
+        // Het om 16:30 (of via de gsm) klaargezette voorstel opent meteen; "Vernieuwen"
+        // in het venster forceert alsnog een verse Claude-run — bv. omdat er na het
+        // klaarzetten nog doorgewerkt is.
+        var versGevraagd = false;
+        while (true)
         {
-            knop.Bezig = true;
-        }
-        List<TimesheetRegel> voorstel;
-        string toelichting;
-        try
-        {
-            List<AgendaClient.AgendaItem> meetings;
+            List<TimesheetRegel> voorstel;
+            string toelichting;
+            DateTimeOffset? gemaaktOp = null;
+            if (!versGevraagd && DagvoorstelCache.Laad(dag) is { } klaar && klaar.Regels.Count > 0)
+            {
+                (voorstel, toelichting, _) = klaar;
+                gemaaktOp = klaar.GemaaktOp;
+            }
+            else
+            {
+                if (knop is not null)
+                {
+                    knop.Bezig = true;
+                }
+                try
+                {
+                    List<AgendaClient.AgendaItem> meetings;
+                    try
+                    {
+                        meetings = OutlookClient.OoitGekoppeld
+                            ? await CedVoorDagAsync(dag)
+                            : new List<AgendaClient.AgendaItem>();
+                    }
+                    catch
+                    {
+                        meetings = new List<AgendaClient.AgendaItem>(); // voorstel kan ook zonder agenda
+                    }
+                    (voorstel, toelichting) = await ActiviteitenLog.VoorstelAsync(dag, meetings, _cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    Toast.Toon(this, $"Dagvoorstel mislukte: {ex.Message}", Fluent.Document);
+                    return;
+                }
+                finally
+                {
+                    if (knop is not null)
+                    {
+                        knop.Bezig = false;
+                    }
+                }
+                DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
+            }
+            if (voorstel.Count == 0)
+            {
+                Toast.Toon(this, "Geen bruikbaar voorstel — nog te weinig sporen vandaag?", Fluent.Document);
+                return;
+            }
+
+            using var dialog = new TimesheetVoorstelForm(dag, voorstel, toelichting, gemaaktOp);
+            var keuze = dialog.ShowDialog(this);
+            if (keuze == DialogResult.Retry)
+            {
+                versGevraagd = true;
+                continue;
+            }
+            if (keuze != DialogResult.OK)
+            {
+                return;
+            }
+            foreach (var regel in dialog.Gekozen)
+            {
+                TimesheetStore.Voeg(regel);
+            }
             try
             {
-                meetings = OutlookClient.OoitGekoppeld
-                    ? await CedVoorDagAsync(dag)
-                    : new List<AgendaClient.AgendaItem>();
+                var n = await TimesheetStore.BoekDoorAsync(_cts.Token);
+                Toast.Toon(this, n > 0
+                    ? $"{dialog.Gekozen.Count} timesheet(s) aangemaakt, {n} geboekt in urbanadmin"
+                    : $"{dialog.Gekozen.Count} timesheet(s) in de wachtrij", Fluent.Klok);
             }
-            catch
+            catch (Exception ex)
             {
-                meetings = new List<AgendaClient.AgendaItem>(); // voorstel kan ook zonder agenda
+                Toast.Toon(this,
+                    $"{dialog.Gekozen.Count} timesheet(s) in wachtrij (doorboeken mislukte: {ex.Message})",
+                    Fluent.Klok);
             }
-            (voorstel, toelichting) = await ActiviteitenLog.VoorstelAsync(dag, meetings, _cts.Token);
-        }
-        catch (Exception ex)
-        {
-            Toast.Toon(this, $"Dagvoorstel mislukte: {ex.Message}", Fluent.Document);
             return;
-        }
-        finally
-        {
-            if (knop is not null)
-            {
-                knop.Bezig = false;
-            }
-        }
-        if (voorstel.Count == 0)
-        {
-            Toast.Toon(this, "Geen bruikbaar voorstel — nog te weinig sporen vandaag?", Fluent.Document);
-            return;
-        }
-
-        using var dialog = new TimesheetVoorstelForm(dag, voorstel, toelichting);
-        if (dialog.ShowDialog(this) != DialogResult.OK)
-        {
-            return;
-        }
-        foreach (var regel in dialog.Gekozen)
-        {
-            TimesheetStore.Voeg(regel);
-        }
-        try
-        {
-            var n = await TimesheetStore.BoekDoorAsync(_cts.Token);
-            Toast.Toon(this, n > 0
-                ? $"{dialog.Gekozen.Count} timesheet(s) aangemaakt, {n} geboekt in urbanadmin"
-                : $"{dialog.Gekozen.Count} timesheet(s) in de wachtrij", Fluent.Klok);
-        }
-        catch (Exception ex)
-        {
-            Toast.Toon(this,
-                $"{dialog.Gekozen.Count} timesheet(s) in wachtrij (doorboeken mislukte: {ex.Message})",
-                Fluent.Klok);
         }
     }
 

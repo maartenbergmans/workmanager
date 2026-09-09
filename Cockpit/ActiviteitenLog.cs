@@ -154,6 +154,14 @@ public static class ActiviteitenLog
     // ---------------------------------------------------------------- voorstel
 
     /// <summary>
+    /// Zijn er voor deze dag al werksporen (venstersamples, contextswitches, launcher-starts
+    /// of Claude-opdrachten)? Zonder sporen heeft een dagvoorstel-run geen zin.
+    /// </summary>
+    public static bool HeeftSporen(DateOnly dag) =>
+        VensterBlokken(dag).Count > 0 || SwitchRegels(dag).Count > 0 ||
+        LauncherRegels(dag).Count > 0 || ClaudeRegels(dag).Count > 0;
+
+    /// <summary>
     /// Laat Claude van alle sporen van de dag een timesheetvoorstel maken, met een losse
     /// toelichting over de gemaakte keuzes. Geeft een lege lijst als er niets bruikbaars
     /// uit komt.
