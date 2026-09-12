@@ -45,6 +45,8 @@ public static class ClaudeAandacht
             var boodschap = "";
             var map = "";
             var hookEvent = "";
+            var prompt = "";
+            var sessie = "";
             try
             {
                 using var doc = JsonDocument.Parse(hookJson);
@@ -54,6 +56,10 @@ public static class ClaudeAandacht
                     ? c.GetString() ?? "" : "";
                 hookEvent = doc.RootElement.TryGetProperty("hook_event_name", out var e)
                     ? e.GetString() ?? "" : "";
+                prompt = doc.RootElement.TryGetProperty("prompt", out var p)
+                    ? p.GetString() ?? "" : "";
+                sessie = doc.RootElement.TryGetProperty("session_id", out var sid)
+                    ? sid.GetString() ?? "" : "";
                 // Het Stop-event (sessie afgerond) heeft geen message-veld; zonder eigen
                 // tekst zou de melding misleidend "Aandacht gevraagd" zeggen.
                 if (boodschap.Length == 0 && hookEvent == "Stop")
@@ -71,6 +77,8 @@ public static class ClaudeAandacht
             if (!headless && hookEvent == "UserPromptSubmit" && map.Length > 0)
             {
                 ActiviteitenLog.NoteerClaudeRequest(map);
+                // Het werkjournaal bewaart ook wát er gevraagd werd (ingekort), voor advies later.
+                Werkjournaal.NoteerClaude(map, sessie, prompt);
             }
             Directory.CreateDirectory(SpoolDir);
             var pid = headless ? 0 : VindTerminalPid();

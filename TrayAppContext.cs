@@ -279,6 +279,13 @@ public class TrayAppContext : ApplicationContext
     {
         try
         {
+        // Werkjournaal: elk uur de dag- en weeksamenvattingen bijwerken (blijvend, i.t.t. de
+        // minuutlog die na 21 dagen verdwijnt) — bronmateriaal om later advies op te baseren.
+        var journaalTimer = new System.Windows.Forms.Timer { Interval = 60 * 60_000 };
+        journaalTimer.Tick += (_, _) => Task.Run(Werkjournaal.WerkBij);
+        journaalTimer.Start();
+        _ = Task.Delay(TimeSpan.FromMinutes(2)).ContinueWith(_ => Werkjournaal.WerkBij());
+
             if (await AhBonusRadar.CheckWekelijksAsync(CancellationToken.None) is { } melding &&
                 _trayIcon.Visible)
             {

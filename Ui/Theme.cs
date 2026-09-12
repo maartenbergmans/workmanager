@@ -297,6 +297,8 @@ public static class Theme
     /// </summary>
     public static void Apply(Form form, bool fade = true)
     {
+        // Elk WorkManager-venster passeert hier: één plek om het gebruik te journaliseren.
+        Werkjournaal.NoteerVenster(form);
         form.BackColor = Bg;
         form.ForeColor = Text;
         form.Font = BaseFont;
@@ -452,6 +454,7 @@ public static class Theme
     /// </summary>
     private static void StyleDropDown(ToolStripDropDown menu)
     {
+        Werkjournaal.HaakMenu(menu); // menukliks in het werkjournaal (1× per menu)
         menu.Renderer = SleekMenuRenderer.Instance;
         menu.BackColor = Surface;
         menu.ForeColor = Text;

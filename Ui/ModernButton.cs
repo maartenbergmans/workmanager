@@ -130,6 +130,11 @@ public class ModernButton : Control, IButtonControl
 
     protected override void OnClick(EventArgs e)
     {
+        // Welke functies echt gebruikt worden, komt in het werkjournaal; annuleren is geen actie.
+        if (DialogResult is not (DialogResult.Cancel or DialogResult.No or DialogResult.Abort))
+        {
+            Werkjournaal.NoteerKnop(Text, FindForm());
+        }
         // Zelfde gedrag als Button: DialogResult doorzetten naar het venster.
         if (DialogResult != DialogResult.None && FindForm() is { } form)
         {

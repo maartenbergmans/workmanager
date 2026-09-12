@@ -39,6 +39,14 @@ static class Program
             return;
         }
 
+        // Werkjournaal nu bijwerken (dag- en weeksamenvattingen) zonder de tray-app.
+        // Gebruik: WorkManager.exe --journaal → uitvoer in %APPDATA%\WorkManager\journaal.
+        if (args.Length == 1 && args[0] == "--journaal")
+        {
+            Environment.ExitCode = Werkjournaal.WerkBij() > 0 ? 0 : 1;
+            return;
+        }
+
         // Headless regressietests voor de kwetsbaarste tekstparsers (OWA-labels wijzigen
         // geregeld): resultaat in %APPDATA%\WorkManager\parser-tests.txt, exitcode = aantal fouten.
         if (args.Length == 1 && args[0] == "--parsertests")
