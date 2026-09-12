@@ -225,7 +225,10 @@ public static class ActiviteitenLog
         var gmailTaak = GmailVerzondenAsync();
         var outlookTaak = OutlookVerzondenAsync();
         var teamsTaak = TeamsChatsAsync();
-        await Task.WhenAll(gmailTaak, outlookTaak, teamsTaak);
+        // De projectenlijst (met gebruik en omschrijvingen van de laatste 60 dagen) meteen
+        // mee verversen: daarop kiest Claude het project per regel.
+        var catalogusTaak = ProjectCatalogus.VernieuwAlsNodigAsync(ct);
+        await Task.WhenAll(gmailTaak, outlookTaak, teamsTaak, catalogusTaak);
         var verzonden = gmailTaak.Result.Concat(outlookTaak.Result).ToList();
         var teamsChats = teamsTaak.Result;
         var prompt = $$"""
@@ -264,15 +267,43 @@ public static class ActiviteitenLog
                 $"{(r.Van is { } v ? v.ToString("HH:mm") : "??:??")} {r.Klant} {r.Minuten} min — {r.Omschrijving}"),
                 "nog niets geboekt")}}
 
-            KLANTEN — kies per regel exact één van: {{string.Join(", ", TimesheetStore.Klanten)}}.
-            Vuistregels: TopDesk, Outlook, CED-meetings en ced.topdesk.net → CED. aqurat → Aqurat.
-            bloom, datawarehouse, BloomDataUploader, RadiologyPartners → RadiologyPartners.
-            Lauryssens-ontwikkelwerk (laurapp, herstel-calculator, glascalculator) →
-            Lauryssens laurapp; Lauryssens-advies, -overleg of -mails → Lauryssens advies.
-            WorkManager-ontwikkeling, urbanadmin, facturatie/administratie → UrbanIT.
-            Privézaken (AH-boodschappen, agenda gezin, …) → Niet factureerbaar.
+            PROJECTEN — kies per regel exact één project uit deze urbanadmin-lijst en geef
+            het id terug. Achter elk project staat hoeveel er de laatste tijd op geboekt
+            werd en wat de recentste omschrijvingen waren: kies het project waarop dit soort
+            werk normaal terechtkomt. Meest gebruikte projecten staan bovenaan.
+            {{ProjectCatalogus.PromptBlok()}}
+
+            Vuistregels (projectmap, tool of onderwerp → project):
+            - CED: TopDesk, CED-Outlook, Teams, ISPnext, Azure DevOps/CAREX, CED-meetings,
+              automaticmail → CED Belgium · consultancy (dagbasis). Repalink-support voor
+              CED Nederland (repalink-backend/-frontend, vakantie-upload, schades,
+              meldingen) → CED Nederland · Repalink Support. totalloss-cednl → een CED
+              Nederland-project als er één over Totalloss gaat, anders CED Belgium ·
+              consultancy (dagbasis).
+            - Aqurat (map aqurat, Asana): meetings → Vergaderingen nieuwe app; analysewerk →
+              Analyse; ontwikkelwerk → het ontwikkelproject waarvan de recente
+              omschrijvingen het best passen (bij twijfel het meest recent gebruikte).
+            - bloom, bloom-datawarehouse, BloomDataUploader, Ximeo → Radiology Partners
+              Europe · IT advies.
+            - Vriesveem (Nemijtek valt sinds de fusie onder Vriesveem — nooit de klant
+              "Nemijtek Vrieshuizen OUD"): movaware(-backend/-frontend) → Doorontwikkeling
+              Movaware (nieuwe functies, rapporten) of Support Movaware (fouten, vragen);
+              cellaware(-backend/-frontend/-klantportaal) → Doorontwikkeling Cellaware
+              (nieuwe functies, analyses, rapporten) of Support Cellaware Vriesveem /
+              Support Cellaware Nemijtek (supportvraag van die vestiging); algemeen
+              ICT-overleg, SAP, fusie → ICT management; website → website aanpassingen.
+            - Lauryssens: laurapp(-backend) → ontwikkeling LaurApp;
+              lauryssens-herstel-calculator → herstel calculator; glascalculator, advies,
+              overleg en mails → advies en consultancy.
+            - citroenloos, Garage Loos → Garage Loos · Integratie planning.
+            - vakantiehuis-bourgogne → Ellu-Invest · Vakantiehuis Bourgogne.
+            - UrbanIT: urbanadmin (timesheets.urbanit.be) → UrbanIT · ontwikkeling UrbanAdmin;
+              WorkManager → UrbanIT · ontwikkeling WorkManager als dat in de lijst staat,
+              anders UrbanIT · administratie; facturatie en boekhouding → UrbanIT ·
+              administratie; intern overleg → UrbanIT · vergadering.
+            - Privézaken (AH-boodschappen, agenda gezin, …) → project {{ProjectCatalogus.NietFactureerbaarId}}.
             Geplande maaltijden (🍴-recepten, avondeten, koken) en de AH-levering zijn géén
-            werktijd: daar komt helemaal geen regel voor — ook niet als "Niet factureerbaar".
+            werktijd: daar komt helemaal geen regel voor — ook niet als niet-factureerbaar.
 
             MEETREGELS — zo meet je de tijd:
             - Elke meeting uit de agenda hoort als regel in het voorstel (duur = de
@@ -304,7 +335,7 @@ public static class ActiviteitenLog
             timesheets terecht.
 
             Antwoord uitsluitend met JSON, exact dit formaat (geen extra tekst):
-            {"regels": [{"van": "HH:mm", "minuten": 60, "klant": "CED", "omschrijving": "…"}], "toelichting": "…"}
+            {"regels": [{"van": "HH:mm", "minuten": 60, "project_id": 1, "omschrijving": "…"}], "toelichting": "…"}
             """;
 
         var output = await ClaudeDrafter.RunClaudeAsync(prompt, ct);
@@ -319,10 +350,15 @@ public static class ActiviteitenLog
         }
         foreach (var el in lijst.EnumerateArray())
         {
-            var klant = el.TryGetProperty("klant", out var k) ? k.GetString() ?? "" : "";
-            klant = TimesheetStore.Klanten.FirstOrDefault(
-                    c => c.Equals(klant, StringComparison.OrdinalIgnoreCase))
-                ?? "Niet factureerbaar";
+            // project_id is de afspraak; een los label of klantnaam wordt ook nog herkend.
+            var project = el.TryGetProperty("project_id", out var pid) &&
+                (pid.TryGetInt32(out var pidv) ||
+                 (pid.ValueKind == JsonValueKind.String && int.TryParse(pid.GetString(), out pidv)))
+                ? ProjectCatalogus.Zoek(pidv)
+                : null;
+            project ??= ProjectCatalogus.Zoek(
+                el.TryGetProperty("klant", out var k) ? k.GetString() : null);
+            project ??= ProjectCatalogus.Zoek(ProjectCatalogus.NietFactureerbaarId);
             var minuten = el.TryGetProperty("minuten", out var m) &&
                 m.TryGetInt32(out var mv) ? Math.Clamp(mv, 5, 600) : 0;
             var omschrijving = el.TryGetProperty("omschrijving", out var o) ? o.GetString() ?? "" : "";
@@ -334,7 +370,8 @@ public static class ActiviteitenLog
                 {
                     Datum = dag,
                     Van = van,
-                    Klant = klant,
+                    Klant = project?.Label ?? ProjectCatalogus.NietFactureerbaar,
+                    ProjectId = project?.Id,
                     Minuten = minuten,
                     Omschrijving = omschrijving,
                     Bron = "dagvoorstel",

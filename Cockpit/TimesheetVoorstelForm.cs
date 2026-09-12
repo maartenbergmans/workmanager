@@ -35,7 +35,7 @@ public sealed class TimesheetVoorstelForm : Form
         Text = $"Dagvoorstel timesheets – {dag:dddd d MMMM yyyy}" +
             (gemaaktOp is { } klaargezet ? $" (klaargezet om {klaargezet:HH:mm})" : "");
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(820, toelichting.Length > 0 ? 540 : 480);
+        Size = new Size(980, toelichting.Length > 0 ? 540 : 480);
         MinimizeBox = false;
 
         _grid = new DataGridView
@@ -49,9 +49,11 @@ public sealed class TimesheetVoorstelForm : Form
         _grid.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "Boeken", Width = 60 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Van", Width = 60 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Min", Width = 55 });
+        // Projecten uit de urbanadmin-catalogus, meest gebruikte (laatste 60 dagen) eerst.
         var klantKolom = new DataGridViewComboBoxColumn
         {
-            HeaderText = "Klant", Width = 140, FlatStyle = FlatStyle.Flat,
+            HeaderText = "Project", Width = 300, FlatStyle = FlatStyle.Flat,
+            DropDownWidth = 480, MaxDropDownItems = 20,
         };
         klantKolom.Items.AddRange(TimesheetStore.Klanten.Cast<object>().ToArray());
         _grid.Columns.Add(klantKolom);
@@ -179,8 +181,17 @@ public sealed class TimesheetVoorstelForm : Form
 
         foreach (var regel in voorstel)
         {
+            // Een klaargezet voorstel van vóór de projectcatalogus bevat nog "CED" e.d.:
+            // omzetten naar het projectlabel, anders blijft de keuzecel leeg.
+            var label = regel.ProjectId is { } id && ProjectCatalogus.Zoek(id) is { } project
+                ? project.Label
+                : ProjectCatalogus.LabelVoor(regel.Klant);
+            if (label.Length > 0 && !klantKolom.Items.Contains(label))
+            {
+                klantKolom.Items.Add(label);
+            }
             _grid.Rows.Add(
-                true, regel.Van?.ToString("HH:mm") ?? "", regel.Minuten, regel.Klant, regel.Omschrijving);
+                true, regel.Van?.ToString("HH:mm") ?? "", regel.Minuten, label, regel.Omschrijving);
         }
         WerkTotaalBij();
     }
@@ -201,7 +212,9 @@ public sealed class TimesheetVoorstelForm : Form
         {
             Datum = _dag,
             Van = TimeOnly.TryParse(rij.Cells[1].Value?.ToString(), out var van) ? van : null,
-            Klant = rij.Cells[3].Value?.ToString() is { Length: > 0 } klant ? klant : "Niet factureerbaar",
+            Klant = rij.Cells[3].Value?.ToString() is { Length: > 0 } klant
+                ? klant
+                : ProjectCatalogus.NietFactureerbaar,
             Minuten = minuten,
             Omschrijving = omschrijving,
             Bron = "dagvoorstel",
@@ -214,7 +227,7 @@ public sealed class TimesheetVoorstelForm : Form
             .Where(r => r.Cells[0].Value is true)
             .Select(Lees)
             .OfType<TimesheetRegel>()
-            .GroupBy(r => r.Klant)
+            .GroupBy(r => ProjectCatalogus.Zoek(r.Klant)?.KlantKort ?? r.Klant) // per klant
             .Select(g => $"{g.Key} {g.Sum(r => r.Minuten) / 60.0:0.##} u")
             .ToList();
         var totaal = _grid.Rows.Cast<DataGridViewRow>()

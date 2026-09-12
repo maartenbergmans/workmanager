@@ -8679,7 +8679,8 @@ public class CockpitForm : Form
         }
 
         // Meeliftende retry: eerder mislukte timesheet-doorboekingen alsnog naar urbanadmin
-        // sturen (stil; komt meteen terug als de wachtrij leeg is).
+        // sturen (stil; komt meteen terug als de wachtrij leeg is). Daarna de projectenlijst
+        // voor de timesheetkeuzes verversen (doet zelf niets als die jonger is dan 6 uur).
         _ = Task.Run(async () =>
         {
             try
@@ -8708,6 +8709,7 @@ public class CockpitForm : Form
                         AsanaOmschrijving: t.Omschrijving));
                 }
             }
+            await ProjectCatalogus.VernieuwAlsNodigAsync(_cts.Token);
         }
         catch
         {

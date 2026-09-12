@@ -9,7 +9,13 @@ public sealed class TimesheetRegel
     public Guid Id { get; set; } = Guid.NewGuid();
     public DateOnly Datum { get; set; }
     public TimeOnly? Van { get; set; } // starttijd (bekend bij meetings); leeg = 09:00
+    /// <summary>
+    /// Het projectlabel uit <see cref="ProjectCatalogus"/> ("Vriesveem · ICT management").
+    /// Oudere regels bevatten nog een vaste klantnaam ("CED", "Aqurat"): die werkt als alias.
+    /// </summary>
     public string Klant { get; set; } = "";
+    /// <summary>Het urbanadmin-project; leeg bij oudere regels (dan via <see cref="Klant"/>).</summary>
+    public int? ProjectId { get; set; }
     public int Minuten { get; set; }
     public string Omschrijving { get; set; } = "";
     public string Bron { get; set; } = ""; // "meeting" of "mail"
@@ -23,23 +29,10 @@ public sealed class TimesheetRegel
 /// </summary>
 public static class TimesheetStore
 {
-    public static readonly string[] Klanten =
-    {
-        "CED", "Aqurat", "RadiologyPartners", "Lauryssens advies", "Lauryssens laurapp",
-        "UrbanIT", "Niet factureerbaar",
-    };
-
-    /// <summary>Klant → project-id in urbanadmin (zie ook launch-config.json voor de contexten).</summary>
-    private static readonly Dictionary<string, int> ProjectIds = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["CED"] = 1,
-        ["Aqurat"] = 114,
-        ["RadiologyPartners"] = 99,
-        ["Lauryssens advies"] = 2,    // Lauryssens — Advies en consultancy
-        ["Lauryssens laurapp"] = 9,   // Lauryssens — Ontwikkeling laurapp
-        ["UrbanIT"] = 31,             // UrbanIT administratie
-        ["Niet factureerbaar"] = 30,
-    };
+    /// <summary>
+    /// De boekbare projecten als labels, meest gebruikte eerst (zie <see cref="ProjectCatalogus"/>).
+    /// </summary>
+    public static IReadOnlyList<string> Klanten => ProjectCatalogus.Labels;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
@@ -74,6 +67,13 @@ public static class TimesheetStore
 
     public static void Voeg(TimesheetRegel regel)
     {
+        // Oude klantnaam of los label → vast project + het actuele label, zodat de regel
+        // ook na een hernoeming in urbanadmin op hetzelfde project terechtkomt.
+        if (regel.ProjectId is null && ProjectCatalogus.Zoek(regel.Klant) is { } project)
+        {
+            regel.ProjectId = project.Id;
+            regel.Klant = project.Label;
+        }
         var regels = Load();
         regels.Add(regel);
         Bewaar(regels);
@@ -107,9 +107,9 @@ public static class TimesheetStore
         {
             foreach (var regel in regels.Where(r => !r.Doorgeboekt))
             {
-                if (!ProjectIds.TryGetValue(regel.Klant, out var projectId))
+                if ((regel.ProjectId ?? ProjectCatalogus.Zoek(regel.Klant)?.Id) is not { } projectId)
                 {
-                    continue; // onbekende klant: laten staan, valt op in timesheets.json
+                    continue; // onbekend project: laten staan, valt op in timesheets.json
                 }
                 var url = $"{settings.BaseUrl.TrimEnd('/')}/workmanager/werkuur/registreer/{settings.Token}";
                 using var content = new StringContent(JsonSerializer.Serialize(new

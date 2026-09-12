@@ -440,11 +440,9 @@ public static class LocatieLog
             .FirstOrDefault();
     }
 
-    /// <summary>De timesheetklant die bij een plek hoort (anders: niet factureerbaar).</summary>
+    /// <summary>Het timesheetproject dat bij een plek hoort (anders: niet factureerbaar).</summary>
     private static string KlantVoor(string plek) =>
-        TimesheetStore.Klanten.FirstOrDefault(k =>
-            plek.Contains(k.Split(' ')[0], StringComparison.OrdinalIgnoreCase)) ??
-        "Niet factureerbaar";
+        ProjectCatalogus.ZoekInTekst(plek)?.Label ?? ProjectCatalogus.NietFactureerbaar;
 
     /// <summary>
     /// De server levert ISO-8601 mét tijdzone (zie wm.php). Zelf gokken of een kale

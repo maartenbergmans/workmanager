@@ -1,8 +1,9 @@
 namespace WorkManager;
 
 /// <summary>
-/// Dialoog om een timesheetregel te maken vanuit een meeting of mail: klantkeuze
-/// (CED vooringevuld bij CED-bronnen), datum, duur in minuten en omschrijving.
+/// Dialoog om een timesheetregel te maken vanuit een meeting of mail: projectkeuze uit de
+/// urbanadmin-catalogus (meest gebruikte eerst, doorzoekbaar door te typen; CED
+/// vooringevuld bij CED-bronnen), datum, duur in minuten en omschrijving.
 /// </summary>
 public class TimesheetForm : Form
 {
@@ -11,7 +12,9 @@ public class TimesheetForm : Form
     private readonly NumericUpDown _minuten;
     private readonly TextBox _omschrijving;
 
-    public string Klant => _klant.SelectedItem as string ?? "";
+    /// <summary>Het gekozen projectlabel (leeg als de tekst geen bekend project is).</summary>
+    public string Klant => TimesheetStore.Klanten.FirstOrDefault(
+        l => l.Equals(_klant.Text.Trim(), StringComparison.OrdinalIgnoreCase)) ?? "";
     public DateOnly Datum => _datum.Waarde ?? DateOnly.FromDateTime(DateTime.Today);
     public int Minuten => (int)_minuten.Value;
     public string Omschrijving => _omschrijving.Text.Trim();
@@ -20,7 +23,7 @@ public class TimesheetForm : Form
     {
         Text = "Timesheet maken";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(560, 268);
+        Size = new Size(640, 268);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -34,12 +37,25 @@ public class TimesheetForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-        _klant = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
+        // Typen vult aan uit de lijst ("Vries" → Vriesveem-projecten); vrije tekst die geen
+        // project is, wordt bij OK geweigerd.
+        _klant = new ComboBox
+        {
+            Width = 420,
+            DropDownWidth = 480,
+            MaxDropDownItems = 20,
+            DropDownStyle = ComboBoxStyle.DropDown,
+            AutoCompleteMode = AutoCompleteMode.SuggestAppend,
+            AutoCompleteSource = AutoCompleteSource.ListItems,
+        };
         foreach (var klant in TimesheetStore.Klanten)
         {
             _klant.Items.Add(klant);
         }
-        _klant.SelectedItem = klantVoorstel is { Length: > 0 } ? klantVoorstel : null;
+        if (klantVoorstel is { Length: > 0 } && ProjectCatalogus.Zoek(klantVoorstel) is { } voorstel)
+        {
+            _klant.SelectedItem = voorstel.Label;
+        }
 
         _datum = new DatumKiezer { Waarde = datum, LeegToegestaan = false, Width = 190 };
         _minuten = new NumericUpDown
@@ -49,7 +65,7 @@ public class TimesheetForm : Form
         };
         _omschrijving = new TextBox { Dock = DockStyle.Fill, Text = omschrijving };
 
-        AddRow(grid, 0, "Klant:", _klant);
+        AddRow(grid, 0, "Project:", _klant);
         AddRow(grid, 1, "Datum:", _datum);
         AddRow(grid, 2, "Minuten:", _minuten);
         AddRow(grid, 3, "Omschrijving:", _omschrijving);
@@ -68,9 +84,9 @@ public class TimesheetForm : Form
         };
         ok.Click += (_, _) =>
         {
-            if (_klant.SelectedItem is null)
+            if (Klant.Length == 0)
             {
-                MessageBox.Show(this, "Kies een klant.", "WorkManager",
+                MessageBox.Show(this, "Kies een project uit de lijst.", "WorkManager",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }

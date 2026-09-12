@@ -542,10 +542,9 @@ public class WmWebSync
     {
         if (bron == "CED")
         {
-            return "CED";
+            return ProjectCatalogus.LabelVoor("CED");
         }
-        return TimesheetStore.Klanten.FirstOrDefault(k =>
-            titel.Contains(k.Split(' ')[0], StringComparison.OrdinalIgnoreCase)) ?? "";
+        return ProjectCatalogus.ZoekInTekst(titel)?.Label ?? "";
     }
 
     private static List<object> Berichten() =>
@@ -1166,9 +1165,7 @@ public class WmWebSync
                 {
                     Datum = DateOnly.FromDateTime(gestopt.Start.LocalDateTime),
                     Van = TimeOnly.FromDateTime(gestopt.Start.LocalDateTime),
-                    Klant = TimesheetStore.Klanten.Contains(gestopt.Klant)
-                        ? gestopt.Klant
-                        : "Niet factureerbaar",
+                    Klant = ProjectCatalogus.Zoek(gestopt.Klant)?.Label ?? ProjectCatalogus.NietFactureerbaar,
                     Minuten = gestopt.Minuten,
                     Omschrijving = gestopt.Tekst,
                     Bron = "timer",
@@ -1186,11 +1183,9 @@ public class WmWebSync
         return $"Timer loopt op: {Kort(taak.Tekst, 45)}";
     }
 
-    /// <summary>De timesheetklant die bij een taakcategorie hoort (leeg als er geen match is).</summary>
+    /// <summary>Het timesheetproject dat bij een taakcategorie hoort (leeg als er geen match is).</summary>
     private static string KlantVoorCategorie(string categorie) =>
-        TimesheetStore.Klanten.FirstOrDefault(k =>
-            k.StartsWith(categorie, StringComparison.OrdinalIgnoreCase) ||
-            categorie.StartsWith(k.Split(' ')[0], StringComparison.OrdinalIgnoreCase)) ?? "";
+        ProjectCatalogus.Zoek(categorie)?.Label ?? "";
 
     /// <summary>
     /// Laat Claude van de activiteitenlog een dagvoorstel maken en zet dat klaar op de
@@ -1287,10 +1282,11 @@ public class WmWebSync
         var minuten = inhoud.TryGetProperty("minuten", out var m) && m.TryGetInt32(out var mm) ? mm : 0;
         var omschrijving = (inhoud.TryGetProperty("omschrijving", out var o)
             ? o.GetString() ?? "" : "").Trim();
-        if (!TimesheetStore.Klanten.Contains(klant))
+        if (ProjectCatalogus.Zoek(klant) is not { } project)
         {
-            return $"Onbekende klant ({klant}).";
+            return $"Onbekend project ({klant}).";
         }
+        klant = project.Label;
         if (minuten is < 5 or > 720)
         {
             return "Aantal minuten moet tussen 5 en 720 liggen.";
@@ -1303,6 +1299,7 @@ public class WmWebSync
         {
             Datum = DateOnly.FromDateTime(DateTime.Now),
             Klant = klant,
+            ProjectId = project.Id,
             Minuten = minuten,
             Omschrijving = omschrijving,
             Bron = "webversie",
