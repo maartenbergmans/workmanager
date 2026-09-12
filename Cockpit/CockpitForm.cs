@@ -386,6 +386,26 @@ public class CockpitForm : Form
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
             }),
+            // CED is met het Totalloss-bureau (Angular-front + Laravel-backend in WSL) een
+            // volwaardig dev-project geworden: dezelfde klantgroep als de rest, mét de
+            // dagelijkse werkplek-items (Azure-portal, ISPnext, Windows App) die eerst in
+            // een los, handgebouwd CED-menu zaten.
+            ("CED ▾", new (string, Action, string?)[]
+            {
+                ("Claude — totalloss-cednl-backend", () => ClientLauncher.StartClaude(wsl + "totalloss-cednl-backend"), wsl + "totalloss-cednl-backend"),
+                ("Claude — totalloss-cednl-frontend", () => ClientLauncher.StartClaude(wsl + "totalloss-cednl-frontend"), wsl + "totalloss-cednl-frontend"),
+                ("Claude — automaticmail", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail"), @"C:\Data\Projecten\automaticmail"),
+                ("PhpStorm — totalloss-cednl-backend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-backend"), null),
+                ("PhpStorm — totalloss-cednl-frontend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-frontend"), null),
+                // start.sh = ng serve met /api-proxy naar de backend-container (:4407).
+                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "totalloss-cednl-frontend", "start.sh"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
+                ("DataGrip — Totalloss", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Totalloss")), null),
+                ("Azure-portal…", () => OpenExtern("https://portal.azure.com/"), null),
+                ("Facturen goedkeuren (ISPnext)…", () => _openInvoices(), null),
+                ($"Windows App — {CedLogin.TopdeskGebruiker}", () => StartWindowsApp(CedLogin.TopdeskGebruiker), null),
+                ($"Windows App — {CedLogin.Email}", () => StartWindowsApp(CedLogin.Email), null),
+            }),
             // WorkManager zelf als "klant": zo krijgt hij dezelfde eigen knop in de brede
             // werkbalk als de echte klanten, mét 🟢-lampje, git-status en sluiten-item.
             ("WorkManager ▾", new (string, Action, string?)[]
@@ -546,71 +566,9 @@ public class CockpitForm : Form
             projectenMenu.Show(projectenKnop, new Point(0, projectenKnop.Height + 4));
         // Breed venster: de klantknoppen naast elkaar; smal venster: alleen "Projecten ▾".
         _projectenHoofdknop = projectenKnop;
-        // CED is geen dev-project maar wel een dagelijkse werkplek: een dropdown naast de
-        // Lauryssens-klantknop met de Azure-portal en de Windows App (AVD), waarbij
-        // WorkManager de Microsoft-aanmelding voor het gekozen account invult.
-        var cedMenu = new ContextMenuStrip();
-        Theme.Style(cedMenu);
-        // De Outlook VBA-modules (Mobility/Property/MailModule) zijn CED-werk: de
-        // Claude-sessie hoort in dit ene CED-menu, niet als aparte projectgroep.
-        var automaticmailItem = new ToolStripMenuItem("Claude — automaticmail");
-        automaticmailItem.Click += (_, _) =>
-        {
-            try
-            {
-                ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail");
-                Toast.Toon(this, ThemaStem.Gestart("Claude — automaticmail"), Fluent.Globe);
-            }
-            catch (Exception ex)
-            {
-                Toast.Toon(this, $"Starten mislukt: {ex.Message}", Fluent.Globe);
-            }
-        };
-        cedMenu.Items.Add(automaticmailItem);
-        cedMenu.Items.Add(new ToolStripSeparator());
-        var azurePortalItem = new ToolStripMenuItem("Azure-portal…");
-        azurePortalItem.Click += (_, _) => OpenExtern("https://portal.azure.com/");
-        cedMenu.Items.Add(azurePortalItem);
-        // Facturen goedkeuren hoort bij het CED-werk: ook hier bereikbaar, niet alleen via
-        // de (week)taakknop in de balk en het tray-menu.
-        var ispnextItem = new ToolStripMenuItem("Facturen goedkeuren (ISPnext)…");
-        ispnextItem.Click += (_, _) => _openInvoices();
-        cedMenu.Items.Add(ispnextItem);
-        cedMenu.Items.Add(new ToolStripSeparator());
-        var windowsAppItems = new List<ToolStripMenuItem>();
-        foreach (var account in new[] { CedLogin.TopdeskGebruiker, CedLogin.Email })
-        {
-            var mi = new ToolStripMenuItem($"Windows App — {account}");
-            mi.Click += async (_, _) =>
-            {
-                Toast.Toon(this, $"Windows App starten, aanmelden als {account}…", Fluent.Globe);
-                try
-                {
-                    Toast.Toon(this, await WindowsAppLogin.StartEnMeldAanAsync(account, _cts.Token),
-                        Fluent.Globe);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Cockpit gesloten tijdens het aanmelden.
-                }
-                catch (Exception ex)
-                {
-                    Toast.Toon(this, $"Windows App-aanmelding mislukt: {ex.Message}", Fluent.Globe);
-                }
-            };
-            cedMenu.Items.Add(mi);
-            windowsAppItems.Add(mi);
-        }
-        var cedKnop = new ModernButton { Text = "CED ▾", Glyph = Fluent.Globe };
-        cedKnop.KrimpNaarInhoud(dropdown: true);
-        cedKnop.Click += (_, _) => cedMenu.Show(cedKnop, new Point(0, cedKnop.Height + 4));
-        foreach (var (knop, klantLabel, _) in _projectKnoppen)
+        foreach (var (knop, _, _) in _projectKnoppen)
         {
             toolbar.Controls.Add(knop);
-            if (klantLabel.StartsWith("Lauryssens", StringComparison.OrdinalIgnoreCase))
-            {
-                toolbar.Controls.Add(cedKnop);
-            }
         }
         toolbar.Controls.Add(projectenKnop);
         Resize += (_, _) => WerkProjectWeergaveBij();
@@ -1169,9 +1127,9 @@ public class CockpitForm : Form
             Kop("CED / Microsoft"),
             Actie("Azure-portal (CED)…", () => OpenExtern("https://portal.azure.com/")),
             Actie($"Windows App — {CedLogin.TopdeskGebruiker}…",
-                () => windowsAppItems[0].PerformClick()),
+                () => StartWindowsApp(CedLogin.TopdeskGebruiker)),
             Actie($"Windows App — {CedLogin.Email}…",
-                () => windowsAppItems[1].PerformClick()),
+                () => StartWindowsApp(CedLogin.Email)),
             Actie("Azure DevOps…", () => _openDevOps()),
             Venster("Azure-VM BI starten (VMWS-BI-MB-1)…", "azurevm"),
             Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
@@ -3416,7 +3374,7 @@ public class CockpitForm : Form
                         rij.Html = BouwTeamsHtml(h.Berichten, rij.TeamsChat);
                         rij.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n", h.Berichten
                             .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
-                                $"{(b.Beeld.Length > 0 ? "[📷 afbeelding] " : "")}{b.Tekst}"));
+                                $"{(b.Beeld.Length > 0 || b.Foto ? "[📷 afbeelding] " : "")}{b.Tekst}"));
                     }
                     else
                     {
@@ -4089,8 +4047,12 @@ public class CockpitForm : Form
         BewaarDetailConcept();
         var geselecteerd = _getoond?.MessageId ?? ""; // selectie na het vullen herstellen
 
-        // Filteren op bron, urgentie en zoektekst.
-        IEnumerable<MailBericht> berichten = _laatsteBerichten;
+        // Filteren op bron, urgentie en zoektekst. Zojuist gearchiveerde rijen blijven ook
+        // hier weg: archiveren haalt ze wel uit de ListView maar niet uit _laatsteBerichten,
+        // dus zonder dit filter zette elke herbouw (themawissel, VIP-wijziging, filter- of
+        // zoekactie) een gearchiveerde chat weer terug in de lijst.
+        IEnumerable<MailBericht> berichten = _laatsteBerichten
+            .Where(m => !_zojuistGearchiveerd.Contains(m.MessageId));
         berichten = _bronFilter.SelectedIndex switch
         {
             1 => berichten.Where(m => !m.IsChat),
@@ -4506,6 +4468,15 @@ public class CockpitForm : Form
                 sb.Append($"<img src=\"{b.Beeld}\" style=\"max-width:100%;max-height:340px;" +
                     "border-radius:6px;display:block;margin:2px 0 4px\">");
             }
+            else if (b.Foto)
+            {
+                // De foto kon niet opgehaald worden (bv. nog aan het uploaden tijdens de
+                // scrape): placeholder tonen in plaats van het bericht te verzwijgen.
+                sb.Append("<div style=\"background:#e0e0e0;border:1px dashed #b5b5b5;" +
+                    "border-radius:6px;padding:20px 14px;text-align:center;color:#616161;" +
+                    "font-size:12.5px;margin:2px 0 4px\">📷 Afbeelding — kon niet " +
+                    "opgehaald worden, bekijk ze in Teams</div>");
+            }
             sb.Append(System.Net.WebUtility.HtmlEncode(b.Tekst));
             if (b.Uitgaand && b.Tijd.Length > 0)
             {
@@ -4761,6 +4732,31 @@ public class CockpitForm : Form
         }
     }
 
+    private readonly HashSet<string> _historieBezig = new(StringComparer.Ordinal);
+
+    /// <summary>Tekst zonder het aangeplakte historieblok (voor een verse vervanging).</summary>
+    private static string ZonderHistorie(string tekst)
+    {
+        var i = tekst.IndexOf(HistorieKop, StringComparison.Ordinal);
+        return i < 0 ? tekst : tekst[..i].TrimEnd();
+    }
+
+    /// <summary>
+    /// True als de chat-historiecache oud genoeg is voor een verse ophaalbeurt;
+    /// een net voorgeladen chat (&lt; 1 minuut) hoeft niet meteen opnieuw.
+    /// </summary>
+    private static bool HistorieVerouderd(MailBericht bericht)
+    {
+        var grens = DateTimeOffset.Now.AddMinutes(-1);
+        if (bericht.TeamsChat.Length > 0)
+        {
+            return !LaadTeamsHistorie().TryGetValue(bericht.TeamsChat, out var h) ||
+                h.Opgehaald < grens;
+        }
+        return !LaadWaHistorie().TryGetValue(bericht.WhatsAppChat, out var w) ||
+            w.Opgehaald < grens;
+    }
+
     /// <summary>
     /// Plakt de laatste ±10 eerdere berichten van de conversatie onder het bericht:
     /// bij Gmail de rest van de thread (ook gelezen mails), bij WhatsApp de laatste
@@ -4768,9 +4764,46 @@ public class CockpitForm : Form
     /// </summary>
     private async Task LaadHistorieAsync(MailBericht bericht)
     {
-        if (bericht.MessageId.Length == 0 || bericht.Tekst.Contains(HistorieKop))
+        if (bericht.MessageId.Length == 0 || !_historieBezig.Add(bericht.MessageId))
         {
-            return;
+            return; // geen bronbericht, of de vorige beurt loopt nog
+        }
+        try
+        {
+            await LaadHistorieKernAsync(bericht);
+        }
+        finally
+        {
+            _historieBezig.Remove(bericht.MessageId);
+        }
+    }
+
+    private async Task LaadHistorieKernAsync(MailBericht bericht)
+    {
+        if (bericht.Tekst.Contains(HistorieKop))
+        {
+            // Al geladen. Een mailthread verandert daarna niet meer, maar een chat kan
+            // intussen verder gegaan zijn (nieuwe berichten, of een foto die tijdens de
+            // eerste scrape nog aan het uploaden was): die bij het tonen op de
+            // achtergrond verversen — de oude bubbels staan er ondertussen gewoon.
+            if ((bericht.TeamsChat.Length == 0 && bericht.WhatsAppChat.Length == 0) ||
+                !HistorieVerouderd(bericht))
+            {
+                return;
+            }
+            // Wie snel door de lijst pijlt, moet geen sleep ophaalbeurten achterlaten.
+            try
+            {
+                await Task.Delay(700, _cts.Token);
+            }
+            catch (TaskCanceledException)
+            {
+                return; // venster sluit
+            }
+            if (!ReferenceEquals(_getoond, bericht))
+            {
+                return;
+            }
         }
         List<string> regels;
         try
@@ -4800,18 +4833,25 @@ public class CockpitForm : Form
                 }
                 waCacheAlles[bericht.WhatsAppChat] = new WaHistorie(wa, avatar, DateTimeOffset.Now);
                 BewaarWaHistorie(waCacheAlles);
-                if (bericht.Tekst.Contains(HistorieKop))
-                {
-                    return;
-                }
                 bericht.Html = BouwWhatsAppHtml(wa, bericht.WhatsAppChat, avatar);
-                // Ook als tekst bewaren: daar leest Claude uit voor concepten.
-                bericht.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n",
+                // Ook als tekst bewaren: daar leest Claude uit voor concepten. Een eerdere
+                // historie wordt vervangen — de chat kan intussen verder gegaan zijn.
+                bericht.Tekst = ZonderHistorie(bericht.Tekst) +
+                    $"\n\n{HistorieKop}\n" + string.Join("\n",
                     wa.AsEnumerable().Reverse()
                         .Select(b => $"[{b.Tijd}] {b.Afzender}: {b.Tekst}"));
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } waCore)
                 {
                     waCore.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                }
+                // Zelfde als bij Teams: het versregister mee verversen, anders komt een
+                // herstart met de oude momentopname terug.
+                var waVers = VersRegister.WaVers.Load();
+                if (waVers.TryGetValue(bericht.MessageId, out var wv) && wv.Geladen)
+                {
+                    wv.Html = bericht.Html;
+                    wv.Tekst = bericht.Tekst;
+                    VersRegister.WaVers.Bewaar(waVers);
                 }
                 return;
             }
@@ -4839,18 +4879,25 @@ public class CockpitForm : Form
                 }
                 tCacheAlles[bericht.TeamsChat] = new TeamsHistorie(tb, DateTimeOffset.Now);
                 BewaarTeamsHistorie(tCacheAlles);
-                if (bericht.Tekst.Contains(HistorieKop))
-                {
-                    return;
-                }
                 bericht.Html = BouwTeamsHtml(tb, bericht.TeamsChat);
                 // Ook als tekst bewaren: daar leest Claude uit voor concepten.
-                bericht.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n", tb
+                bericht.Tekst = ZonderHistorie(bericht.Tekst) +
+                    $"\n\n{HistorieKop}\n" + string.Join("\n", tb
                     .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
-                        $"{(b.Beeld.Length > 0 ? "[📷 afbeelding] " : "")}{b.Tekst}"));
+                        $"{(b.Beeld.Length > 0 || b.Foto ? "[📷 afbeelding] " : "")}{b.Tekst}"));
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } tCore2)
                 {
                     tCore2.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                }
+                // Ook het versregister verversen: rijen die de zijbalk al kwijt is (chat
+                // in Teams gelezen) komen daar na een herstart vandaan — zonder update
+                // zouden die weer de oude momentopname tonen.
+                var tVers = VersRegister.TeamsVers.Load();
+                if (tVers.TryGetValue(bericht.MessageId, out var tv) && tv.Geladen)
+                {
+                    tv.Html = bericht.Html;
+                    tv.Tekst = bericht.Tekst;
+                    VersRegister.TeamsVers.Bewaar(tVers);
                 }
                 return;
             }
@@ -5210,11 +5257,17 @@ public class CockpitForm : Form
                         knop.Bezig = false;
                     }
                 }
-                DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
+                // De cache bevat één dag; een run voor een eerdere dag (dagwissel) mag het
+                // om 16:30 klaargezette voorstel van vandaag niet overschrijven.
+                if (dag == DateOnly.FromDateTime(DateTime.Now))
+                {
+                    DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
+                }
             }
             if (voorstel.Count == 0)
             {
-                Toast.Toon(this, "Geen bruikbaar voorstel — nog te weinig sporen vandaag?", Fluent.Document);
+                Toast.Toon(this,
+                    $"Geen bruikbaar voorstel — te weinig sporen op {dag:d MMMM}?", Fluent.Document);
                 return;
             }
 
@@ -5222,7 +5275,17 @@ public class CockpitForm : Form
             var keuze = dialog.ShowDialog(this);
             if (keuze == DialogResult.Retry)
             {
-                versGevraagd = true;
+                if (dialog.GewisseldNaar is { } andereDag)
+                {
+                    // Dagwissel (bv. gisteren vergeten te boeken): eerst de cache van die
+                    // dag proberen, een verse run blijft via "Vernieuwen" beschikbaar.
+                    dag = andereDag;
+                    versGevraagd = false;
+                }
+                else
+                {
+                    versGevraagd = true;
+                }
                 continue;
             }
             if (keuze != DialogResult.OK)
@@ -6826,6 +6889,27 @@ public class CockpitForm : Form
         if (_projectenHoofdknop is not null)
         {
             _projectenHoofdknop.Visible = !breed;
+        }
+    }
+
+    /// <summary>
+    /// Start de Windows App (AVD) en vult de Microsoft-aanmelding voor het gekozen
+    /// CED-account in. Aangeroepen vanuit het CED-klantmenu en het ⋯-menu.
+    /// </summary>
+    private async void StartWindowsApp(string account)
+    {
+        Toast.Toon(this, $"Windows App starten, aanmelden als {account}…", Fluent.Globe);
+        try
+        {
+            Toast.Toon(this, await WindowsAppLogin.StartEnMeldAanAsync(account, _cts.Token), Fluent.Globe);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cockpit gesloten tijdens het aanmelden.
+        }
+        catch (Exception ex)
+        {
+            Toast.Toon(this, $"Windows App-aanmelding mislukt: {ex.Message}", Fluent.Globe);
         }
     }
 

@@ -242,23 +242,44 @@ public sealed class AhSessie
         tekst.Contains("opnieuw te laten weten wie je bent", StringComparison.OrdinalIgnoreCase) ||
         tekst.Contains("Log in met een Passkey", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Wacht tot het loginformulier er staat en vult het dan één keer in.</summary>
+    /// <summary>
+    /// Wacht tot het loginformulier er staat, vult het in en blijft dan geduldig (±3 min)
+    /// meekijken: de Inloggen-knop blijft geblokkeerd tot Maarten zelf het hCaptcha-vinkje
+    /// zet (bewust handwerk), maar zodra de knop bruikbaar wordt klikt de app zelf. Is het
+    /// loginscherm daarna voorbij, dan verbergt het venster zich en krijgt de bezorgradar
+    /// meteen een snelle herkansing — het vinkje is zo het enige handwerk.
+    /// </summary>
     private async Task ProbeerLoginAsync(AhLoginSettings login, CancellationToken ct)
     {
         try
         {
-            for (var poging = 0; poging < 10; poging++)
+            var formulierGezien = false;
+            var wegStreak = 0;
+            for (var poging = 0; poging < 90; poging++)
             {
-                await Task.Delay(1000, ct);
-                if (_web?.CoreWebView2 is not { } core)
+                await Task.Delay(2000, ct);
+                if (_web?.CoreWebView2 is not { } core || !_zichtbaar)
                 {
-                    return;
+                    return; // venster al gesloten (of app gaat dicht)
                 }
                 var r = await core.ExecuteScriptAsync(LoginScript(login.Email, login.Wachtwoord));
-                if (r != "\"geen-login\"")
+                LaatsteLoginDiagnose = $"{DateTime.Now:HH:mm:ss} venster-script={r}";
+                if (r.StartsWith("\"geen-login", StringComparison.Ordinal))
                 {
-                    return; // ingevuld/geklikt, of de pagina is al voorbij het loginscherm
+                    // Geen loginformulier (meer). Dat is pas een gelukte login als de
+                    // pagina óók de loginhost verlaten heeft en dat twee metingen op rij
+                    // zo blijft — tijdens het (her)laden is er ook heel even geen
+                    // formulier, en dan het venster verbergen zou het inloggen afkappen.
+                    if (formulierGezien && !r.Contains("login.ah.be") && ++wegStreak >= 2)
+                    {
+                        Verberg();
+                        AhBezorgRadar.PlanSnelleHerkansing();
+                        return;
+                    }
+                    continue;
                 }
+                wegStreak = 0;
+                formulierGezien = true;
             }
         }
         catch
@@ -269,8 +290,10 @@ public sealed class AhSessie
 
     /// <summary>
     /// Vult e-mail en wachtwoord in (op de React-manier: native setter + input-event, anders
-    /// ziet de pagina de waarde niet) en klikt op de Inloggen-knop. De hCaptcha wordt bewust
-    /// niet aangeraakt: toont die een challenge, dan is dat aan Maarten.
+    /// ziet de pagina de waarde niet — en alleen als het veld nog leeg is, want dit script
+    /// draait herhaald) en klikt op de Inloggen-knop zodra die bruikbaar is. De hCaptcha
+    /// wordt bewust niet aangeraakt: dat vinkje is aan Maarten; tot die tijd houdt ah.be de
+    /// knop disabled en meldt dit script 'wacht-captcha'.
     /// </summary>
     private static string LoginScript(string email, string wachtwoord)
     {
@@ -289,8 +312,8 @@ public sealed class AhSessie
                 }
                 var mail = document.querySelector('input[type="email"], ' +
                     'input[autocomplete="username"], input[name*="mail" i], input[id*="mail" i]');
-                if (mail && !mail.disabled && !mail.readOnly) { vul(mail, {{e}}); }
-                vul(pw, {{w}});
+                if (mail && !mail.disabled && !mail.readOnly && !mail.value) { vul(mail, {{e}}); }
+                if (!pw.value) { vul(pw, {{w}}); }
                 var knoppen = Array.prototype.slice.call(
                     document.querySelectorAll('button, input[type="submit"]'));
                 var knop = knoppen.find(function (b) {
@@ -303,6 +326,7 @@ public sealed class AhSessie
                     knoppen: knoppen.length,
                 };
                 if (knop && !knop.disabled) { knop.click(); info.stap = 'geklikt'; }
+                else if (knop) { info.stap = 'wacht-captcha'; }
                 else {
                     var form = pw.closest('form');
                     if (form) {

@@ -446,10 +446,11 @@ public class TeamTasksForm : Form
                 _uitgeklapt.Add(lid);
             }
         }
-        // Positie en selectie onthouden: na een wijziging of verwijdering hoor je op (de buurt
-        // van) dezelfde rij te blijven staan, niet terug bovenaan de lijst.
+        // Positie en selectie onthouden: na een wijziging of afvinken hoor je op (de buurt
+        // van) dezelfde rij te blijven staan, zonder dat het scherm verspringt. De echte
+        // scrollstand in pixels bewaren — TopItem is met groepen onbetrouwbaar.
         var vorigeSelectie = _list.SelectedIndices.Count > 0 ? _list.SelectedIndices[0] : -1;
-        var vorigeTop = _list.Items.Count > 0 ? _list.TopItem?.Index ?? 0 : 0;
+        var vorigeScroll = _list.Items.Count > 0 ? _list.VerticaleScroll : 0;
         _list.BeginUpdate();
         _list.Items.Clear();
         _list.Groups.Clear();
@@ -527,24 +528,16 @@ public class TeamTasksForm : Form
         }
 
         _list.EndUpdate();
-        // Geen expliciete selectie meegekregen? Dan de vorige plek herstellen: dezelfde rij-index
-        // (of de buur als de rij net verwijderd is) en dezelfde scrollpositie.
-        if (selecteer is null && _list.Items.Count > 0 && vorigeSelectie >= 0)
+        // Geen expliciete selectie meegekregen? Dan de vorige plek herstellen: dezelfde
+        // rij-index (of de buur als de rij net verdween) zónder EnsureVisible — dat zou de
+        // rij onderaan in beeld trekken — en daarna de bewaarde scrollstand terugzetten.
+        if (selecteer is null && _list.Items.Count > 0)
         {
-            var idx = Math.Min(vorigeSelectie, _list.Items.Count - 1);
-            _list.Items[idx].Selected = true;
-            _list.Items[idx].EnsureVisible();
-        }
-        else if (selecteer is null && _list.Items.Count > 0 && vorigeTop > 0)
-        {
-            try
+            if (vorigeSelectie >= 0)
             {
-                _list.TopItem = _list.Items[Math.Min(vorigeTop, _list.Items.Count - 1)];
+                _list.Items[Math.Min(vorigeSelectie, _list.Items.Count - 1)].Selected = true;
             }
-            catch
-            {
-                // TopItem is met groepen soms koppig; dan maar bovenaan.
-            }
+            _list.ScrollNaar(vorigeScroll);
         }
         _loading = false;
         UpdateStatus();

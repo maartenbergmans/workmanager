@@ -107,6 +107,29 @@ public class ModernListView : ListView
         SendMessage(Handle, LvmSetExtendedStyle, (IntPtr)LvsExDoubleBuffer, (IntPtr)LvsExDoubleBuffer);
     }
 
+    /// <summary>
+    /// Verticale scrollstand in pixels. Met groepen is <c>TopItem</c> onbetrouwbaar en zet
+    /// <c>EnsureVisible</c> de rij onderaan in beeld; via de echte scrollstand kan een
+    /// hervulde lijst exact op dezelfde plek blijven staan.
+    /// </summary>
+    public int VerticaleScroll => GetScrollPos(Handle, SbVert);
+
+    /// <summary>Scrollt naar een eerder via <see cref="VerticaleScroll"/> bewaarde stand.</summary>
+    public void ScrollNaar(int positie)
+    {
+        const int LvmScroll = 0x1014;
+        var delta = positie - GetScrollPos(Handle, SbVert);
+        if (delta != 0)
+        {
+            SendMessage(Handle, LvmScroll, IntPtr.Zero, (IntPtr)delta);
+        }
+    }
+
+    private const int SbVert = 1;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetScrollPos(IntPtr hWnd, int nBar);
+
     private void TekenKop(object? sender, DrawListViewColumnHeaderEventArgs e)
     {
         var g = e.Graphics!;

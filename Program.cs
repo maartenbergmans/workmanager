@@ -331,7 +331,8 @@ static class Program
                         args[1], 15, CancellationToken.None);
                     klaarBer.SetResult(string.Join(Environment.NewLine, berichten.Select(b =>
                         $"[{b.Tijd}] {(b.Uitgaand ? "IK" : b.Auteur)}: " +
-                        $"{(b.Beeld.Length > 0 ? $"[📷 {b.Beeld.Length} tekens] " : "")}" +
+                        $"{(b.Beeld.Length > 0 ? $"[📷 {b.Beeld.Length} tekens] "
+                            : b.Foto ? "[📷 niet opgehaald] " : "")}" +
                         $"{b.Tekst[..Math.Min(60, b.Tekst.Length)]}")));
                 }
                 catch (Exception ex)
@@ -527,6 +528,7 @@ static class Program
                 "vakanties" => new VakantiesForm(),
                 "vakantiesdump" => new VakantiesForm(alleenInspecteren: true),
                 "verlof" => new SdWorxPortaalForm(),
+                "verlofdump" => new SdWorxPortaalForm(alleenInspecteren: true),
                 "ebox" => new EboxForm(),
                 "teambewerk" => new TeamTaakBewerkForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" },

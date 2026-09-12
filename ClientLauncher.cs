@@ -55,6 +55,8 @@ public static class ClientLauncher
         ("ced", "green", "CED"),
         // De Outlook VBA-modules (Mobility/Property/MailModule) zijn CED-werk.
         ("automaticmail", "green", "CED"),
+        // Het Totalloss-bureau (totalloss-cednl-backend/-frontend) is óók CED-werk.
+        ("totalloss", "green", "CED"),
         // RadiologyPartners: cyan sluit aan bij de teal klantkleur in de cockpit.
         ("bloom", "cyan", "RadiologyPartners"),
         // Vriesveemlogistiek (Movaware) en Vriesveem (Cellaware) elk hun eigen kleur.

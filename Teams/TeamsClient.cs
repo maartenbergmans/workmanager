@@ -334,22 +334,214 @@ public sealed class TeamsClient : IDisposable
         _venster.Size = WerkFormaat; // terug naar het grote buiten-beeld-werkformaat
     }
 
-    private static string KlikJs(string zoekExpressie) =>
-        $$"""
-        (function () {
-            const doel = {{zoekExpressie}};
-            if (!doel) return false;
-            const b = doel.getBoundingClientRect();
-            const opts = { bubbles: true, cancelable: true, view: window,
-                clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
-            for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
-                                'pointerup', 'mouseup', 'click']) {
-                doel.dispatchEvent(type.startsWith('pointer')
-                    ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
+    /// <summary>Diagnose van de trusted klikken (%APPDATA%\WorkManager\teams-klik-debug.txt).</summary>
+    private void LogKlik(string melding)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(DataDir, "teams-klik-debug.txt"),
+                $"{DateTime.Now:HH:mm:ss} {melding}\r\n");
+        }
+        catch
+        {
+            // Alleen diagnose.
+        }
+    }
+
+    /// <summary>
+    /// Echte (trusted) muisklik via het DevTools-protocol op viewport-coördinaten.
+    /// De nieuwe Teams-DOM controleert isTrusted en negeert synthetische DOM-events
+    /// (dispatchEvent-reeksen komen er sinds september 2026 niet meer aan).
+    /// </summary>
+    private async Task CdpKlikAsync(double x, double y)
+    {
+        var core = _web!.CoreWebView2!;
+        // Zelfde reeks en velden als Puppeteer/Playwright: eerst bewegen, dan indrukken
+        // (buttons=1) en na een menselijke pauze loslaten (buttons=0).
+        foreach (var (type, knop, knoppen, telling, pauze) in new[]
+        {
+            ("mouseMoved", "none", 0, 0, 60),
+            ("mousePressed", "left", 1, 1, 80),
+            ("mouseReleased", "left", 0, 1, 0),
+        })
+        {
+            var resultaat = await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent",
+                JsonSerializer.Serialize(new
+                {
+                    type, x, y, button = knop, buttons = knoppen,
+                    clickCount = telling, pointerType = "mouse",
+                }));
+            if (resultaat is not ("{}" or ""))
+            {
+                LogKlik($"cdp {type} ({x},{y}) → {resultaat}");
             }
-            return true;
-        })()
-        """;
+            if (pauze > 0)
+            {
+                await Task.Delay(pauze);
+            }
+        }
+    }
+
+    // Verhouding tussen CSS-coördinaten en wat het DevTools-protocol verwacht: bij
+    // DPI-schaling komt een klik op CSS-coördinaten soms op een ándere plek aan. Wordt
+    // automatisch gekalibreerd door te meten waar de eerste klik echt landt.
+    private double _cdpSchaal = 1;
+
+    /// <summary>
+    /// Echte (trusted) Enter-toets via het DevTools-protocol, voor het element dat op
+    /// dat moment focus heeft — een muisklik geeft een Fluent-rij wél focus maar gaat
+    /// af en toe verloren wanneer React de rij nét hermount tussen indrukken en
+    /// loslaten; het toetsenbord is dan de tweede route.
+    /// </summary>
+    private async Task CdpEnterAsync()
+    {
+        var core = _web!.CoreWebView2!;
+        foreach (var type in new[] { "rawKeyDown", "keyUp" })
+        {
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent",
+                JsonSerializer.Serialize(new
+                {
+                    type, key = "Enter", code = "Enter",
+                    windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13,
+                }));
+            await Task.Delay(60);
+        }
+    }
+
+    /// <summary>
+    /// Zoekt het element dat de JS-expressie oplevert, scrolt het in beeld en klikt het
+    /// trusted aan (zie <see cref="CdpKlikAsync"/>). Meet via een capture-listener waar
+    /// de klik werkelijk landt en stelt de schaal bij als dat niet op het doel was.
+    /// False als het element er niet is.
+    /// </summary>
+    private async Task<bool> KlikTrustedAsync(string zoekExpressie)
+    {
+        var gescrold = await JsAsync(
+            $$"""
+            (function () {
+                const doel = {{zoekExpressie}};
+                if (!doel) return false;
+                doel.scrollIntoView({ block: 'center' });
+                return true;
+            })()
+            """);
+        if (gescrold != "true")
+        {
+            return false;
+        }
+        // De (gevirtualiseerde) lijst kan na het scrollen nog re-layouten en banners kunnen
+        // alles een rij opschuiven: pas meten als het doel écht op het meetpunt ligt
+        // (hit-test met elementFromPoint), en dan meteen klikken.
+        var x = 0;
+        var y = 0;
+        for (var meting = 0; meting < 5; meting++)
+        {
+            await Task.Delay(meting == 0 ? 350 : 250);
+            var ruw = await JsAsync(
+                $$"""
+                (function () {
+                    const doel = {{zoekExpressie}};
+                    if (!doel) return '';
+                    const b = doel.getBoundingClientRect();
+                    const x = Math.round(b.x + b.width / 2), y = Math.round(b.y + b.height / 2);
+                    const raak = document.elementFromPoint(x, y);
+                    if (!raak || !(doel.contains(raak) || raak.contains(doel))) {
+                        doel.scrollIntoView({ block: 'center' });
+                        return 'verschoven';
+                    }
+                    return x + '|' + y;
+                })()
+                """);
+            string plek;
+            try
+            {
+                plek = JsonSerializer.Deserialize<string>(ruw) ?? "";
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+            if (plek.Length == 0)
+            {
+                return false; // doel is uit de DOM verdwenen
+            }
+            if (plek == "verschoven")
+            {
+                continue;
+            }
+            var delen = plek.Split('|');
+            if (delen.Length != 2 || !int.TryParse(delen[0], out x) ||
+                !int.TryParse(delen[1], out y))
+            {
+                return false;
+            }
+            break;
+        }
+        if (x == 0 && y == 0)
+        {
+            LogKlik("doel blijft verschuiven; klik overgeslagen");
+            return false;
+        }
+        for (var poging = 0; poging < 3; poging++)
+        {
+            await JsAsync(
+                """
+                (function () {
+                    window.__wmKlikRaak = null;
+                    window.addEventListener('click', e => window.__wmKlikRaak =
+                        { x: e.clientX, y: e.clientY, trusted: e.isTrusted },
+                        { capture: true, once: true });
+                    return true;
+                })()
+                """);
+            await CdpKlikAsync(x * _cdpSchaal, y * _cdpSchaal);
+            await Task.Delay(250);
+            var raakRuw = await JsAsync("JSON.stringify(window.__wmKlikRaak)");
+            string raakJson;
+            try
+            {
+                raakJson = JsonSerializer.Deserialize<string>(raakRuw) ?? "null";
+            }
+            catch (JsonException)
+            {
+                raakJson = "null";
+            }
+            if (raakJson is "null")
+            {
+                // Geen klik-event gezien: waarschijnlijk buiten het venster beland
+                // (te grote schaal) of opgeslokt — devicePixelRatio als tweede gok.
+                var dprRuw = await JsAsync("String(window.devicePixelRatio || 1)");
+                var dpr = double.TryParse(JsonSerializer.Deserialize<string>(dprRuw),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 1;
+                LogKlik($"klik ({x},{y}) ×{_cdpSchaal:0.###} kwam niet aan; probeer ×{dpr:0.###}");
+                if (Math.Abs(_cdpSchaal - dpr) < 0.001)
+                {
+                    return true; // zelfde schaal nogmaals proberen heeft geen zin
+                }
+                _cdpSchaal = dpr;
+                continue;
+            }
+            using var raak = JsonDocument.Parse(raakJson);
+            var rx = raak.RootElement.GetProperty("x").GetDouble();
+            var ry = raak.RootElement.GetProperty("y").GetDouble();
+            if (Math.Abs(rx - x) <= 4 && Math.Abs(ry - y) <= 4)
+            {
+                return true; // raak
+            }
+            // Verkeerde plek: schaal herleiden uit de meting en opnieuw klikken.
+            if (rx > 1)
+            {
+                LogKlik($"klik ({x},{y}) ×{_cdpSchaal:0.###} landde op ({rx:0},{ry:0}); herkalibreren");
+                _cdpSchaal *= x / rx;
+            }
+            else
+            {
+                return true; // onbruikbare meting: niet blijven proberen
+            }
+        }
+        return true;
+    }
 
     /// <summary>
     /// Parkeert de sessie op de (lege) "Concepten"-weergave. Teams heropent bij een reload
@@ -360,12 +552,12 @@ public sealed class TeamsClient : IDisposable
     {
         try
         {
-            await JsAsync(KlikJs(
+            await KlikTrustedAsync(
                 """
                 [...document.querySelectorAll('[role="treeitem"], [role="listitem"], [data-tid]')]
                     .find(el => (el.textContent || '').trim() === 'Concepten' ||
                                 (el.textContent || '').trim() === 'Drafts')
-                """));
+                """);
             await Task.Delay(800);
         }
         catch
@@ -501,27 +693,35 @@ public sealed class TeamsClient : IDisposable
                 if (stand !== null && (stand === 'true') === {{(aan ? "true" : "false")}}) {
                     return 'al-goed|' + chip.outerHTML.slice(0, 200);
                 }
-                // Volledige pointer-reeks: Teams negeert een kale .click() geregeld (zelfde
-                // les als bij het aanklikken van chatrijen).
+                // Niet zelf klikken: synthetische events negeert Teams (isTrusted-check),
+                // dus alleen de plek doorgeven — de echte klik komt via het DevTools-protocol.
+                chip.scrollIntoView({ block: 'center' });
                 const b = chip.getBoundingClientRect();
-                const opts = { bubbles: true, cancelable: true, view: window,
-                    clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
-                for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
-                                    'pointerup', 'mouseup', 'click']) {
-                    chip.dispatchEvent(type.startsWith('pointer')
-                        ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
-                }
-                return 'geklikt|' + chip.outerHTML.slice(0, 200);
+                return 'klik|' + Math.round(b.x + b.width / 2) + '|' +
+                    Math.round(b.y + b.height / 2) + '|' + chip.outerHTML.slice(0, 200);
             })()
             """);
+        string uitslag;
         try
         {
-            return JsonSerializer.Deserialize<string>(ruw) ?? "";
+            uitslag = JsonSerializer.Deserialize<string>(ruw) ?? "";
         }
         catch (JsonException)
         {
             return ruw;
         }
+        if (uitslag.StartsWith("klik|", StringComparison.Ordinal))
+        {
+            var delen = uitslag.Split('|');
+            if (delen.Length >= 3 && int.TryParse(delen[1], out var x) &&
+                int.TryParse(delen[2], out var y))
+            {
+                await CdpKlikAsync(x, y);
+                return "geklikt|" + string.Join('|', delen.Skip(3));
+            }
+            return "geen-chip";
+        }
+        return uitslag;
     }
 
     /// <summary>
@@ -793,31 +993,24 @@ public sealed class TeamsClient : IDisposable
                     })()
                     """));
             }
-            var geklikt = await JsAsync(MetSelector(
+            var geklikt = await KlikTrustedAsync(MetSelector(
                 $$"""
-                (function () {
+                (() => {
                     const naam = {{JsonSerializer.Serialize(naam)}};
                     let items = [...document.querySelectorAll(__SELECTOR__)];
                     items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
-                    const doel = items.find(it =>
-                        ((it.querySelector('span[title]')?.getAttribute('title')) ||
-                         it.textContent || '').includes(naam));
-                    if (!doel) return 'niet gevonden';
-                    doel.scrollIntoView({ block: 'center' });
-                    const b = doel.getBoundingClientRect();
-                    const opts = { bubbles: true, cancelable: true, view: window,
-                        clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
-                    for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
-                                        'pointerup', 'mouseup', 'click']) {
-                        doel.dispatchEvent(type.startsWith('pointer')
-                            ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
-                    }
-                    return 'ok';
+                    // Eerst op de chattitel matchen; de rijtekst pas als laatste redmiddel,
+                    // want de berichtpreview van een ándere chat kan de naam ook bevatten.
+                    const titel = it =>
+                        (it.querySelector('span[title]')?.getAttribute('title') || '').trim();
+                    return items.find(it => titel(it) === naam) ||
+                        items.find(it => titel(it).includes(naam)) ||
+                        items.find(it => (it.textContent || '').includes(naam)) || null;
                 })()
                 """));
-            if (geklikt != "\"ok\"")
+            if (!geklikt)
             {
-                return $"chat \"{naam}\" niet gevonden ({geklikt})";
+                return $"chat \"{naam}\" niet gevonden";
             }
             await Task.Delay(2500, ct);
             var dump = await JsAsync(
@@ -901,14 +1094,14 @@ public sealed class TeamsClient : IDisposable
     {
         try
         {
-            await JsAsync(KlikJs(
+            await KlikTrustedAsync(
                 """
                 document.querySelector('[data-tid="back-button"], button[aria-label*="Terug"],' +
                     'button[aria-label*="Back"]') ||
                 [...document.querySelectorAll('[data-tid="app-bar"] [aria-label], [role="tab"]')]
                     .find(el => /^(chat|chatten)\b/i.test((el.getAttribute('aria-label') ||
                         el.textContent || '').trim()))
-                """));
+                """);
             // Wachten tot de rijen er zijn in plaats van blind 1,5 s (max. 1,5 s).
             for (var i = 0; i < 10; i++)
             {
@@ -1287,7 +1480,119 @@ public sealed class TeamsClient : IDisposable
     }
 
     public sealed record TeamsChatBericht(
-        string Tijd, string Auteur, bool Uitgaand, string Tekst, string Beeld = "");
+        string Tijd, string Auteur, bool Uitgaand, string Tekst, string Beeld = "",
+        bool Foto = false);
+
+    /// <summary>
+    /// Opent een chat uit de (gevirtualiseerde) chatlijst met een echte klik — zo nodig
+    /// scrollend tot de rij gerenderd is — en controleert daarna dat hij ook écht
+    /// openstaat: een gemiste klik laat gewoon de bovenste chat zien en zou stilletjes
+    /// de verkeerde berichten opleveren. Aanroeper houdt het slot vast.
+    /// </summary>
+    private async Task OpenChatAsync(string naam, CancellationToken ct)
+    {
+        var zoekRij =
+            $$"""
+            (() => {
+                const naam = {{JsonSerializer.Serialize(naam)}};
+                let items = [...document.querySelectorAll(
+                    '[data-testid="list-item"], [data-tid^="chat-list-item"],' +
+                    '[data-tid="chat-list"] [role="listitem"], [role="list"] [role="listitem"]')];
+                items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                // Eerst op de chattitel matchen; de rijtekst pas als laatste redmiddel,
+                // want de berichtpreview van een ándere chat kan de naam ook bevatten.
+                const titel = it =>
+                    (it.querySelector('span[title]')?.getAttribute('title') || '').trim();
+                return items.find(it => titel(it) === naam) ||
+                    items.find(it => titel(it).includes(naam)) ||
+                    items.find(it => (it.textContent || '').includes(naam)) || null;
+            })()
+            """;
+        var verifieer =
+            $$"""
+            (function () {
+                const naam = {{JsonSerializer.Serialize(naam)}};
+                // Groepschats: zijbalknaam "Henny, Kevin" ≈ kop met statusbolletjes
+                // ertussen — daarom per deelnaam controleren.
+                const delen = naam.split(',').map(s => s.trim()).filter(s => s.length > 1);
+                const kop = [...document.querySelectorAll('h2')]
+                    .map(h => h.textContent || '').join(' ') + ' ' + document.title;
+                return delen.length > 0 && delen.every(d => kop.includes(d));
+            })()
+            """;
+        for (var poging = 0; poging < 6; poging++)
+        {
+            var gevonden = await KlikTrustedAsync(zoekRij);
+            if (!gevonden)
+            {
+                // Gevirtualiseerde lijst: alleen zichtbare rijen bestaan in de DOM,
+                // dus scrollend zoeken tot de gevraagde chat gerenderd is.
+                for (var stap = 0; stap < 25 && !gevonden; stap++)
+                {
+                    var verder = await JsAsync(
+                        """
+                        (function () {
+                            let scroller = document.querySelector(
+                                '[data-testid="list-item"], [data-tid^="chat-list-item"]');
+                            while (scroller && scroller !== document.body) {
+                                const s = getComputedStyle(scroller);
+                                if (/(auto|scroll)/.test(s.overflowY) &&
+                                    scroller.scrollHeight > scroller.clientHeight + 10) break;
+                                scroller = scroller.parentElement;
+                            }
+                            if (!scroller || scroller === document.body) return 'geen-scroller';
+                            const voor = scroller.scrollTop;
+                            scroller.scrollTop += scroller.clientHeight * 0.8;
+                            return scroller.scrollTop > voor ? 'gescrold' : 'einde';
+                        })()
+                        """);
+                    if (!verder.Contains("gescrold"))
+                    {
+                        break;
+                    }
+                    await Task.Delay(250, ct);
+                    gevonden = await KlikTrustedAsync(zoekRij);
+                }
+            }
+            if (gevonden)
+            {
+                await Task.Delay(2500, ct); // chat laten laden
+                if (await JsAsync(verifieer) == "true")
+                {
+                    return;
+                }
+                // De klik gaf de rij focus maar navigeerde niet (rij nét hermount):
+                // Enter als tweede route, dat opent de gefocuste rij alsnog.
+                await CdpEnterAsync();
+                await Task.Delay(1800, ct);
+                if (await JsAsync(verifieer) == "true")
+                {
+                    return;
+                }
+                LogKlik($"verify mis voor \"{naam}\": kop = " + await JsAsync(
+                    """
+                    ([...document.querySelectorAll('h2')]
+                        .map(h => (h.textContent || '').trim()).join(' ~ ') +
+                     ' | titel: ' + document.title).slice(0, 200)
+                    """));
+                try
+                {
+                    await using var beeld = File.Create(
+                        Path.Combine(DataDir, $"teams-klik-mis-{poging}.png"));
+                    await _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                }
+                catch
+                {
+                    // Alleen diagnose.
+                }
+            }
+            await Task.Delay(1000, ct);
+        }
+        await ParkeerOpConceptenAsync();
+        throw new InvalidOperationException(
+            $"Chat \"{naam}\" kon niet geopend worden in de Teams-lijst.");
+    }
 
     /// <summary>
     /// De laatste berichten uit een Teams-chat, gestructureerd (tijd, auteur, richting,
@@ -1316,35 +1621,7 @@ public sealed class TeamsClient : IDisposable
                 }
                 await Task.Delay(500, ct);
             }
-            var geklikt = await JsAsync(
-                $$"""
-                (function () {
-                    const naam = {{JsonSerializer.Serialize(naam)}};
-                    let items = [...document.querySelectorAll(
-                        '[data-testid="list-item"], [data-tid^="chat-list-item"],' +
-                        '[data-tid="chat-list"] [role="listitem"], [role="list"] [role="listitem"]')];
-                    items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
-                    const doel = items.find(it =>
-                        ((it.querySelector('span[title]')?.getAttribute('title')) ||
-                         it.textContent || '').includes(naam));
-                    if (!doel) return 'niet gevonden';
-                    doel.scrollIntoView({ block: 'center' });
-                    const b = doel.getBoundingClientRect();
-                    const opts = { bubbles: true, cancelable: true, view: window,
-                        clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
-                    for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown',
-                                        'pointerup', 'mouseup', 'click']) {
-                        doel.dispatchEvent(type.startsWith('pointer')
-                            ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
-                    }
-                    return 'ok';
-                })()
-                """);
-            if (geklikt != "\"ok\"")
-            {
-                throw new InvalidOperationException($"Chat \"{naam}\" niet gevonden in de Teams-lijst.");
-            }
-            await Task.Delay(2500, ct); // berichten laten laden
+            await OpenChatAsync(naam, ct);
 
             // Asynchrone verzameljob in de pagina (zelfde patroon als WhatsApp): afbeeldingen
             // in bubbels moeten per stuk geladen en naar data-URL's omgezet worden, dus het
@@ -1420,20 +1697,47 @@ public sealed class TeamsClient : IDisposable
                             // formaat. Teams gebruikt blob:-URL's én https-media (asyncgw, met
                             // sessiecookies bereikbaar).
                             let beeld = '';
-                            const kandidaten = [...(body || m).querySelectorAll('img')].filter(i => {
-                                const src = i.src || i.currentSrc || '';
-                                if (!/^(blob:|data:image|https:)/.test(src)) return false;
-                                if (i.closest('[class*="Avatar"], [data-tid*="avatar"]')) return false;
-                                const b = i.getBoundingClientRect();
-                                const breed = i.naturalWidth || i.clientWidth || b.width;
-                                const hoog = i.naturalHeight || i.clientHeight || b.height;
-                                return breed >= 50 && hoog >= 50;
-                            });
-                            // De grootste kandidaat: bij een bubbel met thumbnail + volle foto
-                            // levert dat de scherpste.
-                            const img = kandidaten.sort((a, b) =>
-                                (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth))[0];
-                            if (img && fotoBudget > 0) {
+                            const geenAvatar = i =>
+                                !i.closest('[class*="Avatar"], [data-tid*="avatar"]');
+                            const zoekKandidaten = () =>
+                                [...(body || m).querySelectorAll('img')].filter(i => {
+                                    const src = i.src || i.currentSrc || '';
+                                    if (!/^(blob:|data:image|https:)/.test(src)) return false;
+                                    if (!geenAvatar(i)) return false;
+                                    const b = i.getBoundingClientRect();
+                                    const breed = i.naturalWidth || i.clientWidth || b.width;
+                                    const hoog = i.naturalHeight || i.clientHeight || b.height;
+                                    return breed >= 50 && hoog >= 50;
+                                });
+                            let kandidaten = zoekKandidaten();
+                            // Herkenbare beeldcontainer: in een verborgen sessie mount het
+                            // img-element soms pas (veel) later dan de container eromheen.
+                            const container = !!(body || m).querySelector(
+                                '[data-testid*="image"], [data-tid*="image"], [itemtype*="Image"]');
+                            // Het bericht bevat een foto, ook als het ophalen zo meteen
+                            // mislukt: dan toont de cockpit een placeholder in plaats van
+                            // het bericht geruisloos te laten wegvallen. Een net verstuurde
+                            // foto kan nog zonder formaat in de DOM staan (upload bezig),
+                            // vandaar de tekstloze-terugval op elk niet-avatar-img.
+                            const foto = kandidaten.length > 0 || container ||
+                                (tekst.length === 0 &&
+                                [...(body || m).querySelectorAll('img')].some(i =>
+                                    geenAvatar(i) &&
+                                    /^(blob:|data:image|https:)/.test(i.src || i.currentSrc || '')));
+                            for (let poging = 0; poging < 3 && fotoBudget > 0 && !beeld &&
+                                    (kandidaten.length > 0 || container); poging++) {
+                                if (kandidaten.length === 0) {
+                                    // Container zonder img: in beeld brengen en de mount
+                                    // even de tijd geven.
+                                    m.scrollIntoView({ block: 'center' });
+                                    await new Promise(r => setTimeout(r, 900));
+                                    kandidaten = zoekKandidaten();
+                                    if (kandidaten.length === 0) continue;
+                                }
+                                // De grootste kandidaat: bij een bubbel met thumbnail + volle
+                                // foto levert dat de scherpste.
+                                const img = kandidaten.sort((a, b) =>
+                                    (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth))[0];
                                 try {
                                     // In beeld brengen: Teams laadt afbeeldingen lui, anders
                                     // blijft de src een lege placeholder.
@@ -1457,9 +1761,12 @@ public sealed class TeamsClient : IDisposable
                                         el.onerror = rej;
                                         el.src = bron;
                                     });
-                                    const schaal = Math.min(1, 900 / (bitmap.naturalWidth || 900));
+                                    if (!bitmap.naturalWidth) {
+                                        throw new Error('nog niet geladen');
+                                    }
+                                    const schaal = Math.min(1, 900 / bitmap.naturalWidth);
                                     const canvas = document.createElement('canvas');
-                                    canvas.width = Math.max(1, Math.round((bitmap.naturalWidth || 1) * schaal));
+                                    canvas.width = Math.max(1, Math.round(bitmap.naturalWidth * schaal));
                                     canvas.height = Math.max(1, Math.round((bitmap.naturalHeight || 1) * schaal));
                                     canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
                                     const jpeg = canvas.toDataURL('image/jpeg', 0.72);
@@ -1488,13 +1795,19 @@ public sealed class TeamsClient : IDisposable
                                                 fotoBudget--;
                                             }
                                         }
-                                    } catch { /* geen foto: de tekst volstaat */ }
+                                    } catch { /* volgende poging, of de placeholder */ }
+                                }
+                                if (!beeld && poging < 2) {
+                                    // Net verstuurde foto: even ademen en opnieuw zoeken —
+                                    // een paar tellen later staat hij er meestal wél.
+                                    await new Promise(r => setTimeout(r, 1100));
+                                    kandidaten = zoekKandidaten();
                                 }
                             }
-                            uitkomst.push({ tijd, auteur, uit, tekst, beeld });
+                            uitkomst.push({ tijd, auteur, uit, tekst, beeld, foto });
                         }
                         window.__wmTeamsMsgs = uitkomst
-                            .filter(o => o.tekst.length > 0 || o.beeld.length > 0);
+                            .filter(o => o.tekst.length > 0 || o.beeld.length > 0 || o.foto);
                       } catch (e) {
                         window.__wmTeamsMsgs = { leeg: true, diag: { fout: String(e).slice(0, 200) } };
                       }
@@ -1503,7 +1816,7 @@ public sealed class TeamsClient : IDisposable
                 })()
                 """);
             var json = "null";
-            for (var i = 0; i < 40; i++) // foto's omzetten kan even duren (max. ~12 s)
+            for (var i = 0; i < 100; i++) // foto's omzetten + herkansingen kan duren (max. ~30 s)
             {
                 await Task.Delay(300, ct);
                 var klaar = await JsAsync("JSON.stringify(window.__wmTeamsMsgs)");
@@ -1532,8 +1845,9 @@ public sealed class TeamsClient : IDisposable
                     e.GetProperty("auteur").GetString() ?? "",
                     e.GetProperty("uit").GetBoolean(),
                     e.GetProperty("tekst").GetString() ?? "",
-                    e.TryGetProperty("beeld", out var be) ? be.GetString() ?? "" : ""))
-                .Where(b => b.Tekst.Length > 0 || b.Beeld.Length > 0)
+                    e.TryGetProperty("beeld", out var be) ? be.GetString() ?? "" : "",
+                    e.TryGetProperty("foto", out var fo) && fo.GetBoolean()))
+                .Where(b => b.Tekst.Length > 0 || b.Beeld.Length > 0 || b.Foto)
                 .ToList();
             // Teams zet de auteursnaam alleen boven het eerste bericht van een reeks; schuif
             // hem door naar de vervolgberichten zodat in groepschats elke afzender zichtbaar is.
@@ -1673,136 +1987,47 @@ public sealed class TeamsClient : IDisposable
                 throw new InvalidOperationException("Teams is niet ingelogd.");
             }
             await TerugNaarChatlijstAsync();
-            // De hele actie draait als asynchrone job in de pagina: de rij zoeken (zo nodig
-            // door de gevirtualiseerde lijst scrollen), dan via het "…"-menu van de rij
-            // "Als gelezen markeren" kiezen. Dat stuurt de leesmarkering direct, óók in een
-            // verborgen venster zonder focus (alleen de chat openen deed dat niet — de
-            // markering bleef dan uit en de badge bleef staan). Terugvaloptie: chat openen
-            // en nadrukkelijk focus melden + naar onderen scrollen.
+            // De chat met een échte klik openen (zie OpenChatAsync: synthetische events —
+            // en dus ook het oude "…"-menu-pad met "Als gelezen markeren" — negeert Teams
+            // tegenwoordig volledig) en nadrukkelijk focus melden + naar onderen scrollen:
+            // dan vuurt de leesbevestiging (consumptionhorizon) echt.
             _gelezenToegestaan = true;
+            await OpenChatAsync(naam, ct);
             await JsAsync(
-                $$"""
+                """
                 (function () {
-                    window.__wmGelezen = null;
-                    (async () => {
-                        const naam = {{JsonSerializer.Serialize(naam)}};
-                        const res = { stap: 'start' };
-                        const wacht = ms => new Promise(r => setTimeout(r, ms));
-                        const vindRij = () => {
-                            let items = [...document.querySelectorAll(
-                                '[data-tid^="chat-list-item"], [data-tid="chat-list"] [role="listitem"],' +
-                                '[data-testid="list-item"], [role="list"] [role="listitem"]')];
-                            items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
-                            return items.find(it =>
-                                ((it.querySelector('span[title]')?.getAttribute('title')) ||
-                                 it.textContent || '').includes(naam)) || null;
-                        };
-                        const events = (el, types, extra) => {
-                            const b = el.getBoundingClientRect();
-                            const opts = { bubbles: true, cancelable: true, view: window,
-                                clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, ...extra };
-                            for (const t of types) {
-                                el.dispatchEvent(t.startsWith('pointer')
-                                    ? new PointerEvent(t, opts) : new MouseEvent(t, opts));
-                            }
-                        };
-                        const klik = el => events(el, ['pointerover', 'mouseover', 'pointerdown',
-                            'mousedown', 'pointerup', 'mouseup', 'click'], { buttons: 1 });
-                        const hover = el => events(el, ['pointerover', 'pointerenter', 'mouseover',
-                            'mouseenter', 'pointermove', 'mousemove'], {});
-                        let rij = vindRij();
-                        if (!rij) {
-                            // Gevirtualiseerde lijst: alleen zichtbare rijen bestaan in de DOM,
-                            // dus scrollend zoeken tot de gevraagde chat gerenderd is.
-                            let scroller = document.querySelector(
-                                '[data-testid="list-item"], [data-tid^="chat-list-item"]');
-                            while (scroller && scroller !== document.body) {
-                                const s = getComputedStyle(scroller);
-                                if (/(auto|scroll)/.test(s.overflowY) &&
-                                    scroller.scrollHeight > scroller.clientHeight + 10) break;
-                                scroller = scroller.parentElement;
-                            }
-                            if (scroller && scroller !== document.body) {
-                                for (let i = 0; i < 25 && !rij; i++) {
-                                    scroller.scrollTop += scroller.clientHeight * 0.8;
-                                    await wacht(250);
-                                    rij = vindRij();
-                                    if (scroller.scrollTop + scroller.clientHeight >=
-                                        scroller.scrollHeight - 5) break;
-                                }
-                            }
-                        }
-                        if (!rij) { res.stap = 'rij-niet-gevonden'; window.__wmGelezen = res; return; }
-                        rij.scrollIntoView({ block: 'center' });
-                        // Route 1: hover toont de "…"-knop van de rij → menu → "Als gelezen markeren".
-                        hover(rij);
-                        await wacht(500);
-                        const meer = rij.querySelector(
-                            '[data-tid*="more"], button[aria-label*="pties"],' +
-                            'button[aria-label*="ptions"], button[aria-haspopup="menu"]') ||
-                            rij.querySelector('button');
-                        res.meerKnop = !!meer;
-                        let menuItem = null;
-                        if (meer) {
-                            klik(meer);
-                            await wacht(800);
-                            menuItem = [...document.querySelectorAll(
-                                '[role="menuitem"], [role="menuitemcheckbox"]')]
-                                .find(el => /als gelezen|mark as read|marquer comme lu/i
-                                    .test(el.textContent || ''));
-                            res.menuTeksten = [...document.querySelectorAll('[role="menuitem"]')]
-                                .map(el => (el.textContent || '').trim().slice(0, 40)).slice(0, 15);
-                        }
-                        if (menuItem) {
-                            klik(menuItem);
-                            res.stap = 'menu-geklikt';
-                            await wacht(1200);
-                        }
-                        // Altijd óók de chat openen mét focus-signalen. Bij 1-op-1-chats zet het
-                        // menu-item "Markeren als gelezen" de chat niet betrouwbaar op gelezen;
-                        // de leesbevestiging (consumptionhorizon) vuurt pas echt als de chat
-                        // geopend en gefocust is en het paneel naar onderen gescrold wordt.
-                        document.body.dispatchEvent(new KeyboardEvent('keydown',
-                            { key: 'Escape', bubbles: true }));
-                        await wacht(300);
-                        klik(rij);
-                        if (res.stap !== 'menu-geklikt') res.stap = 'chat-geopend';
-                        await wacht(2500);
-                        window.dispatchEvent(new Event('focus'));
-                        document.dispatchEvent(new Event('visibilitychange'));
-                        const paneel = document.querySelector(
-                            '[data-tid="message-pane-list-viewport"],' +
-                            '[data-tid="app-layout-area--main"]');
-                        if (paneel) paneel.scrollTop = paneel.scrollHeight;
-                        await wacht(2500);
-                        const rij2 = vindRij();
-                        const badge = rij2 && rij2.querySelector('[data-tid*="unread"], [class*="unread"]');
-                        res.nogOngelezen = !!(badge && badge.offsetParent !== null &&
-                            ((badge.textContent || '').trim().length > 0 ||
-                             /ongelezen|unread/i.test(badge.getAttribute('aria-label') || '')));
-                        window.__wmGelezen = res;
-                    })();
+                    window.dispatchEvent(new Event('focus'));
+                    document.dispatchEvent(new Event('visibilitychange'));
+                    const paneel = document.querySelector(
+                        '[data-tid="message-pane-list-viewport"],' +
+                        '[data-tid="app-layout-area--main"]');
+                    if (paneel) paneel.scrollTop = paneel.scrollHeight;
                     return true;
                 })()
                 """);
-            var stand = "null";
-            for (var i = 0; i < 60; i++) // de job scrolt en wacht zelf: ruim de tijd geven
-            {
-                await Task.Delay(300, ct);
-                var klaar = await JsAsync("JSON.stringify(window.__wmGelezen)");
-                if (klaar is not ("null" or "\"null\""))
-                {
-                    stand = klaar;
-                    break;
-                }
-            }
             // De leesmarkering (consumptionhorizon-call) nog even doorlaten na de klik.
-            await Task.Delay(2000, ct);
+            await Task.Delay(2500, ct);
+            var stand = await JsAsync(
+                $$"""
+                (function () {
+                    const naam = {{JsonSerializer.Serialize(naam)}};
+                    let items = [...document.querySelectorAll(
+                        '[data-tid^="chat-list-item"], [data-tid="chat-list"] [role="listitem"],' +
+                        '[data-testid="list-item"], [role="list"] [role="listitem"]')];
+                    items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+                    const titel = it =>
+                        (it.querySelector('span[title]')?.getAttribute('title') || '').trim();
+                    const rij = items.find(it => titel(it) === naam) ||
+                        items.find(it => titel(it).includes(naam)) ||
+                        items.find(it => (it.textContent || '').includes(naam));
+                    const badge = rij && rij.querySelector('[data-tid*="unread"], [class*="unread"]');
+                    return JSON.stringify({ stap: 'chat-geopend', nogOngelezen:
+                        !!(badge && badge.offsetParent !== null &&
+                        ((badge.textContent || '').trim().length > 0 ||
+                         /ongelezen|unread/i.test(badge.getAttribute('aria-label') || ''))) });
+                })()
+                """);
             Log($"resultaat: {stand}");
-            if (stand.Contains("rij-niet-gevonden"))
-            {
-                throw new InvalidOperationException($"Chat \"{naam}\" niet gevonden in de Teams-lijst.");
-            }
         }
         finally
         {

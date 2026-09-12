@@ -65,7 +65,7 @@ public class InvoiceApprovalForm : Form
         {
             Text = "Facturen ophalen", Width = 160, Kind = ButtonKind.Accent, Glyph = Fluent.Refresh,
         };
-        _fetchButton.Click += async (_, _) => await FetchInvoicesAsync();
+        _fetchButton.Click += async (_, _) => await FetchClickAsync();
         _approveButton = new ModernButton
         {
             Text = "Geselecteerde goedkeuren…", Width = 225, Enabled = false, Glyph = Fluent.Check,
@@ -351,6 +351,36 @@ public class InvoiceApprovalForm : Form
     }
 
     // ---------- Facturen ophalen ----------
+
+    /// <summary>
+    /// "Facturen ophalen": staat er nog een loginscherm, dan meteen de login-assistent
+    /// starten; staan we niet op de facturenpagina, dan ernaartoe navigeren (waarna login
+    /// en fetch vanzelf volgen). Alleen als de lijst echt bereikbaar is, wordt ze uitgelezen.
+    /// </summary>
+    private async Task FetchClickAsync()
+    {
+        if (_busy || _web.CoreWebView2 is null)
+        {
+            return;
+        }
+        if (await IsLoginSchermAsync())
+        {
+            Log("Nog niet ingelogd — de login-assistent klikt zelf door tot aan de MFA-stap; " +
+                "daarna worden de facturen automatisch opgehaald.");
+            // Bewust niet awaiten: de assistent kan minutenlang bezig zijn (MFA).
+            _ = TryLoginAssistAsync();
+            return;
+        }
+        if (!(_web.CoreWebView2.Source ?? "").Contains("/invoices", StringComparison.OrdinalIgnoreCase))
+        {
+            // Niet op de facturenpagina (bv. net gestart of ergens anders beland): ernaartoe
+            // navigeren; OnPageChangedAsync start dan vanzelf de login-assistent of de fetch.
+            Log("Naar de facturenpagina navigeren…");
+            _web.CoreWebView2.Navigate(InvoicesUrl);
+            return;
+        }
+        await FetchInvoicesAsync();
+    }
 
     private async Task FetchInvoicesAsync()
     {

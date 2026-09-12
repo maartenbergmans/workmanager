@@ -5,7 +5,9 @@ namespace WorkManager;
 /// vóórdat er iets geboekt wordt: regels uitvinken, tijden/minuten/klant/omschrijving
 /// aanpassen, en pas bij "Timesheets aanmaken" gaat het naar de wachtrij. Zelfde gedachte
 /// als <see cref="CedDagForm"/>, maar met een klantkolom omdat de dag over meerdere klanten
-/// kan lopen.
+/// kan lopen. Ook hier is de dag te wisselen (gisteren vergeten te boeken?): het venster
+/// sluit dan met DialogResult.Retry en <see cref="GewisseldNaar"/> gezet, waarna de
+/// aanroeper het voorstel voor die dag laadt.
 /// </summary>
 public sealed class TimesheetVoorstelForm : Form
 {
@@ -15,6 +17,9 @@ public sealed class TimesheetVoorstelForm : Form
 
     /// <summary>De aangevinkte regels, klaar om als timesheet weggeschreven te worden.</summary>
     public List<TimesheetRegel> Gekozen { get; } = new();
+
+    /// <summary>Bij DialogResult.Retry: de dag waarnaar gewisseld is (null = gewoon vernieuwen).</summary>
+    public DateOnly? GewisseldNaar { get; private set; }
 
     /// <param name="gemaaktOp">
     /// Tijdstip waarop dit voorstel op de achtergrond klaargezet is (16:30-voorbereiding of
@@ -82,6 +87,27 @@ public sealed class TimesheetVoorstelForm : Form
                    "verzonden mails. Vink uit wat niet geboekt moet worden; alles is aanpasbaar.",
         };
 
+        // Dagwissel (bv. gisteren vergeten te boeken): het voorstel voor die dag moet
+        // opnieuw geladen worden (cache of verse Claude-run), dus dat doet de aanroeper.
+        var dagRij = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 40,
+            Padding = new Padding(10, 8, 10, 0),
+            WrapContents = false,
+        };
+        var dagKiezer = new DatumKiezer { Width = 185, LeegToegestaan = false, Waarde = dag };
+        dagKiezer.WaardeGewijzigd += (_, _) =>
+        {
+            if (dagKiezer.Waarde is { } nieuw && nieuw != _dag)
+            {
+                GewisseldNaar = nieuw;
+                DialogResult = DialogResult.Retry;
+            }
+        };
+        dagRij.Controls.Add(new Label { Text = "Dag", AutoSize = true, Padding = new Padding(0, 6, 6, 0) });
+        dagRij.Controls.Add(dagKiezer);
+
         // De uitleg van Claude bij het voorstel (keuzes, aannames) — informatief, komt
         // nooit in de timesheets zelf terecht.
         TextBox? uitleg = null;
@@ -139,6 +165,7 @@ public sealed class TimesheetVoorstelForm : Form
             Controls.Add(uitlegPaneel); // tussen hint en grid (docking loopt achterstevoren)
         }
         Controls.Add(hint);
+        Controls.Add(dagRij);
         Controls.Add(_totaal);
         Controls.Add(knoppen);
         Theme.Apply(this);
