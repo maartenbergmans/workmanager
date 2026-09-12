@@ -407,7 +407,7 @@ static class Program
             var regels = GoogleChatClient
                 .TranscriptRegelsAsync(chatS2, args[1], 7, CancellationToken.None)
                 .GetAwaiter().GetResult();
-            var html = MailReplyForm.BouwWeergave(new MailBericht
+            var html = MailWeergave.BouwWeergave(new MailBericht
             {
                 ChatSpace = args[1],
                 Van = "diagnose",
@@ -530,7 +530,6 @@ static class Program
                 "teamuittekst" => new TeamUitTekstForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" }, "Wim"),
                 "timesheetdash" => new TimesheetDashboardForm(),
-                "dagplan" => new DagPlanForm(new List<AgendaClient.AgendaItem>()),
                 "git" => new GitStatusForm(
                     @"\\wsl.localhost\Ubuntu\home\maarten\projecten\aqurat", "aqurat"),
                 "vakanties" => new VakantiesForm(),
@@ -592,7 +591,6 @@ static class Program
                 "azurevm" => new AzureVmForm(),
                 "verjaardagen" => new VerjaardagenForm(),
                 "wmweb" => new WmWebForm(),
-                "mailvenster" => new MailReplyForm(),
                 "asana" => new AsanaSettingsForm(),
                 "agenda" => new AgendaSettingsForm(),
                 "instructies" => new InstructionsForm(),

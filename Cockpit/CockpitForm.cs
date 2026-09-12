@@ -19,7 +19,6 @@ public class CockpitForm : Form
 
     private readonly Func<IReadOnlyCollection<string>> _actieveContexts;
     private readonly Action<string> _toggleContext;
-    private readonly Action _openMail;
     private readonly Action _openTeamTasks;
     private readonly Action _openInvoices;
     private readonly Action _openTopdesk;
@@ -239,7 +238,6 @@ public class CockpitForm : Form
     public CockpitForm(
         Func<IReadOnlyCollection<string>> actieveContexts,
         Action<string> toggleContext,
-        Action openMail,
         Action openTeamTasks,
         Action openInvoices,
         Action openTopdesk,
@@ -248,7 +246,6 @@ public class CockpitForm : Form
     {
         _actieveContexts = actieveContexts;
         _toggleContext = toggleContext;
-        _openMail = openMail;
         _openTeamTasks = openTeamTasks;
         _openInvoices = openInvoices;
         _openTopdesk = openTopdesk;
@@ -273,12 +270,6 @@ public class CockpitForm : Form
                 e.Handled = true;
                 e.SuppressKeyPress = true;
                 _zoekFilter.Focus();
-            }
-            else if (e.Control && e.KeyCode == Keys.N)
-            {
-                e.Handled = true;
-                e.SuppressKeyPress = true;
-                ScratchpadForm.Toon(this);
             }
             else
             {
@@ -397,6 +388,15 @@ public class CockpitForm : Form
                 ("Claude — automaticmail", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail"), @"C:\Data\Projecten\automaticmail"),
                 ("PhpStorm — totalloss-cednl-backend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-backend"), null),
                 ("PhpStorm — totalloss-cednl-frontend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-frontend"), null),
+                // start.sh = ng serve met /api-proxy naar de backend-container (:4407).
+                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "totalloss-cednl-frontend", "start.sh"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
+                ("DataGrip — Totalloss", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Totalloss")), null),
+                ("Azure-portal…", () => OpenExtern("https://portal.azure.com/"), null),
+                ("Facturen goedkeuren (ISPnext)…", () => _openInvoices(), null),
+                ($"Windows App — {CedLogin.TopdeskGebruiker}", () => StartWindowsApp(CedLogin.TopdeskGebruiker), null),
+                ($"Windows App — {CedLogin.Email}", () => StartWindowsApp(CedLogin.Email), null),
+            }),
             // UrbanIT's eigen projecten: urbanadmin (timesheets.urbanit.be — Laravel-backend
             // in de devenv-container op :4408, Angular-webapp via start.sh) en de website.
             ("UrbanIT ▾", new (string, Action, string?)[]
@@ -410,15 +410,6 @@ public class CockpitForm : Form
                 ("DataGrip — UrbanIT", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "UrbanIT")), null),
                 ("Deploytool — urbanadmin/backend (default)", () => ClientLauncher.StartDeploytool(wsl + @"urbanadmin\backend", "default"), null),
                 ("Claude — urbanit-website", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\urbanit-website"), @"C:\Data\Projecten\urbanit-website"),
-            }),
-                // start.sh = ng serve met /api-proxy naar de backend-container (:4407).
-                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "totalloss-cednl-frontend", "start.sh"), null),
-                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
-                ("DataGrip — Totalloss", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Totalloss")), null),
-                ("Azure-portal…", () => OpenExtern("https://portal.azure.com/"), null),
-                ("Facturen goedkeuren (ISPnext)…", () => _openInvoices(), null),
-                ($"Windows App — {CedLogin.TopdeskGebruiker}", () => StartWindowsApp(CedLogin.TopdeskGebruiker), null),
-                ($"Windows App — {CedLogin.Email}", () => StartWindowsApp(CedLogin.Email), null),
             }),
             // WorkManager zelf als "klant": zo krijgt hij dezelfde eigen knop in de brede
             // werkbalk als de echte klanten, mét 🟢-lampje, git-status en sluiten-item.
@@ -1036,15 +1027,6 @@ public class CockpitForm : Form
         timesheetDashboardKnop.KrimpNaarInhoud();
         claudeUpdateKnop.KrimpNaarInhoud();
 
-        // Dagplanning: volgorde, duurschatting en of je rond geraakt.
-        var dagPlanKnop = new ModernButton { Text = "Dagplanning", Glyph = Fluent.Ster };
-        dagPlanKnop.KrimpNaarInhoud();
-        dagPlanKnop.Click += (_, _) =>
-        {
-            using var form = new DagPlanForm(HuidigeMeetings());
-            form.ShowDialog(this);
-            _ = VerversTakenAsync(); // afgevinkte planitems meteen uit de takenlijst
-        };
         // Focusbalk: klein strookje bovenaan het scherm met alleen de volgende actie.
         var focusKnop = new ModernButton { Text = "Focus", Glyph = Fluent.Ster };
         focusKnop.KrimpNaarInhoud();
@@ -1056,7 +1038,6 @@ public class CockpitForm : Form
 
         toolbar.Controls.Add(_verversButton);
         toolbar.Controls.Add(verversMeerKnop);
-        toolbar.Controls.Add(dagPlanKnop);
         toolbar.Controls.Add(focusKnop);
         toolbar.Controls.Add(teamButton);
         toolbar.Controls.Add(_facturenButton);
@@ -1130,12 +1111,10 @@ public class CockpitForm : Form
         meerMenu.Items.AddRange(new ToolStripItem[]
         {
             Kop("Taken & werk"),
-            Venster("Dagstart…", "dagstart"),
             Venster("Mijn taken…", "mijntaken"),
             Actie("Taken team…", () => _openTeamTasks()),
             Venster("Verlof goedkeuren (SD Worx)…", "verlof"),
             Venster("e-Box Enterprise (BerMaCon)…", "ebox"),
-            Venster("Wacht op antwoord…", "followup"),
             new ToolStripSeparator(),
 
             Kop("CED / Microsoft"),
@@ -1147,7 +1126,6 @@ public class CockpitForm : Form
             Actie("Azure DevOps…", () => _openDevOps()),
             Venster("Azure-VM BI starten (VMWS-BI-MB-1)…", "azurevm"),
             Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
-            Actie("Mail beantwoorden (Gmail)…", () => _openMail()),
             Actie("TopDesk-tickets…", () => _openTopdesk()),
             new ToolStripSeparator(),
 
@@ -1155,12 +1133,34 @@ public class CockpitForm : Form
             Venster("AH-bestelling…", "ah"),
             Venster("Bureaublad opruimen…", "bureaublad"),
             Venster("Verjaardagen & cadeaus…", "verjaardagen"),
-            Venster("VIP-lijst…", "vip"),
             new ToolStripSeparator(),
 
             Kop("Instellingen & extra"),
             Actie("Archiveerregels…", () => regelsKnop.PerformClick()),
             Actie("Claude-usage…", () => usageKnop.PerformClick()),
+            // Instellingen die vroeger alleen via het mailvenster en de Dagstart bereikbaar waren.
+            Actie("Gmail-instellingen (mailassistent)…", () =>
+            {
+                using var form = new MailSettingsForm();
+                if (form.ShowDialog(this) == DialogResult.OK)
+                {
+                    Toast.Toon(this, "Gmail-instellingen bewaard", Fluent.Check);
+                }
+            }),
+            Actie("Instructies mailassistent…", () =>
+            {
+                using var form = new InstructionsForm();
+                form.ShowDialog(this);
+            }),
+            Actie("Reisassistent…", () =>
+            {
+                using var form = new ReisSettingsForm();
+                if (form.ShowDialog(this) == DialogResult.OK)
+                {
+                    Toast.Toon(this, "Reisinstellingen bewaard", Fluent.Check);
+                }
+            }),
+            Venster("Kennisvoorstellen (CLAUDE.md)…", "kennis"),
             themaMenuItem,
             Venster("WorkManager online…", "webversie"),
         });
@@ -1338,9 +1338,7 @@ public class CockpitForm : Form
                 { IsChat: false, OutlookMail.Length: 0, SmartschoolBericht.Length: 0 } &&
                 BijlagenNaarDrive.HeeftBijlagen(b);
         };
-        var mailvensterItem = new ToolStripMenuItem("Openen in mailvenster…");
-        mailvensterItem.Click += (_, _) => _openMail();
-        berichtenMenu.Items.Add(mailvensterItem);
+
         _berichten.ContextMenuStrip = berichtenMenu;
         _berichten.SelectedIndexChanged += (_, _) => ToonDetail();
         _berichten.ShowItemToolTips = true;
@@ -2557,10 +2555,16 @@ public class CockpitForm : Form
             {
                 // Diagnose: welke kliks/navigaties komen hier echt aan? (Custom wm-schema's
                 // bleken Chromium soms stilletjes te blokkeren — zie de cadeauknop-saga.)
+                // Alleen echte links/wm-schema's, ingekort: data:-URI's bevatten de volledige
+                // mail als base64 en lieten dit bestand tot 650 MB aangroeien.
                 try
                 {
-                    File.AppendAllText(Path.Combine(DataDir, "detail-nav-debug.txt"),
-                        $"{DateTime.Now:HH:mm:ss} {e.Uri}\r\n");
+                    if (!e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) &&
+                        !e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.AppendAllText(Path.Combine(DataDir, "detail-nav-debug.txt"),
+                            $"{DateTime.Now:HH:mm:ss} {(e.Uri.Length > 200 ? e.Uri[..200] + "…" : e.Uri)}\r\n");
+                    }
                 }
                 catch
                 {
@@ -2584,7 +2588,7 @@ public class CockpitForm : Form
                         ccIndex >= 0 && ccIndex < overzicht.CcDetails.Count &&
                         _detail.CoreWebView2 is { } ccCore)
                     {
-                        ccCore.NavigateToString(MailReplyForm.BouwWeergave(
+                        ccCore.NavigateToString(MailWeergave.BouwWeergave(
                             overzicht.CcDetails[ccIndex], terugNaarCcOverzicht: true));
                     }
                 }
@@ -2595,7 +2599,7 @@ public class CockpitForm : Form
                     if (_getoond is { CcDetails.Count: > 0 } ccLijst &&
                         _detail.CoreWebView2 is { } terugCore)
                     {
-                        terugCore.NavigateToString(MailReplyForm.BouwWeergave(ccLijst));
+                        terugCore.NavigateToString(MailWeergave.BouwWeergave(ccLijst));
                     }
                 }
                 // De knop "Cadeau-ideeën openen" bij een taak van de cadeauradar. Bewust een
@@ -2613,7 +2617,7 @@ public class CockpitForm : Form
                     OpenExtern(e.Uri);
                 }
             };
-            core.NavigateToString(_wachtendeWeergave ?? MailReplyForm.LegeWeergave);
+            core.NavigateToString(_wachtendeWeergave ?? MailWeergave.LegeWeergave);
             _wachtendeWeergave = null;
         }
         catch
@@ -4319,11 +4323,11 @@ public class CockpitForm : Form
     {
         if (_detail.CoreWebView2 is { } core)
         {
-            core.NavigateToString(MailReplyForm.LegeWeergave);
+            core.NavigateToString(MailWeergave.LegeWeergave);
         }
         else
         {
-            _wachtendeWeergave = MailReplyForm.LegeWeergave;
+            _wachtendeWeergave = MailWeergave.LegeWeergave;
         }
     }
 
@@ -4332,7 +4336,7 @@ public class CockpitForm : Form
         BewaarDetailConcept();
         _detailLosVanLijst = false;
         _getoond = GeselecteerdBericht();
-        var html = _getoond is null ? MailReplyForm.LegeWeergave : MailReplyForm.BouwWeergave(_getoond);
+        var html = _getoond is null ? MailWeergave.LegeWeergave : MailWeergave.BouwWeergave(_getoond);
         if (_detail.CoreWebView2 is { } core)
         {
             core.NavigateToString(html);
@@ -4834,7 +4838,7 @@ public class CockpitForm : Form
                         waCache.Berichten, bericht.WhatsAppChat, waCache.Avatar);
                     if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } cacheCore)
                     {
-                        cacheCore.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                        cacheCore.NavigateToString(MailWeergave.BouwWeergave(bericht));
                     }
                 }
                 // WhatsApp krijgt een echte bubbelweergave in plaats van platte regels.
@@ -4856,7 +4860,7 @@ public class CockpitForm : Form
                         .Select(b => $"[{b.Tijd}] {b.Afzender}: {b.Tekst}"));
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } waCore)
                 {
-                    waCore.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                    waCore.NavigateToString(MailWeergave.BouwWeergave(bericht));
                 }
                 // Zelfde als bij Teams: het versregister mee verversen, anders komt een
                 // herstart met de oude momentopname terug.
@@ -4881,7 +4885,7 @@ public class CockpitForm : Form
                     bericht.Html = BouwTeamsHtml(tCache.Berichten, bericht.TeamsChat);
                     if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } tCore)
                     {
-                        tCore.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                        tCore.NavigateToString(MailWeergave.BouwWeergave(bericht));
                     }
                 }
                 var tb = await TeamsClient.Instance.LaatsteBerichtenAsync(
@@ -4901,7 +4905,7 @@ public class CockpitForm : Form
                         $"{(b.Beeld.Length > 0 || b.Foto ? "[📷 afbeelding] " : "")}{b.Tekst}"));
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } tCore2)
                 {
-                    tCore2.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                    tCore2.NavigateToString(MailWeergave.BouwWeergave(bericht));
                 }
                 // Ook het versregister verversen: rijen die de zijbalk al kwijt is (chat
                 // in Teams gelezen) komen daar na een herstart vandaan — zonder update
@@ -4953,7 +4957,7 @@ public class CockpitForm : Form
         }
         if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } core)
         {
-            core.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+            core.NavigateToString(MailWeergave.BouwWeergave(bericht));
         }
     }
 
@@ -5071,7 +5075,7 @@ public class CockpitForm : Form
             }
             if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } core)
             {
-                core.NavigateToString(MailReplyForm.BouwWeergave(bericht));
+                core.NavigateToString(MailWeergave.BouwWeergave(bericht));
             }
             Toast.Toon(this, "Volledige mail opgehaald (in Outlook nu als gelezen)", Fluent.Mail);
         }
@@ -6269,7 +6273,7 @@ public class CockpitForm : Form
         _uitschrijfButton.Visible = false;
         _outlookLeesButton.Visible = false;
         WerkAntwoordblokBij();
-        var html = MailReplyForm.BouwWeergave(bericht);
+        var html = MailWeergave.BouwWeergave(bericht);
         if (_detail.CoreWebView2 is { } core)
         {
             core.NavigateToString(html);
@@ -6332,7 +6336,7 @@ public class CockpitForm : Form
             _berichten.SelectedItems.Clear();
             _getoond = bericht;
             _detailLosVanLijst = true;
-            var html = MailReplyForm.BouwWeergave(bericht);
+            var html = MailWeergave.BouwWeergave(bericht);
             if (_detail.CoreWebView2 is { } core)
             {
                 core.NavigateToString(html);
@@ -6607,7 +6611,7 @@ public class CockpitForm : Form
                 ReferenceEquals(_getoond, mail) && !IsDisposed &&
                 _detail.CoreWebView2 is { } core)
             {
-                core.NavigateToString(MailReplyForm.BouwWeergave(mail));
+                core.NavigateToString(MailWeergave.BouwWeergave(mail));
             }
         }
         catch
@@ -7063,7 +7067,7 @@ public class CockpitForm : Form
         }
         if (ReferenceEquals(_getoond, mail) && !IsDisposed && _detail.CoreWebView2 is { } core)
         {
-            core.NavigateToString(MailReplyForm.BouwWeergave(mail));
+            core.NavigateToString(MailWeergave.BouwWeergave(mail));
         }
         _vertaalButton.Text = mail is { Vertaling.Length: > 0, VertaalVerborgen: false }
             ? "🌐 Origineel" : "🌐 Vertaling";
@@ -7755,7 +7759,7 @@ public class CockpitForm : Form
         var adres = settings.BillitAdres.Trim();
         if (adres.Length == 0)
         {
-            Toast.Toon(this, "Geen Billit-adres ingesteld — vul dat in via het mailvenster → Instellingen", Fluent.Globe);
+            Toast.Toon(this, "Geen Billit-adres ingesteld — vul dat in via ⋯ → Gmail-instellingen", Fluent.Globe);
             return;
         }
         // Zelfde keuzedialoog als in het mailvenster: per bijlage aanvinken (standaard niets,
@@ -8705,6 +8709,7 @@ public class CockpitForm : Form
             {
                 // Volgende verversing opnieuw proberen.
             }
+            await ProjectCatalogus.VernieuwAlsNodigAsync(_cts.Token);
         }, _cts.Token);
         // Eerst de (trage) Asana-call, en pas daarná de lokale taken laden: vink je tijdens
         // die seconden een taak af, dan bouwde een al-lopende verversing de lijst anders op
@@ -8723,7 +8728,6 @@ public class CockpitForm : Form
                         AsanaOmschrijving: t.Omschrijving));
                 }
             }
-            await ProjectCatalogus.VernieuwAlsNodigAsync(_cts.Token);
         }
         catch
         {
@@ -9675,7 +9679,7 @@ public class CockpitForm : Form
         if (m.Omschrijving.Trim().Length > 0)
         {
             extra.Append(Rij("Omschrijving",
-                MailReplyForm.EncodeMetLinks(m.Omschrijving.Trim()).Replace("\n", "<br>")));
+                MailWeergave.EncodeMetLinks(m.Omschrijving.Trim()).Replace("\n", "<br>")));
         }
         // O365/CED-afspraken hebben in de lijst alleen tijd en titel; de genodigden en de
         // omschrijving worden per afspraak uit de webagenda geplukt (en daarna gecachet).
@@ -9685,7 +9689,7 @@ public class CockpitForm : Form
             if (_o365Details.TryGetValue(o365Sleutel, out var o365))
             {
                 extra.Append(Rij("Uit Outlook",
-                    MailReplyForm.EncodeMetLinks(o365).Replace("\n", "<br>")));
+                    MailWeergave.EncodeMetLinks(o365).Replace("\n", "<br>")));
             }
             else if (_o365Mislukt.TryGetValue(o365Sleutel, out var wanneer) &&
                      DateTimeOffset.Now - wanneer < TimeSpan.FromSeconds(90))

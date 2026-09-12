@@ -37,11 +37,8 @@ public class TrayAppContext : ApplicationContext
     private IntPtr _iconHandle = IntPtr.Zero;
     private readonly HashSet<string> _active;
     private InvoiceApprovalForm? _invoiceForm;
-    private MailReplyForm? _mailForm;
     private TeamTasksForm? _tasksForm;
     private MijnTakenForm? _mijnTakenForm;
-    private BriefingForm? _briefingForm;
-    private FollowUpForm? _followUpForm;
     private bool _snoozeBusy;
     private bool _reminderShowing;
     private DateOnly _takenHerinnerd; // laatste dag waarop de taken-melding getoond is
@@ -87,6 +84,9 @@ public class TrayAppContext : ApplicationContext
     public TrayAppContext()
     {
         Directory.CreateDirectory(DataDir);
+        // Maandelijks de browsercache van de ingebouwde vensters legen — vóór er een WebView2
+        // opent, want daarna zijn de mappen vergrendeld. Logins blijven staan.
+        WebViewCacheOpruimer.ZorgVoorMaandelijks();
         _active = LoadState();
 
         _trayIcon = new NotifyIcon
@@ -216,7 +216,7 @@ public class TrayAppContext : ApplicationContext
             if (_trayIcon.Visible)
             {
                 TrayMelding.Toon(titel, tekst,
-                    opentPrep ? OpenBriefing : null, opentPrep ? 8000 : 15000);
+                    opentPrep ? OpenCockpit : null, opentPrep ? 8000 : 15000);
             }
         };
 
@@ -225,7 +225,7 @@ public class TrayAppContext : ApplicationContext
         {
             if (_trayIcon.Visible)
             {
-                TrayMelding.Toon(titel, tekst, OpenFollowUp);
+                TrayMelding.Toon(titel, tekst, OpenCockpit);
             }
         };
 
@@ -279,6 +279,13 @@ public class TrayAppContext : ApplicationContext
         activiteitenTimer.Start();
         ActiviteitenLog.Noteer();
 
+        // Werkjournaal: elk uur de dag- en weeksamenvattingen bijwerken (blijvend, i.t.t. de
+        // minuutlog die na 21 dagen verdwijnt) — bronmateriaal om later advies op te baseren.
+        var journaalTimer = new System.Windows.Forms.Timer { Interval = 60 * 60_000 };
+        journaalTimer.Tick += (_, _) => Task.Run(Werkjournaal.WerkBij);
+        journaalTimer.Start();
+        _ = Task.Delay(TimeSpan.FromMinutes(2)).ContinueWith(_ => Werkjournaal.WerkBij());
+
         // Bij het starten meteen de cockpit tonen: dat is het startpunt van de dag.
         OpenCockpit();
     }
@@ -288,13 +295,6 @@ public class TrayAppContext : ApplicationContext
     {
         try
         {
-        // Werkjournaal: elk uur de dag- en weeksamenvattingen bijwerken (blijvend, i.t.t. de
-        // minuutlog die na 21 dagen verdwijnt) — bronmateriaal om later advies op te baseren.
-        var journaalTimer = new System.Windows.Forms.Timer { Interval = 60 * 60_000 };
-        journaalTimer.Tick += (_, _) => Task.Run(Werkjournaal.WerkBij);
-        journaalTimer.Start();
-        _ = Task.Delay(TimeSpan.FromMinutes(2)).ContinueWith(_ => Werkjournaal.WerkBij());
-
             if (await AhBonusRadar.CheckWekelijksAsync(CancellationToken.None) is { } melding &&
                 _trayIcon.Visible)
             {
@@ -347,10 +347,6 @@ public class TrayAppContext : ApplicationContext
         var cockpit = new ToolStripMenuItem("Cockpit…");
         cockpit.Click += (_, _) => OpenCockpit();
         menu.Items.Add(cockpit);
-
-        var dagstart = new ToolStripMenuItem("Dagstart…");
-        dagstart.Click += (_, _) => OpenBriefing();
-        menu.Items.Add(dagstart);
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -435,18 +431,6 @@ public class TrayAppContext : ApplicationContext
         };
         menu.Items.Add(ah);
 
-        var mail = new ToolStripMenuItem("Mail beantwoorden (Gmail)…");
-        mail.Click += (_, _) => OpenMailReply();
-        menu.Items.Add(mail);
-
-        var followUp = new ToolStripMenuItem("Wacht op antwoord…") { Tag = "followup" };
-        followUp.Click += (_, _) => OpenFollowUp();
-        menu.Items.Add(followUp);
-
-        var vip = new ToolStripMenuItem("VIP-lijst…");
-        vip.Click += (_, _) => OpenVip();
-        menu.Items.Add(vip);
-
         var verjaardagen = new ToolStripMenuItem("Verjaardagen & cadeaus…");
         verjaardagen.Click += (_, _) => OpenVerjaardagen();
         menu.Items.Add(verjaardagen);
@@ -511,12 +495,6 @@ public class TrayAppContext : ApplicationContext
                     mi.Text = open > 0 ? $"Mijn taken ({open} open)…" : "Mijn taken…";
                     continue;
                 }
-                if (tag == "followup")
-                {
-                    var wachtend = FollowUpRadar.Actief().Count;
-                    mi.Text = wachtend > 0 ? $"Wacht op antwoord ({wachtend})…" : "Wacht op antwoord…";
-                    continue;
-                }
                 mi.Checked = tag == "autostart" ? IsAutoStartEnabled() : _active.Contains(tag);
             }
         };
@@ -569,8 +547,6 @@ public class TrayAppContext : ApplicationContext
     private static Bitmap MaakKleurStip(Color kleur)
     {
         var bmp = new Bitmap(16, 16);
-    private KennisVoorstellenForm? _kennisForm;
-
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var brush = new SolidBrush(kleur);
@@ -591,22 +567,9 @@ public class TrayAppContext : ApplicationContext
             ?.Invoke(_trayIcon, null);
     }
 
-    private VipForm? _vipForm;
-
-    private void OpenVip()
-    {
-        if (_vipForm is { IsDisposed: false })
-        {
-            _vipForm.Activate();
-            return;
-        }
-
-        _vipForm = new VipForm();
-        _vipForm.FormClosed += (_, _) => _vipForm = null;
-        _vipForm.Show();
-    }
-
     private VerjaardagenForm? _verjaardagenForm;
+
+    private KennisVoorstellenForm? _kennisForm;
 
     private void OpenVerjaardagen()
     {
@@ -676,21 +639,11 @@ public class TrayAppContext : ApplicationContext
             // Ctrl,Ctrl (of het tray-menu): altijd gemaximaliseerd en écht op de voorgrond,
             // ook als een ander programma de focus heeft.
             NaarVoorgrond(_cockpitForm);
-            case "kennis":
-                if (_kennisForm is { IsDisposed: false })
-                {
-                    _kennisForm.Activate();
-                    break;
-                }
-                _kennisForm = new KennisVoorstellenForm();
-                _kennisForm.FormClosed += (_, _) => _kennisForm = null;
-                _kennisForm.Show();
-                break;
             return;
         }
 
         _cockpitForm = new CockpitForm(
-            () => _active, ToggleClient, OpenMailReply, OpenTeamTasks, OpenInvoiceApproval,
+            () => _active, ToggleClient, OpenTeamTasks, OpenInvoiceApproval,
             OpenTopdesk, OpenDevOps, OpenVenster);
         _cockpitForm.FormClosed += (_, _) => _cockpitForm = null;
         _cockpitForm.Show();
@@ -705,9 +658,6 @@ public class TrayAppContext : ApplicationContext
     {
         switch (naam)
         {
-            case "dagstart":
-                OpenBriefing();
-                break;
             case "mijntaken":
                 OpenMijnTaken();
                 break;
@@ -723,14 +673,18 @@ public class TrayAppContext : ApplicationContext
                     bestel.ShowDialog();
                 }
                 break;
-            case "followup":
-                OpenFollowUp();
-                break;
-            case "vip":
-                OpenVip();
-                break;
             case "verjaardagen":
                 OpenVerjaardagen();
+                break;
+            case "kennis":
+                if (_kennisForm is { IsDisposed: false })
+                {
+                    _kennisForm.Activate();
+                    break;
+                }
+                _kennisForm = new KennisVoorstellenForm();
+                _kennisForm.FormClosed += (_, _) => _kennisForm = null;
+                _kennisForm.Show();
                 break;
             case "webversie":
                 OpenWebversie();
@@ -935,19 +889,6 @@ public class TrayAppContext : ApplicationContext
             voorbeeld, OpenMijnTaken, 6000);
     }
 
-    private void OpenBriefing()
-    {
-        if (_briefingForm is { IsDisposed: false })
-        {
-            _briefingForm.Activate();
-            return;
-        }
-
-        _briefingForm = new BriefingForm();
-        _briefingForm.FormClosed += (_, _) => _briefingForm = null;
-        _briefingForm.Show();
-    }
-
     /// <summary>
     /// Stelt op een werkdag vanaf 8u één keer de dagstartbriefing samen en meldt hem in de
     /// tray; klikken op de melding opent het dagstartvenster. Buiten de kantooruren of op een
@@ -977,7 +918,7 @@ public class TrayAppContext : ApplicationContext
             var tekst = briefing.Samenvatting.Length > 0
                 ? briefing.Samenvatting
                 : $"{briefing.Afspraken} afspraken · {briefing.OpenTaken} open taken";
-            TrayMelding.Toon("Dagstart", Kort(tekst, 240), OpenBriefing, 10000);
+            TrayMelding.Toon("Dagstart", Kort(tekst, 240), OpenCockpit, 10000);
         }
         catch
         {
@@ -1214,19 +1155,6 @@ public class TrayAppContext : ApplicationContext
 
     private static string Kort(string tekst, int max) => tekst.Length > max ? tekst[..max] + "…" : tekst;
 
-    private void OpenFollowUp()
-    {
-        if (_followUpForm is { IsDisposed: false })
-        {
-            _followUpForm.Activate();
-            return;
-        }
-
-        _followUpForm = new FollowUpForm();
-        _followUpForm.FormClosed += (_, _) => _followUpForm = null;
-        _followUpForm.Show();
-    }
-
     private void OpenTeamTasks()
     {
         if (_tasksForm is { IsDisposed: false })
@@ -1238,19 +1166,6 @@ public class TrayAppContext : ApplicationContext
         _tasksForm = new TeamTasksForm();
         _tasksForm.FormClosed += (_, _) => _tasksForm = null;
         _tasksForm.Show();
-    }
-
-    private void OpenMailReply()
-    {
-        if (_mailForm is { IsDisposed: false })
-        {
-            _mailForm.Activate();
-            return;
-        }
-
-        _mailForm = new MailReplyForm();
-        _mailForm.FormClosed += (_, _) => _mailForm = null;
-        _mailForm.Show();
     }
 
     private void ToggleClient(string client)
