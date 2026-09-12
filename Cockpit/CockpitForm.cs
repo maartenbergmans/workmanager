@@ -2476,6 +2476,38 @@ public class CockpitForm : Form
         split.Panel2.Controls.Add(onderSplit);
 
         Controls.Add(split);
+        // Verjaardagsmodus: een feestbanner bovenaan zolang er vandaag een gezinslid jarig is.
+        var feestBanner = new Label
+        {
+            Dock = DockStyle.Top,
+            Height = 34,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font(Theme.BaseFont.FontFamily, Theme.BaseFont.Size + 3, FontStyle.Bold),
+            BackColor = Theme.Accent,
+            ForeColor = Theme.Bg,
+            Cursor = Cursors.Hand,
+        };
+        void WerkFeestBannerBij()
+        {
+            var tekst = Feestdag.BannerTekst();
+            feestBanner.Text = tekst;
+            feestBanner.Visible = tekst.Length > 0;
+        }
+        feestBanner.Click += (_, _) => Confetti.Vier(this);
+        WerkFeestBannerBij();
+        var feestTimer = new System.Windows.Forms.Timer { Interval = 10 * 60_000 };
+        feestTimer.Tick += (_, _) => WerkFeestBannerBij();
+        feestTimer.Start();
+        FormClosed += (_, _) => feestTimer.Dispose();
+        Shown += (_, _) =>
+        {
+            if (Feestdag.EersteKeerVieren())
+            {
+                Confetti.Vier(this);
+                Prestaties.Gebeurtenis(this, "feest");
+            }
+        };
+        Controls.Add(feestBanner);
         Controls.Add(toolbar);
 
         _berichten.Resize += (_, _) => SchaalAlleKolommen();
@@ -10298,11 +10330,8 @@ public class CockpitForm : Form
         _konamiStand = 0;
         Confetti.Vier(this);
         Prestaties.Gebeurtenis(this, "konami");
-        var record = Vieringen.Record();
-        Toast.Toon(this, record > 0
-            ? $"🎮 Cheatcode geactiveerd — geen extra levens, wel je record: {record} dagen op rij leeg"
-            : "🎮 Cheatcode geactiveerd — helaas, taken afvinken moet je nog steeds zelf",
-            Fluent.Ster);
+        // De cheatcode onthult de geheime missie van vandaag.
+        GeheimeMissie.Onthul(this);
     }
 
     /// <summary>

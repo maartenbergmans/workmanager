@@ -191,6 +191,12 @@ public class TrayAppContext : ApplicationContext
             _ = FollowUpRadar.ZorgVoorMeldingAsync(CancellationToken.None); // wie wacht er op antwoord
             _ = OnbeantwoordRadar.ZorgVoorTakenAsync(CancellationToken.None); // ma: vragen die bij mij blijven liggen
             DossierPunten.ZorgVoorTaken(); // ma: openstaande punten uit de klantdossiers
+            Feestdag.ZorgVoorDagErvoor(OpenMijnTaken); // dag vóór een gezinsverjaardag: pannenkoekencheck
+            if (GeheimeMissie.ControleerGisteren() is { } missie) // 's ochtends: missie van gisteren beoordeeld
+            {
+                TrayMelding.Toon(missie.Titel, missie.Tekst, OpenCockpit, 12000);
+            }
+            Weetjes.ZorgVoor(); // twee keer per werkdag een "wist je dat" uit je eigen data
             // Elke ochtend: toezeggingen uit je eigen verzonden mails van gisteren als taak.
             _ = BelofteRadar.ZorgVoorAsync(CancellationToken.None, n =>
                 TrayMelding.Toon("Beloftes opgevolgd",

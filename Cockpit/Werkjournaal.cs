@@ -59,8 +59,10 @@ public static class Werkjournaal
         prompt = Regex.Replace(prompt,
             @"(?i)\b(wachtwoord|paswoord|password|passwd|pwd|pass|token|secret|api[-_ ]?key)\b(\s*(is|=|:)?\s*)\S+",
             "$1$2[verborgen]");
-        // Het startprompt "/color …" zet WorkManager zelf; dat is geen werk.
-        if (prompt.Length == 0 || prompt.StartsWith("/color", StringComparison.OrdinalIgnoreCase))
+        // Het startprompt "/color …" zet WorkManager zelf; dat is geen werk. Berichten die met
+        // een tag beginnen (<task-notification>, <local-command-…>) zijn systeemverkeer.
+        if (prompt.Length == 0 || prompt.StartsWith("/color", StringComparison.OrdinalIgnoreCase) ||
+            prompt.StartsWith('<'))
         {
             return;
         }
@@ -665,6 +667,17 @@ public static class Werkjournaal
     }
 
     // ---------------------------------------------------------------- lezen
+
+    /// <summary>De dagsamenvatting van een dag (null als die er niet is).</summary>
+    public static DagSamenvatting? Dag(DateOnly dag) => LaadDag(dag);
+
+    /// <summary>De bestaande dagsamenvattingen van de laatste <paramref name="dagen"/> dagen, oudste eerst.</summary>
+    public static List<DagSamenvatting> Dagen(int dagen)
+    {
+        var vandaag = DateOnly.FromDateTime(DateTime.Now);
+        return Enumerable.Range(0, dagen).Select(i => vandaag.AddDays(-dagen + 1 + i))
+            .Select(LaadDag).OfType<DagSamenvatting>().ToList();
+    }
 
     private static DagSamenvatting? LaadDag(DateOnly dag)
     {

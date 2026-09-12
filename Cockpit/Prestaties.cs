@@ -27,6 +27,8 @@ public static class Prestaties
         new("fijnhakker", "🧩 Fijnhakker", "Een uitgestelde taak in blokjes laten hakken"),
         new("cheatcode", "🎮 Old school", "De Konami-code ontdekt"),
         new("weekendwacht", "🏖️ Weekendwacht", "Een heel weekend niets in WorkManager gedaan"),
+        new("geheim-agent", "🕵️ Geheim agent", "Een geheime missie volbracht"),
+        new("feestvarken", "🎂 Feestvarken", "Een verjaardag gevierd in de cockpit"),
     };
 
     private static readonly string StateFile = Path.Combine(
@@ -127,6 +129,12 @@ public static class Prestaties
                     break;
                 case "blokjes":
                     Ken("fijnhakker");
+                    break;
+                case "missie":
+                    Ken("geheim-agent");
+                    break;
+                case "feest":
+                    Ken("feestvarken");
                     break;
                 case "inboxzero":
                     if (int.TryParse(detail, out var reeks) && reeks >= 5)
