@@ -198,6 +198,8 @@ public class TrayAppContext : ApplicationContext
             }
             Weetjes.ZorgVoor(); // twee keer per werkdag een "wist je dat" uit je eigen data
             _ = UrenInhaler.ZorgVoorAsync(OpenDagvoorstel); // gemiste werkdagen: voorstel klaarzetten
+            _ = FacturatieRadar.ZorgVoorAsync((titel, tekst) => TrayMelding.Toon(titel, tekst,
+                () => new LeesVenster("Nog te factureren", FacturatieRadar.Overzicht).Show(), 30000));
             _ = Weekadvies.ZorgVoorAsync((titel, pad) => TrayMelding.Toon(titel,
                 "Drie tips en een compliment uit je werkjournaal van vorige week. Klik om te lezen.",
                 () => new LeesVenster("Weekadvies", pad).Show(), 30000));

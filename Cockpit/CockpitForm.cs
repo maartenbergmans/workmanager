@@ -1167,6 +1167,15 @@ public class CockpitForm : Form
             }),
             Venster("Kennisvoorstellen (CLAUDE.md)…", "kennis"),
             Actie("🎬 Aftiteling van vandaag", () => _ = Aftiteling.SpeelAsync(this)),
+            Actie("🧾 Nog te factureren…", async () =>
+            {
+                if (await FacturatieRadar.HaalOpAsync(_cts.Token) is null && !File.Exists(FacturatieRadar.Overzicht))
+                {
+                    Toast.Toon(this, "Geen facturatiegegevens — staat het urbanadmin-endpoint al op productie?", Fluent.Globe);
+                    return;
+                }
+                new LeesVenster("Nog te factureren", FacturatieRadar.Overzicht).Show(this);
+            }),
             Actie("💡 Laatste weekadvies…", () =>
             {
                 var laatste = Directory.Exists(Path.Combine(Werkjournaal.Map, "advies"))
