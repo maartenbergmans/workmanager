@@ -252,8 +252,10 @@ public static class ActiviteitenLog
                 .Select(m => $"{m.Start.LocalDateTime:HH:mm}–{m.Einde.LocalDateTime:HH:mm} {m.Titel}"),
                 "geen meetings")}}
 
-            5) Opdrachten aan Claude Code (tijdstip + projectmap):
-            {{Blok(ClaudeRegels(dag), "geen Claude-opdrachten")}}
+            5) Opdrachten aan Claude Code, per projectmap gebundeld in blokken van 20 minuten
+            (tijdvak, map, aantal opdrachten — parallelle sessies en snelle vervolgvragen
+            vallen zo niet dubbel):
+            {{Blok(ClaudeBlokken(dag), "geen Claude-opdrachten")}}
 
             6) Verzonden mails (Gmail én CED-Outlook):
             {{Blok(verzonden, "geen verzonden mails (of niet op te halen)")}}
@@ -309,10 +311,10 @@ public static class ActiviteitenLog
             - Elke meeting uit de agenda hoort als regel in het voorstel (duur = de
               agendaduur, bij de juiste klant), tenzij die tijd al door een geboekte regel
               gedekt is.
-            - Elke opdracht aan Claude Code telt voor minstens 20 minuten, ook als het
-              voorgrondvenster intussen iets anders toonde: het werk loopt op de
-              achtergrond door. Meerdere opdrachten in hetzelfde project mag je bundelen,
-              maar de som blijft minstens het aantal opdrachten × 20 minuten.
+            - Elk blok van 20 minuten met Claude-opdrachten (signaal 5) telt voor minstens
+              20 minuten in dat project, ook als het voorgrondvenster intussen iets anders
+              toonde: het werk loopt op de achtergrond door. Aaneengesloten blokken in
+              hetzelfde project voeg je samen tot één regel.
             - Elke verzonden mail telt voor minstens 15 minuten; een langere mail
               (± 150 woorden of meer) voor 20 minuten. Ook hier mag je bundelen per klant,
               met dezelfde ondergrens. Van CED-Outlookmails is geen woordental bekend
@@ -326,7 +328,13 @@ public static class ActiviteitenLog
             - De al geboekte regels zijn al gedekt: die tijd niet opnieuw voorstellen,
               alleen aanvullen wat nog ontbreekt.
 
+            BOVENGRENS: die dag telde {{ActieveMinuten(dag)}} actieve minuten achter de pc en
+            {{meetings.Where(m => !m.HeleDag && !GeenWerktijd.Is(m.Titel)).Sum(m => (int)(m.Einde - m.Start).TotalMinutes)}}
+            minuten meetings. Het totaal van alle regels (inclusief de al geboekte) mag niet
+            hoger liggen dan die twee samen: wat daarboven komt is dubbel geteld.
+
             OPDRACHT: maak een beknopt, realistisch dagvoorstel dat de gewerkte tijd dekt.
+            Geef elke regel een starttijd "van" in 24-uursnotatie (HH:mm).
             Blokken van minstens 15 min, afgerond op 15 min, aaneensluitend waar dat logisch
             is. Korte zakelijke omschrijving in het Nederlands per regel; gelijkaardig werk
             samenvoegen in plaats van versnipperen. In "toelichting" mag je gerust wat
@@ -403,7 +411,7 @@ public static class ActiviteitenLog
                     }
                     var map = doc.RootElement.TryGetProperty("map", out var m)
                         ? m.GetString() ?? "" : "";
-                    regels.Add($"{t.LocalDateTime:HH:mm} {Path.GetFileName(map.TrimEnd('\\', '/'))}");
+                    regels.Add($"{t.LocalDateTime:HH:mm} {MapLabel(map)}");
                 }
                 catch
                 {
@@ -416,6 +424,90 @@ public static class ActiviteitenLog
         {
             return new List<string>();
         }
+    }
+
+    /// <summary>
+    /// De Claude-opdrachten van één dag per projectmap gebundeld in blokken van 20 minuten;
+    /// aaneengesloten blokken worden één tijdvak: "10:00–11:00 aqurat (7 opdrachten)".
+    /// </summary>
+    private static List<string> ClaudeBlokken(DateOnly dag)
+    {
+        var perMap = new Dictionary<string, SortedDictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var regel in ClaudeRegels(dag))
+        {
+            // "HH:mm map"
+            if (regel.Length < 7 || !TimeOnly.TryParse(regel[..5], out var t))
+            {
+                continue;
+            }
+            var map = regel[6..];
+            if (!perMap.TryGetValue(map, out var slots))
+            {
+                perMap[map] = slots = new SortedDictionary<int, int>();
+            }
+            var slot = (t.Hour * 60 + t.Minute) / 20;
+            slots[slot] = slots.GetValueOrDefault(slot) + 1;
+        }
+        var uit = new List<(int Start, string Tekst)>();
+        foreach (var (map, slots) in perMap)
+        {
+            int? start = null, vorige = null, aantal = 0;
+            void Sluit()
+            {
+                if (start is { } s && vorige is { } v)
+                {
+                    var van = TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(s * 20));
+                    var tot = TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(Math.Min((v + 1) * 20, 24 * 60 - 1)));
+                    uit.Add((s, $"{van:HH:mm}–{tot:HH:mm} {map} ({aantal} opdracht{(aantal == 1 ? "" : "en")})"));
+                }
+            }
+            foreach (var (slot, n) in slots)
+            {
+                if (vorige is { } v && slot != v + 1)
+                {
+                    Sluit();
+                    start = null;
+                    aantal = 0;
+                }
+                start ??= slot;
+                vorige = slot;
+                aantal += n;
+            }
+            Sluit();
+        }
+        return uit.OrderBy(u => u.Start).Select(u => u.Tekst).ToList();
+    }
+
+    /// <summary>Het aantal minuten met invoer (één sample per actieve minuut) op die dag.</summary>
+    private static int ActieveMinuten(DateOnly dag)
+    {
+        try
+        {
+            return File.Exists(LogBestand)
+                ? File.ReadLines(LogBestand).Count(l => ParseSample(l) is { } s && DateOnly.FromDateTime(s.T.LocalDateTime) == dag)
+                : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// De projectmap als label; generieke submappen ("webapp", "backend") krijgen hun
+    /// bovenliggende map erbij, anders is niet te zien bij welk project ze horen.
+    /// </summary>
+    private static string MapLabel(string map)
+    {
+        var delen = map.TrimEnd('\\', '/').Split('\\', '/').Where(d => d.Length > 0).ToArray();
+        if (delen.Length == 0)
+        {
+            return "?";
+        }
+        var naam = delen[^1];
+        return delen.Length > 1 && naam.ToLowerInvariant() is "webapp" or "backend" or "frontend" or "src" or "app" or "api" or "html"
+            ? $"{delen[^2]}/{naam}"
+            : naam;
     }
 
     private static string Blok(IEnumerable<string> regels, string leeg)

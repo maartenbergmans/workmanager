@@ -197,6 +197,7 @@ public class TrayAppContext : ApplicationContext
                 TrayMelding.Toon(missie.Titel, missie.Tekst, OpenCockpit, 12000);
             }
             Weetjes.ZorgVoor(); // twee keer per werkdag een "wist je dat" uit je eigen data
+            _ = UrenInhaler.ZorgVoorAsync(OpenDagvoorstel); // gemiste werkdagen: voorstel klaarzetten
             // Elke ochtend: toezeggingen uit je eigen verzonden mails van gisteren als taak.
             _ = BelofteRadar.ZorgVoorAsync(CancellationToken.None, n =>
                 TrayMelding.Toon("Beloftes opgevolgd",
@@ -592,6 +593,13 @@ public class TrayAppContext : ApplicationContext
     private VerjaardagenForm? _verjaardagenForm;
 
     private KennisVoorstellenForm? _kennisForm;
+
+    /// <summary>Cockpit openen met het dagvoorstel van die dag (uren-inhaalmelding).</summary>
+    private void OpenDagvoorstel(DateOnly dag)
+    {
+        OpenCockpit();
+        _cockpitForm?.OpenDagvoorstel(dag);
+    }
 
     private void OpenVerjaardagen()
     {

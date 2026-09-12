@@ -5290,9 +5290,12 @@ public class CockpitForm : Form
     /// launcher-log en meetings van de getoonde dag samen tot timesheetregels. Eerst het
     /// controlvenster, pas daarna de wachtrij en urbanadmin — zelfde stramien als de CED-dag.
     /// </summary>
-    private async Task DagvoorstelTimesheetsAsync(ModernButton? knop)
+    /// <summary>Opent het dagvoorstel voor een bepaalde dag (bv. vanuit de uren-inhaalmelding).</summary>
+    public void OpenDagvoorstel(DateOnly dag) => _ = DagvoorstelTimesheetsAsync(null, dag);
+
+    private async Task DagvoorstelTimesheetsAsync(ModernButton? knop, DateOnly? startDag = null)
     {
-        var dag = DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset);
+        var dag = startDag ?? DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset);
 
         // Het om 16:30 (of via de gsm) klaargezette voorstel opent meteen; "Vernieuwen"
         // in het venster forceert alsnog een verse Claude-run — bv. omdat er na het
@@ -5341,12 +5344,8 @@ public class CockpitForm : Form
                         knop.Bezig = false;
                     }
                 }
-                // De cache bevat één dag; een run voor een eerdere dag (dagwissel) mag het
-                // om 16:30 klaargezette voorstel van vandaag niet overschrijven.
-                if (dag == DateOnly.FromDateTime(DateTime.Now))
-                {
-                    DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
-                }
+                // De cache houdt per dag een voorstel bij (ook voor eerdere dagen).
+                DagvoorstelCache.Bewaar(dag, voorstel, toelichting);
             }
             if (voorstel.Count == 0)
             {

@@ -7,7 +7,10 @@ namespace WorkManager;
 /// (Gmail/OWA/Teams ophalen + een claude-run), dus vanaf 16:30 wordt het voorstel alvast
 /// op de achtergrond klaargezet. De cockpitknop "Dagvoorstel…" toont dan meteen het
 /// klaarstaande voorstel; "Vernieuwen" in het venster forceert alsnog een verse run.
-/// <para>Opslag: %APPDATA%\WorkManager\dagvoorstel-cache.json.</para>
+/// <para>Opslag: %APPDATA%\WorkManager\dagvoorstel-cache.json — sinds 2026-09-12 een lijst
+/// met één voorstel per dag (hoogstens 21), zodat ook voorstellen voor gemiste dagen
+/// (<see cref="UrenInhaler"/>) naast dat van vandaag klaar kunnen staan. Het oude formaat
+/// (één object) wordt nog gelezen.</para>
 /// </summary>
 public static class DagvoorstelCache
 {
@@ -23,42 +26,77 @@ public static class DagvoorstelCache
         public List<TimesheetRegel> Regels { get; set; } = new();
     }
 
+    private static readonly object Slot = new();
+
+    private static List<Inhoud> LaadAlles()
+    {
+        try
+        {
+            if (!File.Exists(Bestand))
+            {
+                return new List<Inhoud>();
+            }
+            var json = File.ReadAllText(Bestand).TrimStart();
+            if (json.StartsWith('['))
+            {
+                return JsonSerializer.Deserialize<List<Inhoud>>(json) ?? new List<Inhoud>();
+            }
+            // Oud formaat: één voorstel.
+            return JsonSerializer.Deserialize<Inhoud>(json) is { } enkel ? new List<Inhoud> { enkel } : new List<Inhoud>();
+        }
+        catch
+        {
+            return new List<Inhoud>(); // onleesbaar: dan is er gewoon geen voorbereid voorstel
+        }
+    }
+
     /// <summary>Het klaarstaande voorstel voor deze dag, of null als er niets (meer) ligt.</summary>
     public static (List<TimesheetRegel> Regels, string Toelichting, DateTimeOffset GemaaktOp)? Laad(
         DateOnly dag)
     {
-        try
+        lock (Slot)
         {
-            if (File.Exists(Bestand) &&
-                JsonSerializer.Deserialize<Inhoud>(File.ReadAllText(Bestand)) is { } inhoud &&
-                inhoud.Dag == dag.ToString("yyyy-MM-dd"))
-            {
-                return (inhoud.Regels, inhoud.Toelichting, inhoud.GemaaktOp);
-            }
+            return LaadAlles().FirstOrDefault(i => i.Dag == dag.ToString("yyyy-MM-dd")) is { } inhoud
+                ? (inhoud.Regels, inhoud.Toelichting, inhoud.GemaaktOp)
+                : null;
         }
-        catch
+    }
+
+    /// <summary>De dagen waarvoor een voorstel klaarstaat.</summary>
+    public static List<DateOnly> Dagen()
+    {
+        lock (Slot)
         {
-            // Onleesbaar: dan is er gewoon geen voorbereid voorstel.
+            return LaadAlles().Where(i => i.Regels.Count > 0)
+                .Select(i => DateOnly.TryParse(i.Dag, out var d) ? d : (DateOnly?)null)
+                .OfType<DateOnly>().OrderBy(d => d).ToList();
         }
-        return null;
     }
 
     public static void Bewaar(DateOnly dag, List<TimesheetRegel> regels, string toelichting)
     {
-        try
+        lock (Slot)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Bestand)!);
-            File.WriteAllText(Bestand, JsonSerializer.Serialize(new Inhoud
+            try
             {
-                Dag = dag.ToString("yyyy-MM-dd"),
-                GemaaktOp = DateTimeOffset.Now,
-                Toelichting = toelichting,
-                Regels = regels,
-            }));
-        }
-        catch
-        {
-            // Cache is gemak, geen voorwaarde.
+                var alles = LaadAlles();
+                alles.RemoveAll(i => i.Dag == dag.ToString("yyyy-MM-dd"));
+                alles.Add(new Inhoud
+                {
+                    Dag = dag.ToString("yyyy-MM-dd"),
+                    GemaaktOp = DateTimeOffset.Now,
+                    Toelichting = toelichting,
+                    Regels = regels,
+                });
+                var grens = DateOnly.FromDateTime(DateTime.Now).AddDays(-21).ToString("yyyy-MM-dd");
+                alles = alles.Where(i => string.CompareOrdinal(i.Dag, grens) >= 0).OrderBy(i => i.Dag).ToList();
+                Directory.CreateDirectory(Path.GetDirectoryName(Bestand)!);
+                File.WriteAllText(Bestand, JsonSerializer.Serialize(alles));
+            }
+            catch
+            {
+                // Cache is gemak, geen voorwaarde.
+            }
         }
     }
 
