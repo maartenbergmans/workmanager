@@ -39,6 +39,7 @@ public static class GitTaken
         WslBasis + "cellaware-frontend",
         WslBasis + "totalloss-cednl-backend",
         WslBasis + "totalloss-cednl-frontend",
+        WslBasis + "urbanadmin",
         @"C:\Data\Projecten\BloomDataUploader",
     };
 

@@ -57,6 +57,10 @@ public static class ClientLauncher
         ("automaticmail", "green", "CED"),
         // Het Totalloss-bureau (totalloss-cednl-backend/-frontend) is óók CED-werk.
         ("totalloss", "green", "CED"),
+        // UrbanIT's eigen projecten (urbanadmin, urbanit-website): roze was nog vrij. Niet
+        // op "urbanit" alleen: de glascalculator staat onder G:\…\UrbanIT\Lauryssens.
+        ("urbanadmin", "pink", "UrbanIT"),
+        ("urbanit-website", "pink", "UrbanIT"),
         // RadiologyPartners: cyan sluit aan bij de teal klantkleur in de cockpit.
         ("bloom", "cyan", "RadiologyPartners"),
         // Vriesveemlogistiek (Movaware) en Vriesveem (Cellaware) elk hun eigen kleur.

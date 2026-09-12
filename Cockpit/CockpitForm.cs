@@ -397,6 +397,20 @@ public class CockpitForm : Form
                 ("Claude — automaticmail", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\automaticmail"), @"C:\Data\Projecten\automaticmail"),
                 ("PhpStorm — totalloss-cednl-backend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-backend"), null),
                 ("PhpStorm — totalloss-cednl-frontend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-frontend"), null),
+            // UrbanIT's eigen projecten: urbanadmin (timesheets.urbanit.be — Laravel-backend
+            // in de devenv-container op :4408, Angular-webapp via start.sh) en de website.
+            ("UrbanIT ▾", new (string, Action, string?)[]
+            {
+                ("Claude — urbanadmin", () => ClientLauncher.StartClaude(wsl + "urbanadmin"), wsl + "urbanadmin"),
+                ("PhpStorm — urbanadmin", () => ClientLauncher.StartPhpStorm(wsl + "urbanadmin"), null),
+                // start.sh = ng serve met /api-proxy naar de backend-container (:4408).
+                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "urbanadmin", "start.sh"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
+                ("Timesheets (productie)", () => OpenExtern("https://timesheets.urbanit.be/app/"), null),
+                ("DataGrip — UrbanIT", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "UrbanIT")), null),
+                ("Deploytool — urbanadmin/backend (default)", () => ClientLauncher.StartDeploytool(wsl + @"urbanadmin\backend", "default"), null),
+                ("Claude — urbanit-website", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\urbanit-website"), @"C:\Data\Projecten\urbanit-website"),
+            }),
                 // start.sh = ng serve met /api-proxy naar de backend-container (:4407).
                 ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "totalloss-cednl-frontend", "start.sh"), null),
                 ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
