@@ -753,6 +753,67 @@ public static class GmailClient
         return regels.OrderBy(r => r, StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>Eén verzonden mail met alleen de eigen tekst (citaten eraf), voor de beloftescan.</summary>
+    public sealed record VerzondenMail(
+        DateTimeOffset Moment, string Aan, string AanAdres, string Onderwerp, string EigenTekst, string MessageId);
+
+    /// <summary>
+    /// De verzonden mails van één dag mét de eigen tekst (zonder geciteerde vorige mails),
+    /// hoogstens 40. Voor <see cref="BelofteRadar"/>: toezeggingen staan in wat jij schreef.
+    /// </summary>
+    public static async Task<List<VerzondenMail>> VerzondenMetTekstAsync(
+        MailReplySettings s, DateOnly dag, CancellationToken ct)
+    {
+        using var imap = new ImapClient();
+        await imap.ConnectAsync(s.ImapHost, s.ImapPort, SecureSocketOptions.SslOnConnect, ct);
+        await imap.AuthenticateAsync(s.Email, s.AppWachtwoord, ct);
+        var map = imap.GetFolder(SpecialFolder.Sent);
+        await map.OpenAsync(FolderAccess.ReadOnly, ct);
+
+        var uids = await map.SearchAsync(SearchQuery.GMailRawSearch(
+            $"after:{dag:yyyy/MM/dd} before:{dag.AddDays(1):yyyy/MM/dd}"), ct);
+        var mails = new List<VerzondenMail>();
+        foreach (var uid in uids.Take(40))
+        {
+            try
+            {
+                var msg = await map.GetMessageAsync(uid, ct);
+                var eerste = msg.To.Mailboxes.FirstOrDefault();
+                var aan = string.Join(", ", msg.To.Mailboxes
+                    .Select(m => string.IsNullOrWhiteSpace(m.Name) ? m.Address : m.Name)
+                    .Take(3));
+                mails.Add(new VerzondenMail(msg.Date.ToLocalTime(), aan, eerste?.Address ?? "",
+                    msg.Subject ?? "", EigenTekst(ExtractTekst(msg)), msg.MessageId ?? ""));
+            }
+            catch
+            {
+                // Eén onleesbare mail mag de scan niet breken.
+            }
+        }
+        await imap.DisconnectAsync(true, ct);
+        return mails.OrderBy(m => m.Moment).ToList();
+    }
+
+    /// <summary>De eigen tekst: citaten (">"-regels) en alles onder de citatiekop vallen af.</summary>
+    private static string EigenTekst(string tekst)
+    {
+        var eigen = new List<string>();
+        foreach (var lijn in tekst.Split('\n'))
+        {
+            if (lijn.TrimStart().StartsWith('>'))
+            {
+                continue;
+            }
+            if (Regex.IsMatch(lijn,
+                @"^\s*(Op .+ schreef|On .+ wrote:|Van:\s|From:\s|-{2,}\s*(Original|Oorspronkelijk|Forwarded|Doorgestuurd))"))
+            {
+                break;
+            }
+            eigen.Add(lijn.TrimEnd());
+        }
+        return string.Join("\n", eigen).Trim();
+    }
+
     /// <summary>Woorden in de eigen tekst: citaten (">"-regels) en alles onder de citatiekop vallen af.</summary>
     private static int EigenWoorden(string tekst)
     {

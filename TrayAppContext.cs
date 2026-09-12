@@ -191,6 +191,15 @@ public class TrayAppContext : ApplicationContext
             _ = FollowUpRadar.ZorgVoorMeldingAsync(CancellationToken.None); // wie wacht er op antwoord
             _ = OnbeantwoordRadar.ZorgVoorTakenAsync(CancellationToken.None); // ma: vragen die bij mij blijven liggen
             DossierPunten.ZorgVoorTaken(); // ma: openstaande punten uit de klantdossiers
+            // Elke ochtend: toezeggingen uit je eigen verzonden mails van gisteren als taak.
+            _ = BelofteRadar.ZorgVoorAsync(CancellationToken.None, n =>
+                TrayMelding.Toon("Beloftes opgevolgd",
+                    $"{n} toezegging(en) uit je verzonden mails staan als taak klaar", OpenMijnTaken, 10000));
+            // Vrijdag: per repo voorstellen voor CLAUDE.md uit de Claude-opdrachten van de week.
+            _ = KennisVoorstellen.ZorgVoorAsync(CancellationToken.None, n =>
+                TrayMelding.Toon("Kennisvoorstellen klaar",
+                    $"{n} voorstel(len) voor CLAUDE.md uit je Claude-opdrachten van deze week",
+                    () => OpenVenster("kennis"), 12000));
             CheckNachtOnderhoud();
             CheckBackup();
             CheckGeheugen();
@@ -560,6 +569,8 @@ public class TrayAppContext : ApplicationContext
     private static Bitmap MaakKleurStip(Color kleur)
     {
         var bmp = new Bitmap(16, 16);
+    private KennisVoorstellenForm? _kennisForm;
+
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var brush = new SolidBrush(kleur);
@@ -665,6 +676,16 @@ public class TrayAppContext : ApplicationContext
             // Ctrl,Ctrl (of het tray-menu): altijd gemaximaliseerd en écht op de voorgrond,
             // ook als een ander programma de focus heeft.
             NaarVoorgrond(_cockpitForm);
+            case "kennis":
+                if (_kennisForm is { IsDisposed: false })
+                {
+                    _kennisForm.Activate();
+                    break;
+                }
+                _kennisForm = new KennisVoorstellenForm();
+                _kennisForm.FormClosed += (_, _) => _kennisForm = null;
+                _kennisForm.Show();
+                break;
             return;
         }
 
