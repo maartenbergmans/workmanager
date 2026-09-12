@@ -20,6 +20,18 @@ public sealed class TrayMelding : Form
 
     public static void Toon(string titel, string tekst, Action? onKlik = null, int duurMs = 8000)
     {
+        // Niet storen: niets tonen, wel onthouden (🔔-log + samenvatting achteraf).
+        if (NietStoren.Actief)
+        {
+            NietStoren.Onderdruk(titel, tekst);
+            return;
+        }
+        ToonAltijd(titel, tekst, onKlik, duurMs);
+    }
+
+    /// <summary>Toont ook tijdens "niet storen" (alleen voor de samenvatting achteraf).</summary>
+    public static void ToonAltijd(string titel, string tekst, Action? onKlik = null, int duurMs = 8000)
+    {
         _huidig?.Sluit();
         _huidig = new TrayMelding(titel, tekst, onKlik, duurMs);
         _huidig.Show();

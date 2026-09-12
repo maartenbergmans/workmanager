@@ -1187,6 +1187,40 @@ public class CockpitForm : Form
             log.Show(meldingenKnop, new Point(0, meldingenKnop.Height + 4));
         };
         toolbar.Controls.Add(meldingenKnop);
+        // Niet storen (bv. in een meeting): WorkManager zwijgt tot de gekozen tijd; de knop
+        // toont zolang hoe lang nog, in accentkleur.
+        var nietStorenKnop = new ModernButton { Text = "🔕", Width = 44 };
+        var nietStorenMenu = new ContextMenuStrip();
+        Theme.Style(nietStorenMenu);
+        void WerkNietStorenKnopBij()
+        {
+            nietStorenKnop.Text = NietStoren.Actief ? NietStoren.StatusTekst : "🔕";
+            nietStorenKnop.Kind = NietStoren.Actief ? ButtonKind.Accent : ButtonKind.Normal;
+            if (NietStoren.Actief)
+            {
+                nietStorenKnop.KrimpNaarInhoud();
+            }
+            else
+            {
+                nietStorenKnop.Width = 44;
+            }
+        }
+        nietStorenKnop.Click += (_, _) =>
+        {
+            NietStoren.VulMenu(nietStorenMenu);
+            nietStorenMenu.Show(nietStorenKnop, new Point(0, nietStorenKnop.Height + 4));
+        };
+        void OpNietStorenGewijzigd()
+        {
+            if (IsHandleCreated && !IsDisposed)
+            {
+                BeginInvoke(WerkNietStorenKnopBij);
+            }
+        }
+        NietStoren.Gewijzigd += OpNietStorenGewijzigd;
+        FormClosed += (_, _) => NietStoren.Gewijzigd -= OpNietStorenGewijzigd;
+        WerkNietStorenKnopBij();
+        toolbar.Controls.Add(nietStorenKnop);
         // De prijzenkast met verborgen prestaties: klein knopje, grote ontdekkingsvreugde.
         var prestatiesKnop = new ModernButton { Text = "🏆", Width = 44 };
         prestatiesKnop.Click += (_, _) =>

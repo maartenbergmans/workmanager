@@ -61,6 +61,9 @@ public sealed class Toast : Control
         get { lock (Log) { return Log.ToList(); } }
     }
 
+    /// <summary>Een melding die "niet storen" tegenhield: alleen in het 🔔-log.</summary>
+    public static void RegistreerOnderdrukt(string tekst) => Registreer(tekst);
+
     private static void Registreer(string tekst)
     {
         lock (Log)
@@ -111,6 +114,13 @@ public sealed class Toast : Control
     {
         if (eigenaar.IsDisposed)
         {
+            return;
+        }
+        // Niet storen: in een venster waar je nu niet mee bezig bent verschijnt niets
+        // (wel in het 🔔-log). Werk je zelf in dat venster, dan zie je gewoon je feedback.
+        if (NietStoren.Actief && Form.ActiveForm != eigenaar)
+        {
+            Registreer($"🔕 {tekst}");
             return;
         }
         // Vluchtige meldingen verdringen elkaar zoals altijd, maar een blijvende actie-toast

@@ -279,6 +279,14 @@ public class TrayAppContext : ApplicationContext
         activiteitenTimer.Start();
         ActiviteitenLog.Noteer();
 
+        // Niet storen: elke halve minuut een verlopen periode afsluiten (met samenvatting
+        // van wat er gemist is) en, als dat aan staat, automatisch mee met agendameetings.
+        NietStoren.ToonSamenvatting = (titel, tekst) =>
+            TrayMelding.ToonAltijd(titel, tekst, OpenCockpit, 15000);
+        var nietStorenTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
+        nietStorenTimer.Tick += (_, _) => NietStoren.Controleer(NietStoren.MeetingsVandaag());
+        nietStorenTimer.Start();
+
         // Werkjournaal: elk uur de dag- en weeksamenvattingen bijwerken (blijvend, i.t.t. de
         // minuutlog die na 21 dagen verdwijnt) — bronmateriaal om later advies op te baseren.
         var journaalTimer = new System.Windows.Forms.Timer { Interval = 60 * 60_000 };
@@ -347,6 +355,14 @@ public class TrayAppContext : ApplicationContext
         var cockpit = new ToolStripMenuItem("Cockpit…");
         cockpit.Click += (_, _) => OpenCockpit();
         menu.Items.Add(cockpit);
+
+        // Niet storen: zelfde keuzes als de 🔕-knop in de cockpit; de tekst toont de status.
+        var nietStoren = new ToolStripMenuItem("🔕 Niet storen");
+        nietStoren.DropDownItems.Add(new ToolStripMenuItem("…")); // placeholder: pijltje tonen
+        nietStoren.DropDownOpening += (_, _) => NietStoren.VulMenu(nietStoren.DropDown);
+        menu.Opening += (_, _) =>
+            nietStoren.Text = NietStoren.Actief ? $"{NietStoren.StatusTekst} — niet storen" : "🔕 Niet storen";
+        menu.Items.Add(nietStoren);
 
         menu.Items.Add(new ToolStripSeparator());
 

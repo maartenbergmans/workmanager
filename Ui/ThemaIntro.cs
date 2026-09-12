@@ -43,7 +43,7 @@ public static class ThemaIntro
     /// <summary>Speelt de intro nu (voor tests en voor een themawissel).</summary>
     public static void Speel(Form eigenaar)
     {
-        if (eigenaar.IsDisposed || Theme.Palet.Naam is "Middernacht" or "Daglicht")
+        if (eigenaar.IsDisposed || NietStoren.Actief || Theme.Palet.Naam is "Middernacht" or "Daglicht")
         {
             return;
         }

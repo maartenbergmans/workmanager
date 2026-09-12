@@ -10,7 +10,7 @@ public static class Confetti
 {
     public static void Vier(Form eigenaar)
     {
-        if (eigenaar.IsDisposed)
+        if (eigenaar.IsDisposed || NietStoren.Actief)
         {
             return;
         }
