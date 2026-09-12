@@ -198,6 +198,11 @@ public class TrayAppContext : ApplicationContext
             }
             Weetjes.ZorgVoor(); // twee keer per werkdag een "wist je dat" uit je eigen data
             _ = UrenInhaler.ZorgVoorAsync(OpenDagvoorstel); // gemiste werkdagen: voorstel klaarzetten
+            _ = Weekadvies.ZorgVoorAsync((titel, pad) => TrayMelding.Toon(titel,
+                "Drie tips en een compliment uit je werkjournaal van vorige week. Klik om te lezen.",
+                () => new LeesVenster("Weekadvies", pad).Show(), 30000));
+            _ = Tijdcapsule.ZorgVoorAsync(brief => TrayMelding.Toon("📬 Een brief van vier weken geleden",
+                "Klik om te lezen wat je jezelf toen schreef.", () => new TijdcapsuleForm(brief).Show(), 30000));
             // Elke ochtend: toezeggingen uit je eigen verzonden mails van gisteren als taak.
             _ = BelofteRadar.ZorgVoorAsync(CancellationToken.None, n =>
                 TrayMelding.Toon("Beloftes opgevolgd",
@@ -290,6 +295,9 @@ public class TrayAppContext : ApplicationContext
         // van wat er gemist is) en, als dat aan staat, automatisch mee met agendameetings.
         NietStoren.ToonSamenvatting = (titel, tekst) =>
             TrayMelding.ToonAltijd(titel, tekst, OpenCockpit, 15000);
+        // Paardenrace van de Claude-sessies: uitslag als melding.
+        ClaudeRace.Koppel();
+        ClaudeRace.ToonUitslag = (titel, tekst) => TrayMelding.Toon(titel, tekst, OpenCockpit, 10000);
         var nietStorenTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
         nietStorenTimer.Tick += (_, _) => NietStoren.Controleer(NietStoren.MeetingsVandaag());
         nietStorenTimer.Start();

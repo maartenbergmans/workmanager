@@ -590,6 +590,11 @@ public class CockpitForm : Form
         claudeMenu.Opening += (_, _) =>
         {
             claudeMenu.Items.Clear();
+            // Paardenrace bovenaan zodra er minstens twee sessies tegelijk bezig zijn.
+            foreach (var raceItem in ClaudeRace.MenuItems())
+            {
+                claudeMenu.Items.Add(raceItem);
+            }
             var sessies = ClaudeSessies.Snapshot();
             if (sessies.Count == 0)
             {
@@ -1161,6 +1166,19 @@ public class CockpitForm : Form
                 }
             }),
             Venster("Kennisvoorstellen (CLAUDE.md)…", "kennis"),
+            Actie("🎬 Aftiteling van vandaag", () => _ = Aftiteling.SpeelAsync(this)),
+            Actie("💡 Laatste weekadvies…", () =>
+            {
+                var laatste = Directory.Exists(Path.Combine(Werkjournaal.Map, "advies"))
+                    ? Directory.GetFiles(Path.Combine(Werkjournaal.Map, "advies"), "*.md").OrderByDescending(f => f).FirstOrDefault()
+                    : null;
+                if (laatste is null)
+                {
+                    Toast.Toon(this, "Nog geen weekadvies — dat komt maandagochtend.", Fluent.Ster);
+                    return;
+                }
+                new LeesVenster("Weekadvies", laatste).Show(this);
+            }),
             themaMenuItem,
             Venster("WorkManager online…", "webversie"),
         });
@@ -1187,6 +1205,18 @@ public class CockpitForm : Form
             log.Show(meldingenKnop, new Point(0, meldingenKnop.Height + 4));
         };
         toolbar.Controls.Add(meldingenKnop);
+        // Kerntemperatuur: hoe bevroren (= onder controle) je werk is; klik = de opbouw.
+        _thermometer = new ModernButton { Text = "🧊" };
+        _thermometer.Click += (_, _) =>
+        {
+            var meting = KernTemperatuur.Meet(_laatsteBerichten.Count);
+            var opbouw = meting.Opbouw.Count == 0
+                ? "niets dat opwarmt"
+                : string.Join(", ", meting.Opbouw.Select(o => $"{o.Oorzaak} ({o.Bijdrage:+0.#} °C)"));
+            Toast.Toon(this, $"Kerntemperatuur {meting.Graden:+0;-0} °C — {meting.Toestand}.\nOpbouw: {opbouw}. " +
+                "Onder −18 °C ligt alles diepgevroren.", Fluent.Ster);
+        };
+        toolbar.Controls.Add(_thermometer);
         // Niet storen (bv. in een meeting): WorkManager zwijgt tot de gekozen tijd; de knop
         // toont zolang hoe lang nog, in accentkleur.
         var nietStorenKnop = new ModernButton { Text = "🔕", Width = 44 };
@@ -4046,7 +4076,9 @@ public class CockpitForm : Form
             }
             else
             {
-                Toast.Toon(this, $"{dag.Kop}\n{dag.Tekst}", Fluent.Ster);
+                // Alles geboekt: dan mag de aftiteling rollen.
+                Toast.ToonActie(this, $"{dag.Kop}\n{dag.Tekst}", "🎬 Aftiteling",
+                    () => _ = Aftiteling.SpeelAsync(this), Fluent.Ster);
             }
             _ = PushMelding.StuurAsync(dag.Kop, dag.Tekst, "dagafsluiter");
         }
@@ -4059,8 +4091,23 @@ public class CockpitForm : Form
     /// onopvallend (zeker gemaximaliseerd), dus de plant staat ook groot in de cockpit zelf.
     /// Geen reeks = gewoon de kale titels.
     /// </summary>
+    private ModernButton? _thermometer;
+
+    /// <summary>De kerntemperatuur in de werkbalk bijwerken (na elke verversing).</summary>
+    private void WerkThermometerBij()
+    {
+        if (_thermometer is null)
+        {
+            return;
+        }
+        var meting = KernTemperatuur.Meet(_laatsteBerichten.Count);
+        _thermometer.Text = meting.Label;
+        _thermometer.KrimpNaarInhoud();
+    }
+
     private void WerkVensterTitelBij()
     {
+        WerkThermometerBij();
         var reeks = InboxZeroReeks.Huidig();
         Text = reeks > 0
             ? $"{ThemaStem.CockpitTitel()}   {InboxZeroReeks.Plant(reeks)} {reeks}"

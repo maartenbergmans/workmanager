@@ -29,6 +29,7 @@ public static class Prestaties
         new("weekendwacht", "🏖️ Weekendwacht", "Een heel weekend niets in WorkManager gedaan"),
         new("geheim-agent", "🕵️ Geheim agent", "Een geheime missie volbracht"),
         new("feestvarken", "🎂 Feestvarken", "Een verjaardag gevierd in de cockpit"),
+        new("paardenfluisteraar", "🏇 Paardenfluisteraar", "Drie keer op het winnende Claude-paard gewed"),
     };
 
     private static readonly string StateFile = Path.Combine(
@@ -135,6 +136,9 @@ public static class Prestaties
                     break;
                 case "feest":
                     Ken("feestvarken");
+                    break;
+                case "race":
+                    Ken("paardenfluisteraar");
                     break;
                 case "inboxzero":
                     if (int.TryParse(detail, out var reeks) && reeks >= 5)

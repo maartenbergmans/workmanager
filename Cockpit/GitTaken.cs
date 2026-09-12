@@ -40,6 +40,8 @@ public static class GitTaken
         WslBasis + "totalloss-cednl-backend",
         WslBasis + "totalloss-cednl-frontend",
         WslBasis + "urbanadmin",
+        // WorkManager zelf: daar bleven wijzigingen van meerdere sessies het langst liggen.
+        @"C:\Data\Projecten\Workmanager",
         @"C:\Data\Projecten\BloomDataUploader",
     };
 

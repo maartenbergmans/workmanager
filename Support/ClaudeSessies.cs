@@ -21,6 +21,9 @@ public static class ClaudeSessies
 
     private static readonly Dictionary<string, Sessie> Actief = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Een sessie die bezig was, is klaar of wacht op input (voor o.a. de paardenrace).</summary>
+    public static event Action<string>? Afgerond;
+
     /// <summary>Verwerkt één hook-event; onbekende events en lege mappen doen niets.</summary>
     public static void Verwerk(
         string map, string hookEvent, string boodschap,
@@ -30,6 +33,7 @@ public static class ClaudeSessies
         {
             return;
         }
+        var afgerond = false;
         lock (Actief)
         {
             if (hookEvent == "SessionEnd")
@@ -50,12 +54,17 @@ public static class ClaudeSessies
                 return;
             }
             var oud = Actief.GetValueOrDefault(map);
+            afgerond = oud?.Status == Bezig && status is Klaar or Wacht;
             Actief[map] = new Sessie(map, status,
                 boodschap.Length > 0 ? boodschap : oud?.Boodschap ?? "",
                 moment,
                 vensterPid > 0 ? vensterPid : oud?.VensterPid ?? 0,
                 vensterHandle != 0 ? vensterHandle : oud?.VensterHandle ?? 0,
                 oud?.LaatstHerinnerd ?? DateTimeOffset.MinValue);
+        }
+        if (afgerond)
+        {
+            Afgerond?.Invoke(map);
         }
     }
 
