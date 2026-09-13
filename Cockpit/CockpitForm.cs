@@ -80,6 +80,9 @@ public class CockpitForm : Form
     private readonly ModernButton _eboxKnop;
     /// <summary>Rode alarmknop, alleen zichtbaar zolang de Docker-engine niet draait.</summary>
     private readonly ModernButton _dockerKnop;
+
+    /// <summary>De Docker-vraag komt één keer per start van WorkManager, niet bij elke cockpit.</summary>
+    private static bool _dockerGevraagd;
     /// <summary>Per klant een eigen projectknop; op een smal venster vervangt "Projecten ▾" ze.</summary>
     private readonly List<(ModernButton Knop, string Label, List<string> Mappen)> _projectKnoppen = new();
     private ModernButton? _projectenHoofdknop;
@@ -907,8 +910,36 @@ public class CockpitForm : Form
             { Text = "Docker starten", Glyph = Fluent.Play, Kind = ButtonKind.Danger };
         dockerKnop.KrimpNaarInhoud();
         dockerKnop.Visible = DockerStatus.Geinstalleerd && !DockerStatus.Draait;
-        dockerKnop.Click += async (_, _) =>
+        dockerKnop.Click += async (_, _) => await StartDockerAsync();
+        // Bij de start van WorkManager: draait Docker na 20 s nog niet (Docker Desktop kan net
+        // zelf aan het opstarten zijn), dan vraagt een klikbare toast of hij moet starten.
+        Shown += async (_, _) =>
         {
+            if (_dockerGevraagd || !DockerStatus.Geinstalleerd)
+            {
+                return;
+            }
+            _dockerGevraagd = true;
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(20), _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            if (!DockerStatus.Draait && !IsDisposed)
+            {
+                Toast.ToonActie(this, "🐳 Docker draait niet. Nu starten?", "▶ Docker starten",
+                    () => _ = StartDockerAsync(), Fluent.Play);
+            }
+        };
+        async Task StartDockerAsync()
+        {
+            if (!dockerKnop.Enabled)
+            {
+                return; // er loopt al een start
+            }
             dockerKnop.Bezig = true;
             dockerKnop.Enabled = false;
             try
@@ -935,7 +966,7 @@ public class CockpitForm : Form
                 dockerKnop.Bezig = false;
                 dockerKnop.Enabled = true;
             }
-        };
+        }
         // Claude Code CLI bijwerken naar de nieuwste versie ('claude update' is een no-op als
         // je al up-to-date bent). De knop staat altijd in de balk; alleen bij een échte
         // versiesprong (2.1 → 2.2, taak van UpdateCheck) kleurt hij accent met de versies erbij.
