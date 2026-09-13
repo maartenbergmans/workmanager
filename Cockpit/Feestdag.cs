@@ -46,6 +46,23 @@ public static class Feestdag
         return $"🎂  Vandaag is {namen} jarig — pannenkoekendag! 🥞  Hiep hiep hoera!  🎈";
     }
 
+    /// <summary>Is de banner van vandaag al weggeklikt?</summary>
+    public static bool BannerWeggeklikt() => Laad().Gemeld.Contains(BannerSleutel());
+
+    /// <summary>De banner voor de rest van vandaag verbergen (✕ in de cockpit).</summary>
+    public static void KlikBannerWeg()
+    {
+        var state = Laad();
+        var sleutel = BannerSleutel();
+        if (!state.Gemeld.Contains(sleutel))
+        {
+            state.Gemeld.Add(sleutel);
+            Bewaar(state);
+        }
+    }
+
+    private static string BannerSleutel() => $"{Vandaag:yyyy-MM-dd}|banner-weg";
+
     /// <summary>True de eerste keer vandaag (voor de confetti bij het openen van de cockpit).</summary>
     public static bool EersteKeerVieren()
     {

@@ -2516,23 +2516,46 @@ public class CockpitForm : Form
 
         Controls.Add(split);
         // Verjaardagsmodus: een feestbanner bovenaan zolang er vandaag een gezinslid jarig is.
-        var feestBanner = new Label
+        // Klik op de tekst = confetti; ✕ rechts = weg voor de rest van de dag.
+        var feestBanner = new Panel
         {
             Dock = DockStyle.Top,
             Height = 34,
+            BackColor = Theme.Accent,
+        };
+        var feestTekst = new Label
+        {
+            Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font(Theme.BaseFont.FontFamily, Theme.BaseFont.Size + 3, FontStyle.Bold),
-            BackColor = Theme.Accent,
             ForeColor = Theme.Bg,
             Cursor = Cursors.Hand,
         };
+        var feestSluit = new Label
+        {
+            Dock = DockStyle.Right,
+            Width = 40,
+            Text = "✕",
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font(Theme.BaseFont.FontFamily, Theme.BaseFont.Size + 3, FontStyle.Bold),
+            ForeColor = Theme.Bg,
+            Cursor = Cursors.Hand,
+        };
+        new ToolTip().SetToolTip(feestSluit, "Verbergen voor vandaag");
+        feestBanner.Controls.Add(feestTekst);
+        feestBanner.Controls.Add(feestSluit);
         void WerkFeestBannerBij()
         {
-            var tekst = Feestdag.BannerTekst();
-            feestBanner.Text = tekst;
+            var tekst = Feestdag.BannerWeggeklikt() ? "" : Feestdag.BannerTekst();
+            feestTekst.Text = tekst;
             feestBanner.Visible = tekst.Length > 0;
         }
-        feestBanner.Click += (_, _) => Confetti.Vier(this);
+        feestTekst.Click += (_, _) => Confetti.Vier(this);
+        feestSluit.Click += (_, _) =>
+        {
+            Feestdag.KlikBannerWeg();
+            feestBanner.Visible = false;
+        };
         WerkFeestBannerBij();
         var feestTimer = new System.Windows.Forms.Timer { Interval = 10 * 60_000 };
         feestTimer.Tick += (_, _) => WerkFeestBannerBij();
