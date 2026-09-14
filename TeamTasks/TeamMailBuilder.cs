@@ -215,7 +215,10 @@ public static class TeamMailBuilder
             _ => "Met vriendelijke groeten,",
         });
         sb.AppendLine("Maarten");
-        return new WeekMail("Prioriteiten volgende week", sb.ToString());
+        // Weeknummer in het onderwerp: terugzoeken in de mailbox wordt makkelijker.
+        return new WeekMail(
+            $"Prioriteiten week {System.Globalization.ISOWeek.GetWeekOfYear(maandag.ToDateTime(TimeOnly.MinValue))}",
+            sb.ToString());
     }
 
     /// <summary>"(tegen vr 19/9)" achter een taak met deadline, in de taal van de mail.</summary>

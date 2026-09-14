@@ -9,7 +9,7 @@ namespace WorkManager;
 /// </summary>
 public static class ClaudeTeamTaken
 {
-    public sealed record Voorstel(string Tekst, string Lid, int Prioriteit);
+    public sealed record Voorstel(string Tekst, string Lid, int Prioriteit, DateOnly? Deadline = null);
 
     public static async Task<List<Voorstel>> GenereerAsync(
         string ruweTekst, List<string> leden, string standaardLid, CancellationToken ct)
@@ -31,9 +31,13 @@ public static class ClaudeTeamTaken
             - prioriteit: 0 alleen als de input echt urgentie aangeeft (dringend, blokkerend,
               deadline deze week), 1 = normaal, 2 = laag.
             - Geen dubbele of triviale taken; splits opsommingen in aparte taken.
+            - deadline: alleen als de input een moment noemt ("tegen vrijdag", "voor 20/9",
+              "deze week" = vrijdag van deze week, "volgende week" = vrijdag van volgende
+              week, "eind september" = laatste werkdag), als "yyyy-MM-dd"; anders null.
+              Vandaag is {{DateTime.Now:yyyy-MM-dd}} ({{DateTime.Now:dddd}}).
 
             Antwoord UITSLUITEND met één JSON-array, zonder verdere tekst of markdown eromheen:
-            [{"tekst": "…", "lid": "…", "prioriteit": 1}]
+            [{"tekst": "…", "lid": "…", "prioriteit": 1, "deadline": null}]
 
             Ruwe input:
             ---
@@ -63,7 +67,10 @@ public static class ClaudeTeamTaken
                   ?? standaardLid;
             var prio = el.TryGetProperty("prioriteit", out var p) && p.ValueKind == JsonValueKind.Number
                 ? Math.Clamp(p.GetInt32(), 0, 2) : 1;
-            lijst.Add(new Voorstel(tekst, lid, prio));
+            DateOnly? deadline = el.TryGetProperty("deadline", out var dl) && dl.ValueKind == JsonValueKind.String &&
+                DateOnly.TryParseExact(dl.GetString(), "yyyy-MM-dd", out var datum)
+                ? datum : null;
+            lijst.Add(new Voorstel(tekst, lid, prio, deadline));
         }
         return lijst;
     }

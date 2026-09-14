@@ -15,6 +15,8 @@ public class TeamTasksForm : Form
     private readonly ModernButton _mailButton;
     private readonly PulseBar _pulse = new();
     private readonly Label _status;
+    private ComboBox _filterLidCombo = null!;
+    private Label _filterTelling = null!;
     private readonly CancellationTokenSource _cts = new();
     private readonly Font _klaarFont;
     private TextBox _preview = null!; // live weekmail-preview
@@ -22,6 +24,10 @@ public class TeamTasksForm : Form
     private bool _negeerCheck; // dubbelklik mag de checkbox niet omzetten
     private bool _sorteerOpPrio; // weergave op ★★★ eerst; de eigen (sleep)volgorde blijft bewaard
     private string _filterTekst = ""; // zoekveld: alleen taken (of subtaken) met deze tekst tonen
+    private string _filterLid = "";   // leeg = alle leden
+    private bool _filterHoog, _filterTeLaat, _filterGemaild, _filterOud;
+    private bool FilterActief => _filterTekst.Length > 0 || _filterLid.Length > 0 ||
+                                 _filterHoog || _filterTeLaat || _filterGemaild || _filterOud;
 
     /// <summary>Inspring-/bulletprefix waarmee subtaakrijen onder hun hoofdtaak verschijnen.</summary>
     private const string SubPrefix = "        ◦  ";
@@ -70,6 +76,10 @@ public class TeamTasksForm : Form
             Text = "Mail opstellen…", Width = 150, Kind = ButtonKind.Accent, Glyph = Fluent.Mail,
         };
         _mailButton.Click += (_, _) => MailOpstellen();
+        // Nakijken: de ★★★-taken die al weken meegaan, al ≥3× gemaild zijn of over hun
+        // deadline zijn — afvinken, deadline zetten of uit de mail halen vóór je mailt.
+        var nakijkButton = new ModernButton { Text = "Nakijken…", Width = 115, Glyph = Fluent.Lijst };
+        nakijkButton.Click += (_, _) => Nakijken(vooraf: false);
         var vakantiesButton = new ModernButton { Text = "Vakanties…", Width = 125, Glyph = Fluent.Kalender };
         var vakantiesMenu = new ContextMenuStrip();
         Theme.Style(vakantiesMenu);
@@ -129,10 +139,48 @@ public class TeamTasksForm : Form
             VulLijst();
         };
 
-        // Zoekveld: bij 40 open taken plus subtaken is bladeren te traag.
+        _status = new Label { AutoSize = true };
+        Theme.AsStatus(_status);
+        toolbar.Controls.AddRange(new Control[]
+        {
+            _lidCombo, _nieuweTaak, addButton, claudeButton, nakijkButton, _mailButton, vakantiesButton,
+            beheerButton, prioSort, _status,
+        });
+
+        // Filterbalk: bij 40 open taken plus subtaken is bladeren te traag. Alles is
+        // combineerbaar (teamlid + ★★★ + tekst); een actieve filter klapt alle groepen open.
+        var filterbalk = new FlowLayoutPanel { Dock = DockStyle.Top };
+        Theme.AsToolbar(filterbalk);
+        var filterLabel = new Label
+        {
+            Text = "Filter:", AutoSize = true, Margin = new Padding(6, 9, 2, 3), ForeColor = Theme.Muted,
+        };
+        _filterLidCombo = new ComboBox
+        {
+            Width = 135, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(3, 4, 3, 3),
+        };
+        _filterLidCombo.SelectedIndexChanged += (_, _) =>
+        {
+            _filterLid = _filterLidCombo.SelectedIndex <= 0 ? "" : _filterLidCombo.SelectedItem as string ?? "";
+            VulLijst();
+        };
+        CheckBox Chip(string tekst, Action<bool> zet)
+        {
+            var chip = new CheckBox { Text = tekst, AutoSize = true, Margin = new Padding(8, 8, 3, 3) };
+            chip.CheckedChanged += (_, _) =>
+            {
+                zet(chip.Checked);
+                VulLijst();
+            };
+            return chip;
+        }
+        var hoogChip = Chip("alleen ★★★", v => _filterHoog = v);
+        var teLaatChip = Chip("⚠ te laat", v => _filterTeLaat = v);
+        var gemaildChip = Chip("📧 ≥ 3× gemaild", v => _filterGemaild = v);
+        var oudChip = Chip("≥ 6 weken open", v => _filterOud = v);
         var filter = new TextBox
         {
-            Width = 160, PlaceholderText = "Zoeken…", Margin = new Padding(8, 5, 3, 3),
+            Width = 190, PlaceholderText = "Zoeken in taak of subtaak…", Margin = new Padding(12, 5, 3, 3),
         };
         filter.TextChanged += (_, _) =>
         {
@@ -147,13 +195,17 @@ public class TeamTasksForm : Form
                 e.SuppressKeyPress = true;
             }
         };
-
-        _status = new Label { AutoSize = true };
-        Theme.AsStatus(_status);
-        toolbar.Controls.AddRange(new Control[]
+        var wisButton = new ModernButton { Text = "Wis", Width = 60 };
+        wisButton.Click += (_, _) =>
         {
-            _lidCombo, _nieuweTaak, addButton, claudeButton, _mailButton, vakantiesButton,
-            beheerButton, prioSort, filter, _status,
+            _filterLidCombo.SelectedIndex = 0;
+            hoogChip.Checked = teLaatChip.Checked = gemaildChip.Checked = oudChip.Checked = false;
+            filter.Clear();
+        };
+        _filterTelling = new Label { AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(10, 9, 3, 3) };
+        filterbalk.Controls.AddRange(new Control[]
+        {
+            filterLabel, _filterLidCombo, hoogChip, teLaatChip, gemaildChip, oudChip, filter, wisButton, _filterTelling,
         });
 
         // Takenlijst: één groep per teamlid, vinkje = klaar
@@ -436,6 +488,7 @@ public class TeamTasksForm : Form
         Controls.Add(previewGroup);
         Controls.Add(opmerkingGroup);
         Controls.Add(_pulse);
+        Controls.Add(filterbalk);
         Controls.Add(toolbar);
 
         FormClosed += (_, _) => _cts.Cancel();
@@ -459,6 +512,16 @@ public class TeamTasksForm : Form
             var index = huidig is null ? 0 : _lidCombo.Items.IndexOf(huidig);
             _lidCombo.SelectedIndex = index < 0 ? 0 : index;
         }
+        // Filter op teamlid: zelfde leden, met "Alle leden" vooraan.
+        var filterHuidig = _filterLidCombo.SelectedItem as string;
+        _filterLidCombo.Items.Clear();
+        _filterLidCombo.Items.Add("Alle leden");
+        foreach (var lid in _data.Leden)
+        {
+            _filterLidCombo.Items.Add(lid);
+        }
+        var fi = filterHuidig is null ? 0 : _filterLidCombo.Items.IndexOf(filterHuidig);
+        _filterLidCombo.SelectedIndex = fi < 0 ? 0 : fi;
     }
 
     /// <summary>Leden waarvan de groep open staat (handmatige toggles blijven bewaard).</summary>
@@ -517,12 +580,23 @@ public class TeamTasksForm : Form
             _uitgeklapt.Add(selectieTaak.Lid);
         }
 
+        var getoond = 0;
         foreach (var lid in leden)
         {
-            var open = _data.Taken.Count(t =>
-                !t.Klaar && string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase));
+            if (_filterLid.Length > 0 && !string.Equals(lid, _filterLid, StringComparison.OrdinalIgnoreCase))
+            {
+                continue; // teamlidfilter: andere groepen helemaal weg
+            }
+            var eigen = _data.Taken.Where(t =>
+                !t.Klaar && string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase)).ToList();
+            var hoog = eigen.Count(t => t.Prioriteit == 0);
+            var vandaagDag = DateOnly.FromDateTime(DateTime.Now);
+            var teLaat = eigen.Count(t => t.Deadline is { } dl && dl < vandaagDag);
+            // Werkdruk in één oogopslag: hoeveel open, hoeveel daarvan in de mail (★★★), te laat.
             var group = new ListViewGroup(
-                $"{lid}  ({open} open)" + (AfwezigVandaag(lid) ? "  ·  🏖 vandaag afwezig" : ""))
+                $"{lid}  ({eigen.Count} open" + (hoog > 0 ? $" · {hoog} ★★★" : "") +
+                (teLaat > 0 ? $" · ⚠ {teLaat} te laat" : "") + ")" +
+                (AfwezigVandaag(lid) ? "  ·  🏖 vandaag afwezig" : ""))
             {
                 Tag = lid,
             };
@@ -543,12 +617,13 @@ public class TeamTasksForm : Form
                 // binnen een prioriteit komt een (naderende) deadline eerst.
                 taken = taken.OrderBy(t => t.Prioriteit).ThenBy(t => t.Deadline ?? DateOnly.MaxValue);
             }
-            if (_filterTekst.Length > 0)
+            if (FilterActief)
             {
-                group.CollapsedState = ListViewGroupCollapsedState.Expanded; // zoekresultaat altijd zichtbaar
+                group.CollapsedState = ListViewGroupCollapsedState.Expanded; // filterresultaat altijd zichtbaar
             }
             foreach (var taak in taken)
             {
+                getoond++;
                 var item = new ListViewItem(taak.Tekst, group)
                 {
                     Tag = taak,
@@ -586,6 +661,8 @@ public class TeamTasksForm : Form
         }
 
         _list.EndUpdate();
+        var totaalOpen = _data.Taken.Count(t => !t.Klaar);
+        _filterTelling.Text = FilterActief ? $"{getoond} van {totaalOpen} taken" : "";
         // Geen expliciete selectie meegekregen? Dan de vorige plek herstellen: dezelfde
         // rij-index (of de buur als de rij net verdween) zónder EnsureVisible — dat zou de
         // rij onderaan in beeld trekken — en daarna de bewaarde scrollstand terugzetten.
@@ -651,10 +728,28 @@ public class TeamTasksForm : Form
         return vandaag.AddDays(naarVrijdag + 7 * wekenErbij);
     }
 
-    private bool VoldoetAanFilter(TeamTaak taak) =>
-        _filterTekst.Length == 0 ||
-        taak.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase) ||
-        taak.Subtaken.Any(s => s.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase));
+    private bool VoldoetAanFilter(TeamTaak taak)
+    {
+        if (_filterHoog && taak.Prioriteit != 0)
+        {
+            return false;
+        }
+        if (_filterTeLaat && !(taak.Deadline is { } dl && dl < DateOnly.FromDateTime(DateTime.Now)))
+        {
+            return false;
+        }
+        if (_filterGemaild && taak.InMail < 3)
+        {
+            return false;
+        }
+        if (_filterOud && taak.Leeftijd < 42)
+        {
+            return false;
+        }
+        return _filterTekst.Length == 0 ||
+               taak.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase) ||
+               taak.Subtaken.Any(s => s.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase));
+    }
 
     private void SelectieDeadline(DateOnly? deadline)
     {
@@ -853,6 +948,7 @@ public class TeamTasksForm : Form
             var taak = new TeamTaak
             {
                 Lid = voorstel.Lid, Tekst = voorstel.Tekst, Prioriteit = voorstel.Prioriteit,
+                Deadline = voorstel.Deadline,
             };
             eerste ??= taak.Id;
             _data.Taken.Add(taak);
@@ -1025,8 +1121,40 @@ public class TeamTasksForm : Form
             return;
         }
 
+        // Eerst de slepende ★★★-taken nakijken (één keer per geopend venster): anders gaat
+        // dezelfde stapel voor de zoveelste keer ongewijzigd de mail in.
+        if (!_nagekeken && TeamNakijkForm.Kandidaten(_data).Count > 0 && !Nakijken(vooraf: true))
+        {
+            return;
+        }
         var mail = TeamMailBuilder.BouwZelf(_data);
         using var form = new TeamMailForm(_data, TeamTaskStore.LoadStijl(), mail.Onderwerp, mail.Tekst);
         form.ShowDialog(this);
+    }
+
+    private bool _nagekeken;
+
+    /// <summary>
+    /// Opent de nakijkdialoog. Met <paramref name="vooraf"/> (vanuit "Mail opstellen") geeft
+    /// de uitkomst aan of er doorgegaan mag worden naar de mail.
+    /// </summary>
+    private bool Nakijken(bool vooraf)
+    {
+        if (TeamNakijkForm.Kandidaten(_data).Count == 0)
+        {
+            Toast.Toon(this, "Niets na te kijken: geen slepende ★★★-taken", Fluent.Check);
+            return true;
+        }
+        using var nakijk = new TeamNakijkForm(_data, vooraf);
+        var uitkomst = nakijk.ShowDialog(this);
+        if (nakijk.Gewijzigd)
+        {
+            VulLijst();
+        }
+        if (uitkomst == DialogResult.OK)
+        {
+            _nagekeken = true;
+        }
+        return uitkomst == DialogResult.OK;
     }
 }

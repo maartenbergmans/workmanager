@@ -755,6 +755,7 @@ static class Program
                 }),
                 "uittekst" => new TakenUitTekstForm(MijnTaakStore.Load().Categorieen),
                 "teamtaken" => new TeamTasksForm(),
+                "teamnakijk" => new TeamNakijkForm(TeamTaskStore.Load(), vooraf: true),
                 "teamuittekst" => new TeamUitTekstForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" }, "Wim"),
                 "timesheetdash" => new TimesheetDashboardForm(),

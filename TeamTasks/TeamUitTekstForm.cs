@@ -76,17 +76,19 @@ public class TeamUitTekstForm : Form
         };
         _lijst.Columns.Add("Taak", 550);
         _lijst.Columns.Add("Teamlid", 170);
+        _lijst.Columns.Add("Deadline", 110);
         _lijst.Columns.Add("Prio", 70);
         _lijst.Resize += (_, _) => _lijst.Columns[0].Width = Math.Max(300,
-            _lijst.ClientSize.Width - _lijst.Columns[1].Width - _lijst.Columns[2].Width - 4);
-        _lijst.SterrenKolom = 2;
+            _lijst.ClientSize.Width - _lijst.Columns[1].Width - _lijst.Columns[2].Width -
+            _lijst.Columns[3].Width - 4);
+        _lijst.SterrenKolom = 3;
         _lijst.SterGeklikt += (item, aantal) =>
         {
             if (item.Tag is ClaudeTeamTaken.Voorstel voorstel)
             {
                 var prio = 3 - aantal;
                 item.Tag = voorstel with { Prioriteit = prio };
-                var sub = item.SubItems[2];
+                var sub = item.SubItems[3];
                 (sub.Text, sub.ForeColor) = Theme.PrioSterren(prio);
             }
         };
@@ -203,6 +205,10 @@ public class TeamUitTekstForm : Form
                 Tag = voorstel, Checked = true, UseItemStyleForSubItems = false,
             };
             item.SubItems.Add(voorstel.Lid).ForeColor = Theme.AccentHover;
+            // Deadline die Claude uit de tekst haalde ("tegen vrijdag" → datum).
+            item.SubItems.Add(voorstel.Deadline is { } d
+                ? "tegen " + d.ToString("ddd d/M", System.Globalization.CultureInfo.GetCultureInfo("nl-BE"))
+                : "").ForeColor = Theme.Muted;
             var prio = item.SubItems.Add("");
             (prio.Text, prio.ForeColor) = Theme.PrioSterren(voorstel.Prioriteit);
             _lijst.Items.Add(item);
