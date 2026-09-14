@@ -197,6 +197,35 @@ static class Program
             return;
         }
 
+        // Diagnose: de weekmail als concept in de CED-Outlook zetten en een screenshot maken.
+        // Gebruik: --outlookconcept "<aan>" uit.png   (onderwerp/tekst = de echte weekmail)
+        if (args.Length == 3 && args[0] == "--outlookconcept")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarOc = new TaskCompletionSource<string>();
+            var pompOc = new System.Windows.Forms.Timer { Interval = 50 };
+            pompOc.Tick += async (_, _) =>
+            {
+                pompOc.Stop();
+                try
+                {
+                    var mail = TeamMailBuilder.BouwZelf(TeamTaskStore.Load());
+                    klaarOc.SetResult(await OutlookClient.Instance.DiagnoseConceptAsync(
+                        args[1], mail.Onderwerp + " (test WorkManager)", mail.Tekst, args[2], CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarOc.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompOc.Start();
+            Application.Run();
+            Console.WriteLine(klaarOc.Task.Result);
+            return;
+        }
+
         // Diagnose: gesprekspunten per teamlid (Claude) of een teamantwoord laten lezen.
         // Gebruik: --teamgesprek  |  --teamantwoord "<afzender>" "@mail.txt"
         if ((args.Length == 1 && args[0] == "--teamgesprek") || (args.Length == 3 && args[0] == "--teamantwoord"))

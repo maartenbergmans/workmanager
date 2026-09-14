@@ -2250,6 +2250,122 @@ public sealed class OutlookClient : IDisposable
     }
 
     /// <summary>
+    /// Zet een nieuwe mail klaar als concept in Outlook (CED): opent OWA's compose-deeplink
+    /// met ontvangers, onderwerp en tekst, laat OWA hem als concept bewaren (na een echte
+    /// toetsaanslag — pas dan start de autosave) en toont het venster zodat Maarten kan
+    /// nalezen en versturen vanuit Outlook zelf. Sluiten van het venster = verbergen; het
+    /// concept staat dan in de map Concepten. True als OWA "Concept opgeslagen" toonde.
+    /// </summary>
+    public async Task<bool> MaakConceptAsync(string aan, string onderwerp, string tekst, CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct))
+            {
+                throw new InvalidOperationException(
+                    "Outlook is niet aangemeld — klik op 'Outlook aanmelden…' (dagelijkse MFA).");
+            }
+            // De CED-tenant draait op outlook.cloud.microsoft; de deeplink op outlook.office.com
+            // strandde daar in een lege pagina.
+            var url = "https://outlook.cloud.microsoft/mail/deeplink/compose?to=" + Uri.EscapeDataString(aan) +
+                      "&subject=" + Uri.EscapeDataString(onderwerp) +
+                      "&body=" + Uri.EscapeDataString(tekst);
+            _web!.CoreWebView2!.Navigate(url);
+            const string EditorJs =
+                """
+                (function () {
+                    const box = [...document.querySelectorAll('[contenteditable="true"]')]
+                        .find(b => b.getBoundingClientRect().height > 60);
+                    if (!box) return 'geen';
+                    return (box.innerText || '').trim().length > 20 ? 'gevuld' : 'leeg';
+                })()
+                """;
+            var gevuld = false;
+            for (var i = 0; i < 40 && !gevuld; i++) // max. 20 s op de editor wachten
+            {
+                await Task.Delay(500, ct);
+                gevuld = (await JsAsync(EditorJs)).Contains("gevuld");
+            }
+            var opgeslagen = false;
+            if (gevuld)
+            {
+                // Cursor aan het eind van de tekst, dan een echte spatie + backspace: OWA ziet
+                // de deeplink-inhoud niet als wijziging, een toetsaanslag wél (→ autosave).
+                await JsAsync(
+                    """
+                    (function () {
+                        const box = [...document.querySelectorAll('[contenteditable="true"]')]
+                            .find(b => b.getBoundingClientRect().height > 60);
+                        if (!box) return false;
+                        box.focus();
+                        const r = document.createRange();
+                        r.selectNodeContents(box);
+                        r.collapse(false);
+                        const s = getSelection();
+                        s.removeAllRanges();
+                        s.addRange(r);
+                        return true;
+                    })()
+                    """);
+                await Task.Delay(300, ct);
+                FysiekeKlik.Toets(_web, 0x20); // spatie
+                await Task.Delay(200, ct);
+                FysiekeKlik.Toets(_web, 0x08); // backspace
+                for (var i = 0; i < 45 && !opgeslagen; i++) // OWA bewaart na enkele seconden
+                {
+                    await Task.Delay(1000, ct);
+                    opgeslagen = await JsAsync(
+                        "/(concept opgeslagen|draft saved|brouillon enregistr|opgeslagen om)/i.test(document.body.innerText)") == "true";
+                }
+            }
+            try
+            {
+                File.AppendAllText(Path.Combine(DataDir, "outlook-concept-debug.txt"),
+                    $"{DateTime.Now:HH:mm:ss} {onderwerp}: editor {(gevuld ? "gevuld" : "NIET gevonden")}, " +
+                    $"concept {(opgeslagen ? "opgeslagen" : "niet bevestigd")}; url={await HuidigeUrlAsync()}; " +
+                    "editors=" + await JsAsync(
+                        "JSON.stringify([...document.querySelectorAll('[contenteditable=\"true\"]')].map(b => " +
+                        "Math.round(b.getBoundingClientRect().height) + ':' + (b.getAttribute('aria-label')||'').slice(0,40)))") +
+                    "\r\n");
+            }
+            catch
+            {
+                // Alleen diagnose.
+            }
+            // Venster tonen (zoals bij het Archief): nalezen, aanpassen, versturen in Outlook.
+            LogVensterOnScreen("MaakConceptAsync (concept weekmail)");
+            var scherm = Screen.FromPoint(Cursor.Position).WorkingArea;
+            _venster!.Text = "Outlook (CED) — concept klaargezet · versturen doe je hier; sluiten = venster verbergen";
+            _venster.Size = new Size(Math.Min(1400, scherm.Width - 80), Math.Min(1000, scherm.Height - 80));
+            _venster.Location = new Point(
+                scherm.X + (scherm.Width - _venster.Width) / 2,
+                scherm.Y + (scherm.Height - _venster.Height) / 2);
+            _venster.TopMost = true;
+            _venster.BringToFront();
+            _venster.Activate();
+            return opgeslagen;
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>Diagnose: zoals MaakConceptAsync, maar met een screenshot i.p.v. het venster te tonen.</summary>
+    public async Task<string> DiagnoseConceptAsync(string aan, string onderwerp, string tekst, string png,
+        CancellationToken ct)
+    {
+        var ok = await MaakConceptAsync(aan, onderwerp, tekst, ct);
+        await Task.Delay(1500, ct);
+        using var beeld = new MemoryStream();
+        await _web!.CoreWebView2!.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, beeld);
+        File.WriteAllBytes(png, beeld.ToArray());
+        Verberg();
+        return ok ? "concept opgeslagen" : "concept NIET bevestigd (zie outlook-concept-debug.txt)";
+    }
+
+    /// <summary>
     /// Opent één mail in het leesvenster en leest de volledige inhoud: platte tekst én HTML,
     /// met afbeeldingen ingebed als data-URL's (opgehaald binnen de ingelogde sessie — buiten
     /// Outlook laden die URL's niet). Let op: hierdoor markeert Outlook de mail als gelezen.

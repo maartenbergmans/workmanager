@@ -16,6 +16,7 @@ public class TeamMailForm : Form
     private readonly TextBox _feedback;
     private readonly ModernButton _feedbackButton;
     private readonly ModernButton _verstuurButton;
+    private readonly ModernButton _conceptButton;
     private readonly PulseBar _pulse = new();
     private readonly Label _status;
     private readonly CancellationTokenSource _cts = new();
@@ -111,8 +112,16 @@ public class TeamMailForm : Form
             Text = "Versturen", Width = 125, Kind = ButtonKind.Accent, Glyph = Fluent.Send,
         };
         _verstuurButton.Click += async (_, _) => await VerstuurAsync();
+        // Concept in Outlook (CED): de mail gaat dan vanuit het CED-adres, met de handtekening
+        // en de verzonden-items dáár. WorkManager zet hem klaar; versturen doe je in Outlook.
+        _conceptButton = new ModernButton
+        {
+            Text = "Concept in Outlook (CED)", Width = 200, Glyph = Fluent.Mail,
+        };
+        _conceptButton.Click += async (_, _) => await ConceptInOutlookAsync();
         buttons.Controls.Add(sluiten);
         buttons.Controls.Add(kopieer);
+        buttons.Controls.Add(_conceptButton);
         buttons.Controls.Add(_verstuurButton);
         buttons.Controls.Add(_status);
         CancelButton = sluiten;
@@ -170,6 +179,56 @@ public class TeamMailForm : Form
         {
             _feedbackButton.Enabled = true;
             _feedbackButton.Bezig = false;
+            _pulse.Actief = false;
+        }
+    }
+
+    /// <summary>
+    /// Zet de mail als concept klaar in de CED-Outlook (verborgen OWA-sessie) en toont dat
+    /// venster. Het klaarzetten telt als "verstuurd" voor de takenlijst (📧-tellers,
+    /// weektaak): de laatste stap gebeurt in Outlook.
+    /// </summary>
+    private async Task ConceptInOutlookAsync()
+    {
+        if (!OutlookClient.OoitGekoppeld)
+        {
+            MessageBox.Show(this, "De CED-Outlook is nog niet gekoppeld (cockpit → 'Outlook aanmelden…').",
+                "Weekmail team", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        BewaarOntvangers();
+        _conceptButton.Enabled = false;
+        _conceptButton.Bezig = true;
+        _pulse.Actief = true;
+        _status.Text = "Concept klaarzetten in Outlook…";
+        try
+        {
+            // Inspringing (subtaken) overleeft de HTML-editor van Outlook alleen als
+            // vaste spaties; gewone spaties aan het regelbegin vallen daar weg.
+            var tekst = System.Text.RegularExpressions.Regex.Replace(_tekst.Text, "^ +",
+                m => new string(' ', m.Length), System.Text.RegularExpressions.RegexOptions.Multiline);
+            var opgeslagen = await OutlookClient.Instance.MaakConceptAsync(
+                _aan.Text.Trim(), _onderwerp.Text.Trim(), tekst, _cts.Token);
+            VasteTaken.VinkAf(VasteTaken.WeekmailTaak);
+            TeamMailBuilder.MarkeerVerzonden(_data);
+            TeamTaskStore.Save(_data);
+            _status.Text = opgeslagen
+                ? "Concept staat in Outlook — versturen doe je daar."
+                : "Compose-venster staat open in Outlook; bewaar of verstuur hem daar.";
+            Toast.Toon(this, _status.Text, Fluent.Mail);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "";
+            Toast.Fout(this, "Concept in Outlook mislukt", ex.Message);
+        }
+        finally
+        {
+            _conceptButton.Enabled = true;
+            _conceptButton.Bezig = false;
             _pulse.Actief = false;
         }
     }
