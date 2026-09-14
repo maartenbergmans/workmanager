@@ -88,7 +88,9 @@ public class CockpitForm : Form
     private ModernButton? _projectenHoofdknop;
     private bool _facturenGeklikt; // knop verdwijnt na de eerste klik (tot de app herstart)
     private readonly List<ModernButton> _contextKnoppen = new();
-    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2 * 60 * 1000 };
+    // Elke minuut: een warme ronde kost enkele seconden (Teams 2-5 s, WhatsApp/Outlook alleen
+    // de zijbalk/lijst) en een lopende ronde wordt niet overlapt (zie _bezig in de Tick).
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 60 * 1000 };
 
     // Git-status per projectmap: het Projecten-menu toont de dagcache (1× per dag automatisch
     // bijgewerkt via de poll; "Git controleren" onder ▾ ververst actief).
@@ -1947,6 +1949,13 @@ public class CockpitForm : Form
                 verjaardagen.Show(this);
                 return;
             }
+            // De weektaak "Facturen goedkeuren (ISPnext)" opent het goedkeurvenster.
+            if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij ispRij &&
+                ispRij.Tekst.StartsWith(VasteTaken.FacturenTaak, StringComparison.OrdinalIgnoreCase))
+            {
+                _openInvoices();
+                return;
+            }
             // De maandelijkse Bermacon-factuurtaak opent Billit; afvinken via rechtsklik.
             if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij bermaconRij &&
                 bermaconRij.Tekst.Contains(VasteTaken.BermaconTaak, StringComparison.OrdinalIgnoreCase))
@@ -3375,10 +3384,8 @@ public class CockpitForm : Form
                              WaHistorieActueel(h, c.Preview))
                     {
                         // De cache kent het nieuwste bericht al: meteen volledig tonen.
-                        rij.Html = BouwWhatsAppHtml(h.Berichten, c.Naam, h.Avatar);
-                        rij.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n",
-                            h.Berichten.AsEnumerable().Reverse()
-                                .Select(b => $"[{b.Tijd}] {b.Afzender}: {b.Tekst}"));
+                        rij.Html = BouwWhatsAppHtml(h.Berichten, c.Naam, h.Avatar, h.Ondertitel);
+                        rij.Tekst += $"\n\n{HistorieKop}\n" + WaTranscript(h.Berichten);
                     }
                     else
                     {
@@ -3405,6 +3412,15 @@ public class CockpitForm : Form
                         MessageId = v.MessageId, WhatsAppChat = v.Chat, Van = v.Chat,
                         Onderwerp = v.Onderwerp, Tekst = v.Tekst, Html = v.Html, Datum = v.Datum,
                     });
+                }
+                // Bewaarde HTML kan van een oudere weergave zijn: altijd opnieuw opbouwen uit de
+                // (nieuwste) historiek, zodat een weergave-update meteen overal zichtbaar is.
+                foreach (var rij in waRijen.Where(r => r.Html.Length > 0))
+                {
+                    if (waHistorie.TryGetValue(rij.WhatsAppChat, out var hh) && hh.Berichten.Count > 0)
+                    {
+                        rij.Html = BouwWhatsAppHtml(hh.Berichten, rij.WhatsAppChat, hh.Avatar, hh.Ondertitel);
+                    }
                 }
                 if (waVersGewijzigd)
                 {
@@ -3549,9 +3565,7 @@ public class CockpitForm : Form
                     {
                         // De cache kent het nieuwste bericht al: meteen volledig tonen.
                         rij.Html = BouwTeamsHtml(h.Berichten, rij.TeamsChat);
-                        rij.Tekst += $"\n\n{HistorieKop}\n" + string.Join("\n", h.Berichten
-                            .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
-                                $"{(b.Beeld.Length > 0 || b.Foto ? "[📷 afbeelding] " : "")}{b.Tekst}"));
+                        rij.Tekst += $"\n\n{HistorieKop}\n" + TeamsTranscript(h.Berichten);
                     }
                     else
                     {
@@ -3579,6 +3593,15 @@ public class CockpitForm : Form
                         VanAdres = "Teams", Onderwerp = v.Onderwerp, Tekst = v.Tekst,
                         Html = v.Html, Datum = v.Datum,
                     });
+                }
+                // Bewaarde HTML kan van een oudere weergave zijn: altijd opnieuw opbouwen uit de
+                // (nieuwste) historiek, zodat een weergave-update meteen overal zichtbaar is.
+                foreach (var rij in teamsKlaar.Where(r => r.Html.Length > 0))
+                {
+                    if (teamsHistorie.TryGetValue(rij.TeamsChat, out var hh) && hh.Berichten.Count > 0)
+                    {
+                        rij.Html = BouwTeamsHtml(hh.Berichten, rij.TeamsChat);
+                    }
                 }
                 if (teamsVersGewijzigd)
                 {
@@ -3667,6 +3690,10 @@ public class CockpitForm : Form
                         Datum = b.Datum,
                         Aan = SplitsAdresregel(b.Aan),
                         Cc = SplitsAdresregel(b.Cc),
+                        // Bijlagen als chips in de kop; openen = de mail in OWA (daar staan ze).
+                        LinkBijlagen = b.Bijlagen
+                            .Select(n => new LinkBijlage { Naam = n, Url = b.Url })
+                            .ToList(),
                     }));
                 BronGezondheid.Succes("Outlook");
             }
@@ -3721,7 +3748,29 @@ public class CockpitForm : Form
                             .Split("; ", StringSplitOptions.RemoveEmptyEntries).ToList(),
                         Html = b.Html,
                         Datum = b.Datum,
+                        Avatar = b.Avatar,
+                        // Ontvangersregel zoals in Smartschool ("…, +681 anderen").
+                        Aan = b.Ontvangers.Length > 0
+                            ? new List<string> { b.Ontvangers }
+                                .Concat(b.Overige > 0 ? [$"+{b.Overige} anderen"] : []).ToList()
+                            : new List<string>(),
                     }));
+                // Meldingen uit het belletje die geen bericht zijn (agenda, resultaten, …):
+                // eigen rij met 🔔; archiveren wist de melding in Smartschool.
+                foreach (var m in SmartschoolClient.Meldingen())
+                {
+                    berichten.Add(new MailBericht
+                    {
+                        MessageId = $"smartschool-melding:{m.Kind}:{m.Sleutel}",
+                        SmartschoolBericht = $"{m.Kind}|melding:{m.Sleutel}",
+                        Van = $"Smartschool · {m.Kind}",
+                        VanAdres = "Smartschool",
+                        Onderwerp = $"🔔 {m.Titel}" + (m.Info.Length > 0 ? $" — {m.Info}" : ""),
+                        Tekst = $"{m.Titel}\n{m.Info}" + (m.Url.Length > 0 ? $"\n\nOpenen in Smartschool: {m.Url}" : "") +
+                            "\n\n(Melding uit het belletje van Smartschool; archiveren wist ze daar.)",
+                        Datum = DateTimeOffset.TryParse(m.Datum, out var md) ? md : DateTimeOffset.Now,
+                    });
+                }
                 // De Gmail-meldingsmail ("Nieuw bericht van …: …") heeft zijn werk gedaan
                 // zodra het aangekondigde bericht hier staat: automatisch archiveren, net
                 // als de Netflix-routinemails. Alleen bij een match op het aangekondigde
@@ -4549,139 +4598,191 @@ public class CockpitForm : Form
     private const string HistorieKop = "————— Eerdere berichten —————";
 
     /// <summary>
-    /// WhatsApp-stijl chatweergave: kop met profielfoto en naam (zoals WhatsApp Web),
-    /// bubbels (groen rechts = ikzelf, wit links = de ander) op de kenmerkende beige
-    /// achtergrond, nieuwste onderaan en meteen in beeld.
+    /// WhatsApp-weergave van een gesprek (zie <see cref="WhatsAppWeergave"/>): kop met foto,
+    /// naam en deelnemers, datumchips, bubbels met afzender/avatar in groepen, tijd en vinkjes.
     /// </summary>
     private static string BouwWhatsAppHtml(List<WhatsAppClient.WaBericht> berichten,
-        string chatNaam = "", string avatarDataUrl = "")
+        string chatNaam = "", string avatarDataUrl = "", string ondertitel = "") =>
+        WhatsAppWeergave.Bouw(berichten, chatNaam, avatarDataUrl, ondertitel);
+
+    /// <summary>
+    /// Diagnose (CLI --wahtml): rendert de gecachte WhatsApp-historiek van een chat precies
+    /// zoals het detailpaneel dat doet en bewaart er een PNG van.
+    /// </summary>
+    internal static async Task WaWeergaveScreenshotAsync(string chat, string pad, bool vers = false,
+        bool donker = false)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append("<div class=\"wm-chat\" style=\"margin:-16px;background:#efeae2;" +
-            "border-radius:0 0 6px 6px\">");
-        if (chatNaam.Length > 0)
+        WhatsAppWeergave.DonkerOverride = donker;
+        WaHistorie? h;
+        if (vers)
         {
-            // Kopbalk zoals in WhatsApp Web: lichtgrijs met ronde profielfoto en de naam.
-            var foto = avatarDataUrl.Length > 0
-                ? $"<img src=\"{avatarDataUrl}\" style=\"width:40px;height:40px;" +
-                  "border-radius:50%;object-fit:cover;flex:none\">"
-                : "<div style=\"width:40px;height:40px;border-radius:50%;background:#00a884;" +
-                  "color:#fff;display:flex;align-items:center;justify-content:center;" +
-                  "font-size:18px;font-weight:600;flex:none\">" +
-                  System.Net.WebUtility.HtmlEncode(chatNaam[..1].ToUpperInvariant()) + "</div>";
-            sb.Append("<div style=\"background:#f0f2f5;padding:9px 16px;display:flex;" +
-                "align-items:center;gap:12px;border-bottom:1px solid #e2e2e2\">" + foto +
-                "<div style=\"font-size:15px;font-weight:600;color:#111b21\">" +
-                $"{System.Net.WebUtility.HtmlEncode(chatNaam)}</div></div>");
+            // Vers uit WhatsApp Web (opent de chat), zonder de cache te wijzigen.
+            var (wa, avatar, ondertitel) = await WhatsAppClient.Instance.LaatsteBerichtenAsync(
+                chat, 25, CancellationToken.None);
+            h = new WaHistorie(wa, avatar, DateTimeOffset.Now, ondertitel);
+            File.WriteAllText(Path.ChangeExtension(pad, ".html"), BouwWhatsAppHtml(wa, chat, avatar, ondertitel));
         }
-        sb.Append("<div class=\"wm-chat-scroll\" style=\"padding:14px;display:flex;" +
-            "flex-direction:column-reverse;max-height:520px;overflow-y:auto\">");
-        foreach (var b in berichten.AsEnumerable().Reverse())
+        else if (!LaadWaHistorie().TryGetValue(chat, out h))
         {
-            var kleur = b.Uitgaand ? "#d9fdd3" : "#ffffff";
-            var kant = b.Uitgaand ? "flex-end" : "flex-start";
-            // Eigen bubbels met een puntje rechtsboven, andermans linksboven (WhatsApp-look).
-            var hoeken = b.Uitgaand ? "8px 2px 8px 8px" : "2px 8px 8px 8px";
-            sb.Append($"<div style=\"align-self:{kant};max-width:78%;margin:3px 0\">");
-            sb.Append($"<div style=\"background:{kleur};border-radius:{hoeken};padding:6px 9px 4px;" +
-                "box-shadow:0 1px 1px rgba(0,0,0,.15);font-size:13.5px;color:#111b21;" +
-                "white-space:pre-wrap;word-break:break-word\">");
-            if (!b.Uitgaand)
-            {
-                sb.Append("<div style=\"font-size:12px;font-weight:600;color:#1f7aec;" +
-                    $"margin-bottom:2px\">{System.Net.WebUtility.HtmlEncode(b.Afzender)}</div>");
-            }
-            // Foto's in de bubbel, zoals in WhatsApp zelf (data-URL, dus offline zichtbaar).
-            if (b.Beeld.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
-            {
-                sb.Append($"<img src=\"{b.Beeld}\" style=\"max-width:100%;max-height:340px;" +
-                    "border-radius:6px;display:block;margin:2px 0 4px\">");
-            }
-            sb.Append(System.Net.WebUtility.HtmlEncode(b.Tekst));
-            // Eigen berichten krijgen zoals in WhatsApp vinkjes naast het tijdstip.
-            sb.Append("<div style=\"font-size:10.5px;color:#667781;text-align:right;margin-top:3px\">" +
-                System.Net.WebUtility.HtmlEncode(b.Tijd) +
-                (b.Uitgaand ? " <span style=\"color:#53bdeb\">✓✓</span>" : "") + "</div>");
-            sb.Append("</div>");
-            // Emoji-reacties (❤️ 👍 …) als wit pilletje dat net als in WhatsApp half over de
-            // onderrand van de bubbel hangt.
-            if (b.Reacties.Length > 0)
-            {
-                var reactieKant = b.Uitgaand ? "flex-end" : "flex-start";
-                sb.Append("<div style=\"display:flex;justify-content:" + reactieKant +
-                    ";margin:-7px 6px 0\"><span style=\"background:#ffffff;border-radius:11px;" +
-                    "box-shadow:0 1px 2px rgba(0,0,0,.25);padding:1px 7px;font-size:12px;" +
-                    "color:#111b21\">" + System.Net.WebUtility.HtmlEncode(b.Reacties) +
-                    "</span></div>");
-            }
-            sb.Append("</div>");
+            throw new InvalidOperationException($"Geen historiek voor \"{chat}\" in de cache.");
         }
-        sb.Append("</div></div>");
-        return sb.ToString();
+        var html = MailWeergave.BouwWeergave(new MailBericht
+        {
+            WhatsAppChat = chat, Van = chat, Onderwerp = h.Berichten.LastOrDefault()?.Tekst ?? "",
+            Datum = DateTimeOffset.Now, Html = BouwWhatsAppHtml(h.Berichten, chat, h.Avatar, h.Ondertitel),
+        });
+        await RenderNaarPngAsync(html, pad, "['.wa-poll', '.wa-album', '.wa-cit']");
     }
 
     /// <summary>
-    /// Teams-stijl chatweergave: kop met paarse initiaalcirkel, eigen berichten in lichtpaars
-    /// rechts, andermans in lichtgrijs links met naam en tijd erboven, nieuwste onderaan.
+    /// Diagnose (CLI --teamshtml): rendert de (gecachte of verse) Teams-historiek van een
+    /// chat zoals het detailpaneel dat doet en bewaart er een PNG van.
     /// </summary>
-    private static string BouwTeamsHtml(List<TeamsClient.TeamsChatBericht> berichten, string chatNaam)
+    internal static async Task TeamsWeergaveScreenshotAsync(string chat, string pad, bool vers = false,
+        bool donker = false)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append("<div class=\"wm-chat\" style=\"margin:-16px;background:#ffffff;" +
-            "border-radius:0 0 6px 6px\">");
-        if (chatNaam.Length > 0)
+        TeamsWeergave.DonkerOverride = donker;
+        TeamsHistorie? h;
+        if (vers)
         {
-            sb.Append("<div style=\"background:#f5f5f5;padding:9px 16px;display:flex;" +
-                "align-items:center;gap:12px;border-bottom:1px solid #e0e0e0\">" +
-                "<div style=\"width:40px;height:40px;border-radius:50%;background:#5b5fc7;" +
-                "color:#fff;display:flex;align-items:center;justify-content:center;" +
-                "font-size:18px;font-weight:600;flex:none\">" +
-                System.Net.WebUtility.HtmlEncode(chatNaam[..1].ToUpperInvariant()) + "</div>" +
-                "<div style=\"font-size:15px;font-weight:600;color:#242424\">" +
-                $"{System.Net.WebUtility.HtmlEncode(chatNaam)}</div></div>");
+            var tb = await TeamsClient.Instance.LaatsteBerichtenAsync(chat, 25, CancellationToken.None);
+            h = new TeamsHistorie(tb, DateTimeOffset.Now);
+            File.WriteAllText(Path.ChangeExtension(pad, ".html"), BouwTeamsHtml(tb, chat));
         }
-        sb.Append("<div class=\"wm-chat-scroll\" style=\"padding:14px;display:flex;" +
-            "flex-direction:column-reverse;max-height:520px;overflow-y:auto\">");
-        foreach (var b in berichten.AsEnumerable().Reverse())
+        else if (!LaadTeamsHistorie().TryGetValue(chat, out h))
         {
-            var kleur = b.Uitgaand ? "#e8ebfa" : "#f5f5f5";
-            var kant = b.Uitgaand ? "flex-end" : "flex-start";
-            sb.Append($"<div style=\"align-self:{kant};max-width:78%;margin:4px 0\">");
-            if (!b.Uitgaand && (b.Auteur.Length > 0 || b.Tijd.Length > 0))
-            {
-                sb.Append("<div style=\"font-size:11.5px;color:#616161;margin:0 0 2px 4px\">" +
-                    System.Net.WebUtility.HtmlEncode(b.Auteur) +
-                    (b.Tijd.Length > 0 ? $" · {System.Net.WebUtility.HtmlEncode(b.Tijd)}" : "") +
-                    "</div>");
-            }
-            sb.Append($"<div style=\"background:{kleur};border-radius:6px;padding:7px 11px;" +
-                "font-size:13.5px;color:#242424;white-space:pre-wrap;word-break:break-word\">");
-            // Foto's in de bubbel, zoals in Teams zelf (data-URL, dus offline zichtbaar).
-            if (b.Beeld.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
-            {
-                sb.Append($"<img src=\"{b.Beeld}\" style=\"max-width:100%;max-height:340px;" +
-                    "border-radius:6px;display:block;margin:2px 0 4px\">");
-            }
-            else if (b.Foto)
-            {
-                // De foto kon niet opgehaald worden (bv. nog aan het uploaden tijdens de
-                // scrape): placeholder tonen in plaats van het bericht te verzwijgen.
-                sb.Append("<div style=\"background:#e0e0e0;border:1px dashed #b5b5b5;" +
-                    "border-radius:6px;padding:20px 14px;text-align:center;color:#616161;" +
-                    "font-size:12.5px;margin:2px 0 4px\">📷 Afbeelding — kon niet " +
-                    "opgehaald worden, bekijk ze in Teams</div>");
-            }
-            sb.Append(System.Net.WebUtility.HtmlEncode(b.Tekst));
-            if (b.Uitgaand && b.Tijd.Length > 0)
-            {
-                sb.Append("<div style=\"font-size:10.5px;color:#616161;text-align:right;" +
-                    $"margin-top:3px\">{System.Net.WebUtility.HtmlEncode(b.Tijd)}</div>");
-            }
-            sb.Append("</div></div>");
+            throw new InvalidOperationException($"Geen historiek voor \"{chat}\" in de cache.");
         }
-        sb.Append("</div></div>");
-        return sb.ToString();
+        var html = MailWeergave.BouwWeergave(new MailBericht
+        {
+            TeamsChat = chat, Van = chat, VanAdres = "Teams",
+            Onderwerp = h.Berichten.LastOrDefault(b => b.Soort.Length == 0)?.Tekst ?? "",
+            Datum = DateTimeOffset.Now, Html = BouwTeamsHtml(h.Berichten, chat),
+        });
+        await RenderNaarPngAsync(html, pad, "['.tm-cit', '.tm-file', '.tm-foto', '.tm-reac']");
     }
+
+    /// <summary>
+    /// Diagnose (CLI --outlookhtml): rendert een CED-Outlook-mail uit de cache (onderwerp
+    /// bevat de zoektekst) zoals het detailpaneel dat doet; met "vers" wordt de mail eerst
+    /// opnieuw uit OWA gelezen (markeert hem daar als gelezen).
+    /// </summary>
+    internal static async Task OutlookWeergaveScreenshotAsync(string zoek, string pad, bool vers = false)
+    {
+        var mail = OutlookClient.GecachteMails()
+            .OrderByDescending(m => m.Datum)
+            .FirstOrDefault(m => m.Onderwerp.Contains(zoek, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Geen mail met \"{zoek}\" in de Outlook-cache.");
+        var bericht = new MailBericht
+        {
+            MessageId = mail.Sleutel, OutlookMail = $"{mail.Van}|{mail.Onderwerp}", OutlookUrl = mail.Url,
+            Van = mail.Van, VanAdres = "CED Outlook", Onderwerp = mail.Onderwerp, Tekst = mail.Tekst,
+            Html = mail.Html, Datum = mail.Datum, Aan = SplitsAdresregel(mail.Aan), Cc = SplitsAdresregel(mail.Cc),
+            LinkBijlagen = mail.Bijlagen.Select(n => new LinkBijlage { Naam = n, Url = mail.Url }).ToList(),
+        };
+        if (vers)
+        {
+            var (tekst, html, exact, url, aan, cc, bijlagen) = await OutlookClient.Instance.LeesMailAsync(
+                mail.Van, mail.Onderwerp, CancellationToken.None);
+            if (tekst.Length == 0 && html.Length == 0)
+            {
+                throw new InvalidOperationException("Mail niet gevonden in de Outlook-weergave.");
+            }
+            bericht.Tekst = tekst;
+            bericht.Html = html;
+            bericht.Aan = SplitsAdresregel(aan);
+            bericht.Cc = SplitsAdresregel(cc);
+            bericht.LinkBijlagen = bijlagen.Select(n => new LinkBijlage { Naam = n, Url = url }).ToList();
+            if (exact is { } moment)
+            {
+                bericht.Datum = moment;
+            }
+            File.WriteAllText(Path.ChangeExtension(pad, ".html"), html);
+            Console.WriteLine($"vers: html {html.Length} tekens, tekst {tekst.Length}, bijlagen: " +
+                string.Join(" | ", bijlagen) + (html.Contains("wm-verleden") ? ", verleden ingeklapt" : ""));
+        }
+        await RenderNaarPngAsync(MailWeergave.BouwWeergave(bericht), pad, "['details.wm-verleden', 'img']");
+    }
+
+    /// <summary>
+    /// Diagnose (CLI --smslees): leest één Smartschool-bericht (msgID) met de echte leescode
+    /// en rendert het zoals het detailpaneel. Met "poll" draait eerst een volledige
+    /// ophaalbeurt (incl. meldingen).
+    /// </summary>
+    internal static async Task SmartschoolWeergaveScreenshotAsync(string msgId, string pad, bool poll)
+    {
+        if (poll)
+        {
+            var lijst = await SmartschoolClient.Instance.BerichtenAsync(true, CancellationToken.None);
+            Console.WriteLine($"poll: {lijst.Count} berichten; meldingen (niet-bericht): " +
+                string.Join(" | ", SmartschoolClient.Meldingen().Select(m => $"{m.Kind}: {m.Module} {m.Titel} — {m.Info}")));
+        }
+        var b = await SmartschoolClient.Instance.DiagnoseLeesAsync(msgId, CancellationToken.None)
+            ?? throw new InvalidOperationException("Smartschool niet aangemeld.");
+        Console.WriteLine($"gelezen: van={b.Van} | onderwerp={b.Onderwerp} | tekst {b.Tekst.Length} | html {b.Html.Length} | " +
+            $"bijlagen={b.Bijlagen} | avatar {b.Avatar.Length / 1024} kB | ontvangers={b.Ontvangers} (+{b.Overige})");
+        var bericht = new MailBericht
+        {
+            MessageId = b.Sleutel, SmartschoolBericht = $"{b.Kind}|{b.MsgId}", Van = $"{b.Van} · Lisa",
+            VanAdres = "Smartschool", Onderwerp = b.Onderwerp, Tekst = b.Tekst, Html = b.Html, Datum = b.Datum,
+            Avatar = b.Avatar, Bijlagen = b.Bijlagen.Split("; ", StringSplitOptions.RemoveEmptyEntries).ToList(),
+            Aan = b.Ontvangers.Length > 0
+                ? new List<string> { b.Ontvangers }.Concat(b.Overige > 0 ? [$"+{b.Overige} anderen"] : []).ToList()
+                : new List<string>(),
+        };
+        File.WriteAllText(Path.ChangeExtension(pad, ".html"), b.Html);
+        await RenderNaarPngAsync(MailWeergave.BouwWeergave(bericht), pad, "['img']");
+    }
+
+    /// <summary>
+    /// Rendert een detailpaneel-HTML in een verborgen WebView2 en bewaart drie PNG's: de
+    /// onderkant (pad), de bovenkant (-boven) en het eerste element uit
+    /// <paramref name="scrollNaarJsArray"/> of anders het midden (-midden).
+    /// </summary>
+    private static async Task RenderNaarPngAsync(string html, string pad, string scrollNaarJsArray)
+    {
+        using var venster = new Form
+        {
+            Size = new Size(760, 2600), StartPosition = FormStartPosition.Manual,
+            Location = new Point(-4000, -4000), ShowInTaskbar = false,
+        };
+        var web = new WebView2 { Dock = DockStyle.Fill };
+        venster.Controls.Add(web);
+        venster.Show();
+        await web.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(
+            userDataFolder: Path.Combine(DataDir, "webview2-diag")));
+        var geladen = new TaskCompletionSource();
+        web.CoreWebView2.NavigationCompleted += (_, _) => geladen.TrySetResult();
+        web.CoreWebView2.NavigateToString(html);
+        await geladen.Task;
+        await Task.Delay(800);
+        using var beeld = new MemoryStream();
+        await web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, beeld);
+        File.WriteAllBytes(pad, beeld.ToArray());
+        // Tweede beeld van het oudste deel: helemaal naar boven scrollen (column-reverse,
+        // dus negatieve scrollTop).
+        await web.CoreWebView2.ExecuteScriptAsync(
+            "document.querySelectorAll('.wm-chat-scroll').forEach(e => e.scrollTop = -e.scrollHeight)");
+        await Task.Delay(300);
+        using var boven = new MemoryStream();
+        await web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, boven);
+        File.WriteAllBytes(Path.ChangeExtension(pad, null) + "-boven.png", boven.ToArray());
+        await web.CoreWebView2.ExecuteScriptAsync(
+            "const p = " + scrollNaarJsArray + ".map(s => document.querySelector(s)).find(x => x); " +
+            "p ? p.scrollIntoView({block:'center'}) : " +
+            "document.querySelectorAll('.wm-chat-scroll').forEach(e => e.scrollTop = -e.scrollHeight / 2)");
+        await Task.Delay(300);
+        using var midden = new MemoryStream();
+        await web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, midden);
+        File.WriteAllBytes(Path.ChangeExtension(pad, null) + "-midden.png", midden.ToArray());
+    }
+
+    /// <summary>
+    /// Teams-weergave van een chat (zie <see cref="TeamsWeergave"/>): kop met foto, datum-
+    /// scheidingen, reeksen met avatar en kopregel, opmaak, citaten, bijlagen, reacties, leesstatus.
+    /// </summary>
+    private static string BouwTeamsHtml(List<TeamsClient.TeamsChatBericht> berichten, string chatNaam) =>
+        TeamsWeergave.Bouw(berichten, chatNaam);
 
     private sealed record TeamsHistorie(
         List<TeamsClient.TeamsChatBericht> Berichten, DateTimeOffset Opgehaald);
@@ -4747,9 +4848,23 @@ public class CockpitForm : Form
         {
             kern = kern[..30];
         }
+        if (h.Berichten.All(b => b.Iso.Length == 0))
+        {
+            return false; // cache van vóór de Teams-weergave (geen opmaak, avatar, citaat…): vers laden
+        }
         return h.Berichten.TakeLast(3).Any(b =>
             b.Tekst.Contains(kern, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>Transcript voor Claude en de berichttekst: datumscheidingen, systeem, media.</summary>
+    private static string TeamsTranscript(IEnumerable<TeamsClient.TeamsChatBericht> berichten) =>
+        string.Join("\n", berichten.Select(b => b.Soort switch
+        {
+            "divider" => $"— {b.Tekst} —",
+            "systeem" => $"[systeem] {b.Tekst}",
+            _ => $"[{(b.TijdVol.Length > 0 ? b.TijdVol : b.Tijd)}] " +
+                 $"{(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: {TeamsClient.TranscriptTekst(b)}",
+        }));
 
     private readonly HashSet<string> _teamsVoorladenBezig = new(StringComparer.Ordinal);
 
@@ -4796,8 +4911,16 @@ public class CockpitForm : Form
         }
     }
 
+    /// <summary>Ondertitel = de regel onder de naam in WhatsApps kop (deelnemers / laatst gezien).</summary>
     private sealed record WaHistorie(
-        List<WhatsAppClient.WaBericht> Berichten, string Avatar, DateTimeOffset Opgehaald);
+        List<WhatsAppClient.WaBericht> Berichten, string Avatar, DateTimeOffset Opgehaald,
+        string Ondertitel = "");
+
+    /// <summary>Transcript voor Claude en de berichttekst: nieuwste bovenaan, met nummer en media.</summary>
+    private static string WaTranscript(IEnumerable<WhatsAppClient.WaBericht> berichten) =>
+        string.Join("\n", berichten.Reverse().Select(b => b.Media == "systeem"
+            ? $"[systeem] {b.Tekst}"
+            : $"[{b.Tijd}] {b.AfzenderVolledig}: {WhatsAppClient.TranscriptTekst(b)}"));
 
     private static readonly string WaHistorieFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -4860,6 +4983,10 @@ public class CockpitForm : Form
         if (kern.Length > 30)
         {
             kern = kern[..30];
+        }
+        if (h.Berichten.All(b => b.Klok.Length == 0))
+        {
+            return false; // cache van vóór de WhatsApp-weergave (geen afzenderkleur, avatar…): vers laden
         }
         return h.Berichten.TakeLast(3).Any(b =>
             b.Tekst.Contains(kern, StringComparison.OrdinalIgnoreCase));
@@ -5010,30 +5137,33 @@ public class CockpitForm : Form
                 if (waCacheAlles.TryGetValue(bericht.WhatsAppChat, out var waCache) &&
                     waCache.Berichten.Count > 0 && bericht.Html.Length == 0)
                 {
-                    bericht.Html = BouwWhatsAppHtml(
-                        waCache.Berichten, bericht.WhatsAppChat, waCache.Avatar);
+                    bericht.Html = BouwWhatsAppHtml(waCache.Berichten, bericht.WhatsAppChat,
+                        waCache.Avatar, waCache.Ondertitel);
                     if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } cacheCore)
                     {
                         cacheCore.NavigateToString(MailWeergave.BouwWeergave(bericht));
                     }
                 }
                 // WhatsApp krijgt een echte bubbelweergave in plaats van platte regels.
-                var (wa, avatar) = await WhatsAppClient.Instance.LaatsteBerichtenAsync(
+                var (wa, avatar, ondertitel) = await WhatsAppClient.Instance.LaatsteBerichtenAsync(
                     bericht.WhatsAppChat, 15, _cts.Token);
                 if (wa.Count == 0)
                 {
                     LogHistorie($"{bericht.Van}: 0 berichten gevonden");
                     return;
                 }
-                waCacheAlles[bericht.WhatsAppChat] = new WaHistorie(wa, avatar, DateTimeOffset.Now);
+                // De deelnemersregel laadt in WhatsApp soms net te laat: dan de vorige houden.
+                if (ondertitel.Length == 0 && waCache is not null)
+                {
+                    ondertitel = waCache.Ondertitel;
+                }
+                waCacheAlles[bericht.WhatsAppChat] =
+                    new WaHistorie(wa, avatar, DateTimeOffset.Now, ondertitel);
                 BewaarWaHistorie(waCacheAlles);
-                bericht.Html = BouwWhatsAppHtml(wa, bericht.WhatsAppChat, avatar);
+                bericht.Html = BouwWhatsAppHtml(wa, bericht.WhatsAppChat, avatar, ondertitel);
                 // Ook als tekst bewaren: daar leest Claude uit voor concepten. Een eerdere
                 // historie wordt vervangen — de chat kan intussen verder gegaan zijn.
-                bericht.Tekst = ZonderHistorie(bericht.Tekst) +
-                    $"\n\n{HistorieKop}\n" + string.Join("\n",
-                    wa.AsEnumerable().Reverse()
-                        .Select(b => $"[{b.Tijd}] {b.Afzender}: {b.Tekst}"));
+                bericht.Tekst = ZonderHistorie(bericht.Tekst) + $"\n\n{HistorieKop}\n" + WaTranscript(wa);
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } waCore)
                 {
                     waCore.NavigateToString(MailWeergave.BouwWeergave(bericht));
@@ -5075,10 +5205,7 @@ public class CockpitForm : Form
                 BewaarTeamsHistorie(tCacheAlles);
                 bericht.Html = BouwTeamsHtml(tb, bericht.TeamsChat);
                 // Ook als tekst bewaren: daar leest Claude uit voor concepten.
-                bericht.Tekst = ZonderHistorie(bericht.Tekst) +
-                    $"\n\n{HistorieKop}\n" + string.Join("\n", tb
-                    .Select(b => $"[{b.Tijd}] {(b.Uitgaand ? "Maarten (ikzelf)" : b.Auteur)}: " +
-                        $"{(b.Beeld.Length > 0 || b.Foto ? "[📷 afbeelding] " : "")}{b.Tekst}"));
+                bericht.Tekst = ZonderHistorie(bericht.Tekst) + $"\n\n{HistorieKop}\n" + TeamsTranscript(tb);
                 if (ReferenceEquals(_getoond, bericht) && _detail.CoreWebView2 is { } tCore2)
                 {
                     tCore2.NavigateToString(MailWeergave.BouwWeergave(bericht));
@@ -5230,7 +5357,7 @@ public class CockpitForm : Form
         _outlookLeesButton.Bezig = true;
         try
         {
-            var (tekst, html, exact, url, aan, cc) = await OutlookClient.Instance.LeesMailAsync(
+            var (tekst, html, exact, url, aan, cc, bijlagen) = await OutlookClient.Instance.LeesMailAsync(
                 bericht.Van, bericht.Onderwerp, _cts.Token);
             if (tekst.Length == 0 && html.Length == 0)
             {
@@ -5239,6 +5366,12 @@ public class CockpitForm : Form
             }
             bericht.Tekst = tekst + "\n\n(Beantwoorden: in Outlook zelf.)";
             bericht.Html = html;
+            if (bijlagen.Count > 0)
+            {
+                bericht.LinkBijlagen = bijlagen
+                    .Select(n => new LinkBijlage { Naam = n, Url = url.Length > 0 ? url : bericht.OutlookUrl })
+                    .ToList();
+            }
             bericht.Aan = SplitsAdresregel(aan);
             bericht.Cc = SplitsAdresregel(cc);
             if (url.Length > 0)

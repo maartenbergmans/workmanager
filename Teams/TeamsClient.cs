@@ -593,15 +593,8 @@ public sealed class TeamsClient : IDisposable
             }
         }
         // Wachten tot de chatlijst er echt staat (max. ~6 s) in plaats van blind te wachten.
-        for (var i = 0; i < 20; i++)
-        {
-            await Task.Delay(300, ct);
-            var gerenderd = await JsAsync($"document.querySelectorAll({RijSelector}).length");
-            if (int.TryParse(gerenderd, out var rijen) && rijen >= 5)
-            {
-                break;
-            }
-        }
+        await Task.Delay(300, ct);
+        await WachtOpRijenAsync(20, 300, ct);
         _laatstHerladen = DateTimeOffset.Now;
     }
 
@@ -969,15 +962,7 @@ public sealed class TeamsClient : IDisposable
             }
             // De Teams-web-app heeft na het opstarten ruim tijd nodig ("We stellen dingen
             // voor u in…"): wachten tot er echt chatrijen staan, niet op een elemententelling.
-            for (var i = 0; i < 90; i++)
-            {
-                var n = await JsAsync($"document.querySelectorAll({RijSelector}).length");
-                if (int.TryParse(n, out var aantal) && aantal >= 5)
-                {
-                    break;
-                }
-                await Task.Delay(500, ct);
-            }
+            await WachtOpRijenAsync(90, 500, ct);
             await TerugNaarChatlijstAsync();
             if (naam.Length == 0)
             {
@@ -1062,6 +1047,119 @@ public sealed class TeamsClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Diagnose (CLI --teamsdiag): opent een chat in de verborgen sessie, draait er een stuk
+    /// JavaScript in (mag een Promise opleveren) en maakt optioneel een screenshot van hoe
+    /// Teams de chat zelf toont — referentiebeeld voor de bubbelweergave. Opent de chat, dus
+    /// Teams markeert hem als gelezen.
+    /// </summary>
+    public async Task<string> DiagnoseInChatAsync(string naam, string script, string screenshotPad,
+        CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            // Koude CLI-sessie: Teams doet er ruim over voor de app er staat.
+            if (!await StartAsync(ct, wachtSeconden: 120))
+            {
+                return "(niet ingelogd)";
+            }
+            await TerugNaarChatlijstAsync();
+            await WachtOpRijenAsync(90, 500, ct);
+            if (naam.Length > 0)
+            {
+                await OpenChatAsync(naam, ct);
+                await Task.Delay(1500, ct);
+            }
+            var uit = "";
+            if (script.Length > 0)
+            {
+                await JsAsync(
+                    "window.__wmDiag = null; Promise.resolve(eval(" + JsonSerializer.Serialize(script) +
+                    ")).then(v => { window.__wmDiag = String(v); }, e => { window.__wmDiag = 'FOUT: ' + e; }); true");
+                for (var i = 0; i < 100; i++)
+                {
+                    await Task.Delay(300, ct);
+                    var klaar = await JsAsync("window.__wmDiag");
+                    if (klaar != "null")
+                    {
+                        uit = JsonSerializer.Deserialize<string>(klaar) ?? "";
+                        break;
+                    }
+                }
+            }
+            if (screenshotPad.Length > 0)
+            {
+                await Task.Delay(800, ct);
+                using var beeld = new MemoryStream();
+                await _web!.CoreWebView2!.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                File.WriteAllBytes(screenshotPad, beeld.ToArray());
+            }
+            await ParkeerOpConceptenAsync();
+            return uit;
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// De map "Chats" in de zijbalk kan ingeklapt staan (Teams onthoudt dat over sessies;
+    /// dan rendert de lijst nul rijen en vindt geen enkele zoektocht een chat). Uitklappen
+    /// via een trusted klik op de map, en als de Fluent-tree die negeert via focus + Enter
+    /// (toetsenbordroute) — daarna verifiëren op aria-expanded.
+    /// </summary>
+    private async Task OntvouwChatsAsync()
+    {
+        const string Ingeklapt =
+            "document.querySelector('[role=\"treeitem\"][data-item-type=\"chats\"][aria-expanded=\"false\"]')";
+        if (await JsAsync($"!!({Ingeklapt})") != "true")
+        {
+            return;
+        }
+        // Route 1: klik op de kop van de map (het label, niet het midden van de rij).
+        await KlikTrustedAsync(
+            $"({Ingeklapt})?.querySelector('[data-testid*=\"folder\"], span, div') || {Ingeklapt}");
+        await Task.Delay(700);
+        if (await JsAsync($"!!({Ingeklapt})") != "true")
+        {
+            LogKlik("map Chats uitgeklapt via klik");
+            return;
+        }
+        // Route 2: focus op het treeitem en Enter (Fluent-tree: toggelt de map).
+        await JsAsync($"(function () {{ const t = {Ingeklapt}; if (t) {{ t.setAttribute('tabindex', '0'); t.focus(); }} return true; }})()");
+        await Task.Delay(200);
+        await CdpEnterAsync();
+        await Task.Delay(700);
+        LogKlik("map Chats " + (await JsAsync($"!!({Ingeklapt})") == "true"
+            ? "blijft ingeklapt (klik én Enter negeerd)" : "uitgeklapt via Enter"));
+    }
+
+    /// <summary>
+    /// Wacht tot de chatlijst echt rijen rendert (≥ 5). Staat de map "Chats" ingeklapt, dan
+    /// komen die rijen nooit — daarom wordt onderweg uitgeklapt zodra de map er staat.
+    /// True zodra er rijen zijn.
+    /// </summary>
+    private async Task<bool> WachtOpRijenAsync(int pogingen, int pauzeMs, CancellationToken ct)
+    {
+        for (var i = 0; i < pogingen; i++)
+        {
+            var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
+            if (int.TryParse(rijen, out var n) && n >= 5)
+            {
+                return true;
+            }
+            if (i % 2 == 1)
+            {
+                await OntvouwChatsAsync();
+            }
+            await Task.Delay(pauzeMs, ct);
+        }
+        return false;
+    }
+
     /// <summary>Staat de chatlijst al open? (Dan hoeft er niet genavigeerd te worden.)</summary>
     private async Task<bool> OpChatlijstAsync()
     {
@@ -1102,16 +1200,9 @@ public sealed class TeamsClient : IDisposable
                     .find(el => /^(chat|chatten)\b/i.test((el.getAttribute('aria-label') ||
                         el.textContent || '').trim()))
                 """);
-            // Wachten tot de rijen er zijn in plaats van blind 1,5 s (max. 1,5 s).
-            for (var i = 0; i < 10; i++)
-            {
-                await Task.Delay(150);
-                var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
-                if (int.TryParse(rijen, out var n) && n >= 5)
-                {
-                    break;
-                }
-            }
+            // Wachten tot de rijen er zijn in plaats van blind 1,5 s (max. 1,5 s); klapt
+            // onderweg de map "Chats" uit als die dicht staat.
+            await WachtOpRijenAsync(10, 150, CancellationToken.None);
         }
         catch
         {
@@ -1479,9 +1570,42 @@ public sealed class TeamsClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Eén item uit een Teams-chat. Soort "" = gewoon bericht; "divider" = datumscheiding
+    /// (Tekst = "Gisteren", "donderdag", "maandag 22 september 2025"); "systeem" = melding
+    /// ("X heeft Y toegevoegd"). Tijd is de zichtbare vorm ("Gisteren 13:51"), TijdVol de
+    /// volledige ("Gisteren om 13:51"), Iso het exacte tijdstip.
+    /// </summary>
     public sealed record TeamsChatBericht(
         string Tijd, string Auteur, bool Uitgaand, string Tekst, string Beeld = "",
-        bool Foto = false);
+        bool Foto = false)
+    {
+        public string Soort { get; init; } = "";
+        public string Iso { get; init; } = "";
+        public string TijdVol { get; init; } = "";
+        /// <summary>Opgeschoonde HTML van de inhoud (opmaak, lijsten, links, @vermeldingen).</summary>
+        public string Html { get; init; } = "";
+        /// <summary>Profielfoto van de afzender (data-URL), leeg = initialen.</summary>
+        public string AvatarUrl { get; init; } = "";
+        public TeamsCitaat? Citaat { get; init; }
+        public List<string> Bijlagen { get; init; } = [];
+        /// <summary>Reacties als "👍 😂 2" (aantal alleen boven 1).</summary>
+        public string Reacties { get; init; } = "";
+        public bool EigenReactie { get; init; }
+        /// <summary>Uitgaand: "Gezien", "Verzonden" … (aria-label van het statusicoon).</summary>
+        public string Status { get; init; } = "";
+        public bool Bewerkt { get; init; }
+        /// <summary>Maarten wordt in dit bericht @vermeld.</summary>
+        public bool Vermeld { get; init; }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public DateTimeOffset? Tijdstip =>
+            DateTimeOffset.TryParse(Iso, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal, out var t) ? t.ToLocalTime() : null;
+    }
+
+    /// <summary>Geciteerd (antwoord) of doorgestuurd bericht bovenin een bubbel.</summary>
+    public sealed record TeamsCitaat(string Wie, string Wanneer, string Wat, bool Doorgestuurd);
 
     /// <summary>
     /// Opent een chat uit de (gevirtualiseerde) chatlijst met een echte klik — zo nodig
@@ -1595,9 +1719,11 @@ public sealed class TeamsClient : IDisposable
     }
 
     /// <summary>
-    /// De laatste berichten uit een Teams-chat, gestructureerd (tijd, auteur, richting,
-    /// tekst) voor de bubbelweergave: opent de chat in de verborgen sessie (Teams
-    /// markeert hem daardoor als gelezen) en leest de zichtbare berichten uit.
+    /// De laatste berichten uit een Teams-chat, gestructureerd voor de bubbelweergave —
+    /// alles wat Teams zelf toont: auteur en tijd (met ISO-tijdstip), avatar, opmaak (als
+    /// opgeschoonde HTML), citaten, bijlagen, reacties, leesstatus, vermeldingen, datum-
+    /// scheidingen en systeemmeldingen. Opent de chat in de verborgen sessie (Teams
+    /// markeert hem daardoor als gelezen) en leest de gerenderde berichten uit.
     /// </summary>
     public async Task<List<TeamsChatBericht>> LaatsteBerichtenAsync(
         string naam, int max, CancellationToken ct)
@@ -1605,26 +1731,20 @@ public sealed class TeamsClient : IDisposable
         await _slot.WaitAsync(ct);
         try
         {
-            if (!await StartAsync(ct))
+            // Ruim wachten: een koude sessie (CLI-diagnose, of net herbouwd) heeft 30-60 s
+            // nodig; een warme sessie antwoordt toch meteen.
+            if (!await StartAsync(ct, wachtSeconden: 90))
             {
                 throw new InvalidOperationException("Teams is niet ingelogd.");
             }
             await TerugNaarChatlijstAsync(); // vanuit de Concepten-parkeerstand
             // Koude start (net opgebouwde sessie): de Teams-app doet er lang over voordat
             // de chatlijst er staat ("We stellen dingen voor u in…") — wachten op echte rijen.
-            for (var i = 0; i < 60; i++)
-            {
-                var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
-                if (int.TryParse(rijen, out var n) && n >= 5)
-                {
-                    break;
-                }
-                await Task.Delay(500, ct);
-            }
+            await WachtOpRijenAsync(60, 500, ct);
             await OpenChatAsync(naam, ct);
 
             // Asynchrone verzameljob in de pagina (zelfde patroon als WhatsApp): afbeeldingen
-            // in bubbels moeten per stuk geladen en naar data-URL's omgezet worden, dus het
+            // en avatars moeten per stuk geladen en naar data-URL's omgezet worden, dus het
             // resultaat komt in window.__wmTeamsMsgs en wordt hieronder gepolld.
             await JsAsync(
                 $$"""
@@ -1632,15 +1752,79 @@ public sealed class TeamsClient : IDisposable
                     window.__wmTeamsMsgs = null;
                     (async () => {
                       try {
-                        let msgs = [...document.querySelectorAll(
-                            '[data-tid="chat-pane-message"], [id^="message-body-"],' +
-                            '[data-tid="message-wrapper"]')];
-                        if (msgs.length === 0) {
-                            // Fallbacks voor nieuwere Teams-DOM's (Fluent-componenten).
-                            msgs = [...document.querySelectorAll(
-                                '[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"], [data-mid]')];
+                        const wacht = ms => new Promise(r => setTimeout(r, ms));
+                        const ESC = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        // Delen van een bericht die geen inhoud zijn (los uitgelezen of ruis).
+                        const RUIS = '[data-tid="quoted-reply-card"], [data-tid="forward-message-card"], ' +
+                            '[data-tid="file-attachment-grid"], [data-testid="lazy-image-wrapper"], ' +
+                            '[data-tid="message-actions-menu-hidden-button"], button, [class*="__details"], ' +
+                            '[data-tid="diverse-reaction-summary"], [class*="__reactions"], [id^="read-status-icon-"]';
+                        const isEmoji = n => n.tagName === 'IMG' && (n.closest('[data-tid="emoticon-renderer"]') ||
+                            /Emoji/i.test(n.getAttribute('itemtype') || ''));
+                        const isMention = n => /Mention/i.test(n.getAttribute('itemtype') || '') ||
+                            (n.getAttribute('data-tid') || '').includes('mention');
+                        // Opgeschoonde HTML: alleen structuur en opmaak (geen classes, geen
+                        // scripts), zodat de cockpit het in zijn eigen Teams-stijl kan tonen.
+                        const schoon = n => {
+                            if (n.nodeType === 3) return ESC(n.nodeValue);
+                            if (n.nodeType !== 1) return '';
+                            const tag = n.tagName.toLowerCase();
+                            if (n.matches(RUIS) || tag === 'script' || tag === 'style' || tag === 'svg') return '';
+                            if (tag === 'img') return isEmoji(n) ? ESC(n.alt || '') : '';
+                            if (tag === 'br') return '<br>';
+                            if (isMention(n)) return '<span class="tm-m">' +
+                                ESC((n.textContent || '').trim().replace(/^@/, '')) + '</span>';
+                            const kids = [...n.childNodes].map(schoon).join('');
+                            switch (tag) {
+                                case 'p': case 'div': return '<div>' + kids + '</div>';
+                                case 'ul': case 'ol': case 'li': case 'blockquote': case 'pre': case 'code':
+                                case 'u': case 'table': case 'tbody': case 'thead': case 'tr': case 'td': case 'th':
+                                    return '<' + tag + '>' + kids + '</' + tag + '>';
+                                case 'strong': case 'b': return '<b>' + kids + '</b>';
+                                case 'em': case 'i': return '<i>' + kids + '</i>';
+                                case 's': case 'strike': case 'del': return '<s>' + kids + '</s>';
+                                case 'h1': case 'h2': case 'h3': case 'h4': return '<div><b>' + kids + '</b></div>';
+                                case 'a': {
+                                    const href = n.getAttribute('href') || '';
+                                    return /^https?:/i.test(href)
+                                        ? '<a href="' + ESC(href) + '">' + kids + '</a>' : kids;
+                                }
+                                default: return kids;
+                            }
+                        };
+                        // Platte tekst mét regeleinden, emoji's en @vermeldingen (voor Claude).
+                        const BLOK = /^(p|div|li|tr|h[1-6]|blockquote|pre|ul|ol|table)$/;
+                        const tekstVan = n => {
+                            if (n.nodeType === 3) return n.nodeValue;
+                            if (n.nodeType !== 1) return '';
+                            const tag = n.tagName.toLowerCase();
+                            if (n.matches(RUIS) || tag === 'script' || tag === 'style' || tag === 'svg') return '';
+                            if (tag === 'img') return isEmoji(n) ? (n.alt || '') : '';
+                            if (tag === 'br') return '\n';
+                            if (isMention(n)) return '@' + (n.textContent || '').trim().replace(/^@/, '');
+                            let s = [...n.childNodes].map(tekstVan).join('');
+                            if (tag === 'li') s = '• ' + s.trim();
+                            if (tag === 'td' || tag === 'th') s = s.trim() + '\t';
+                            return BLOK.test(tag) ? '\n' + s + '\n' : s;
+                        };
+                        const T = el => !el ? '' : tekstVan(el).replace(/[ \t]+\n/g, '\n')
+                            .replace(/\n{3,}/g, '\n\n').replace(/ /g, ' ').trim();
+
+                        const lijst = document.querySelector('[data-tid="message-pane-list-runway"]');
+                        let items = lijst ? [...lijst.querySelectorAll('[data-tid="chat-pane-item"]')]
+                            .filter(it => !it.parentElement.closest('[data-tid="chat-pane-item"]')) : [];
+                        if (items.length === 0) {
+                            // Oudere DOM's zonder lijst-runway: elk bericht is zijn eigen item.
+                            items = [...document.querySelectorAll(
+                                '[data-tid="chat-pane-message"], [id^="message-body-"], [data-tid="message-wrapper"]')];
+                            if (items.length === 0) {
+                                items = [...document.querySelectorAll(
+                                    '[class*="fui-ChatMessage"], [class*="fui-ChatMyMessage"], [data-mid]')];
+                            }
+                            items = items.filter(it => !items.some(o => o !== it && o.contains(it)));
                         }
-                        if (msgs.length === 0) {
+                        if (items.length === 0) {
                             window.__wmTeamsMsgs = { leeg: true, diag: {
                                 paneMsg: document.querySelectorAll('[data-tid="chat-pane-message"]').length,
                                 msgBody: document.querySelectorAll('[id^="message-body-"]').length,
@@ -1651,56 +1835,143 @@ public sealed class TeamsClient : IDisposable
                             } };
                             return;
                         }
-                        const paneel = document.querySelector('[data-tid="app-layout-area--main"]') ||
-                            document.body;
+                        // Alleen de laatste {{max}} échte berichten, plus de scheidingen ertussen.
+                        let teller = 0;
+                        for (let i = items.length - 1; i >= 0; i--) {
+                            if (items[i].querySelector('[data-tid="chat-pane-message"], [id^="message-body-"]') ||
+                                items[i].matches('[data-tid="chat-pane-message"], [id^="message-body-"]')) {
+                                if (++teller >= {{max}}) { items = items.slice(i); break; }
+                            }
+                        }
+
+                        const paneel = document.querySelector('[data-tid="app-layout-area--main"]') || document.body;
                         const paneRect = paneel.getBoundingClientRect();
+                        const avatarCache = new Map();
+                        const avatarData = async src => {
+                            if (!src) return '';
+                            if (avatarCache.has(src)) return avatarCache.get(src);
+                            let d = '';
+                            try {
+                                const resp = await fetch(src, { credentials: 'include' });
+                                const bmp = await createImageBitmap(await resp.blob());
+                                const cv = document.createElement('canvas');
+                                cv.width = cv.height = 64;
+                                const z = Math.min(bmp.width, bmp.height);
+                                cv.getContext('2d').drawImage(bmp, (bmp.width - z) / 2, (bmp.height - z) / 2, z, z, 0, 0, 64, 64);
+                                d = cv.toDataURL('image/jpeg', 0.8);
+                            } catch { d = ''; }
+                            avatarCache.set(src, d);
+                            return d;
+                        };
                         const uitkomst = [];
                         let fotoBudget = 8; // niet eindeloos downloaden bij een fotoreeks
                         // Totaalcap: de uiteindelijke HTML gaat via NavigateToString (limiet
                         // ±1,5 MB); daarboven zou de hele bubbelweergave wegvallen.
                         let fotoTekens = 0;
-                        for (const m of msgs.slice(-{{max}})) {
-                            // Systeemberichten ("X heeft Y toegevoegd") zijn geen chatberichten.
-                            if (m.getAttribute('data-tid') === 'control-message-renderer' ||
-                                m.closest('[class*="ChatControlMessage"]')) continue;
+                        for (const it of items) {
+                            const body = it.matches('[data-tid="chat-pane-message"], [id^="message-body-"]') ? it :
+                                it.querySelector('[data-tid="chat-pane-message"], [id^="message-body-"], ' +
+                                    '[data-tid="message-body-content"], [class*="fui-ChatMessage__body"], ' +
+                                    '[class*="fui-ChatMyMessage__body"]');
+                            if (!body) {
+                                // Datumscheiding ("Gisteren", "donderdag", "maandag 22 september
+                                // 2025") of systeemmelding ("X heeft Y toegevoegd").
+                                const divider = it.querySelector('.fui-Divider[role="heading"], [class*="Divider__wrapper"]');
+                                const t = T(divider || it).replace(/\s*\n\s*/g, ' ').trim();
+                                if (!t) continue;
+                                uitkomst.push(divider ? { divider: t.slice(0, 80) } : { systeem: t.slice(0, 300) });
+                                continue;
+                            }
+                            if (it.querySelector('[data-tid="control-message-renderer"], [class*="ChatControlMessage"]') ||
+                                body.closest('[class*="ChatControlMessage"]')) {
+                                const t = T(body).replace(/\s*\n\s*/g, ' ').trim();
+                                if (t) uitkomst.push({ systeem: t.slice(0, 300) });
+                                continue;
+                            }
                             // Auteur en tijd staan búíten de body: de body verwijst er via
                             // aria-labelledby naar (elementen author-<mid> en timestamp-<mid>).
-                            const mid = m.getAttribute('data-mid') || '';
+                            const mid = (body.id || '').replace('message-body-', '') || body.getAttribute('data-mid') || '';
                             const byId = voor => mid ? document.getElementById(voor + '-' + mid) : null;
-                            const auteur = ((byId('author') ||
-                                m.querySelector('[data-tid="message-author-name"],' +
-                                '[class*="fui-ChatMessage__author"]'))
-                                ?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-                            const tijd = ((byId('timestamp') ||
-                                m.querySelector('time, [data-tid*="timestamp"],' +
-                                '[id*="timestamp"], [class*="fui-ChatMessage__timestamp"]'))
-                                ?.textContent || '').trim().slice(0, 20);
-                            const body = m.querySelector('[id^="message-body-"],' +
-                                '[data-tid="message-body-content"], [class*="fui-ChatMessage__body"]');
-                            let tekst = ((body || m).innerText || '')
-                                .replace(/\s+/g, ' ').trim().slice(0, 500);
-                            if (auteur && tekst.startsWith(auteur)) tekst = tekst.slice(auteur.length).trim();
-                            if (tijd && tekst.startsWith(tijd)) tekst = tekst.slice(tijd.length).trim();
-                            // Richting: eigen berichten hebben de ChatMyMessage-component of staan
-                            // rechts van het midden van het berichtenpaneel.
-                            let uit = !!(m.closest('[class*="ChatMyMessage"]') ||
-                                m.querySelector('[class*="ChatMyMessage"]') ||
-                                (typeof m.className === 'string' && m.className.includes('ChatMyMessage')));
+                            const auteurEl = byId('author') || it.querySelector('[data-tid="message-author-name"],' +
+                                '[class*="fui-ChatMessage__author"]');
+                            const tijdEl = byId('timestamp') || it.querySelector('time, [data-tid*="timestamp"],' +
+                                '[id*="timestamp"], [class*="__timestamp"]');
+                            const auteur = ((auteurEl?.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+                            const tijd = ((tijdEl?.textContent) || '').trim().slice(0, 40);
+                            const iso = tijdEl?.getAttribute('datetime') || '';
+                            const tijdVol = (tijdEl?.getAttribute('title') || tijdEl?.getAttribute('aria-label') || '')
+                                .replace(/\.$/, '').trim();
+                            // Richting: eigen berichten hebben de ChatMyMessage-component (in body
+                            // of wrapper); anders de positie rechts van het midden als terugval.
+                            let uit = !!(body.closest('[class*="ChatMyMessage"]') || it.querySelector('[class*="ChatMyMessage"]') ||
+                                (typeof body.className === 'string' && body.className.includes('ChatMyMessage')));
                             if (!uit && !auteur) {
-                                const rect = (body || m).getBoundingClientRect();
+                                const rect = body.getBoundingClientRect();
                                 if (rect.width > 0 && rect.width < paneRect.width * 0.85) {
                                     uit = rect.left + rect.width / 2 > paneRect.left + paneRect.width / 2;
                                 }
                             }
+                            const content = byId('content') || body.querySelector('[id^="content-"], ' +
+                                '[data-tid="message-body-content"]') || body;
+                            // Citaat (antwoord) of doorgestuurd bericht bovenin de bubbel.
+                            let citaat = null;
+                            const qr = it.querySelector('[data-tid="quoted-reply-card"]');
+                            const fw = it.querySelector('[data-tid="forward-message-card"]');
+                            if (qr) {
+                                const spans = [...qr.querySelectorAll('span')].filter(s => !s.querySelector('span'));
+                                const wanneer = qr.querySelector('[data-tid="quoted-reply-timestamp"]');
+                                const wat = qr.querySelector('[data-tid="quoted-reply-preview-content"]');
+                                citaat = {
+                                    wie: (spans.find(s => s !== wanneer && s !== wat && !wat?.contains(s))?.textContent || '').trim(),
+                                    wanneer: (wanneer?.textContent || '').trim(),
+                                    wat: T(wat).slice(0, 300), doorgestuurd: false,
+                                };
+                            } else if (fw) {
+                                citaat = {
+                                    wie: (fw.querySelector('[data-testid="message-card-header-author-name"]')?.textContent || '').trim(),
+                                    wanneer: (fw.querySelector('[data-testid="formatted-date-time"]')?.textContent || '').trim(),
+                                    wat: T(fw.querySelector('[id^="content-"]') || fw).slice(0, 600), doorgestuurd: true,
+                                };
+                            }
+                            // Bijlagen (bestanden): naam per kaart; tijdens het laden alleen een spinner.
+                            const bijlagen = [];
+                            for (const grid of it.querySelectorAll('[data-tid="file-attachment-grid"]')) {
+                                const namen = [...new Set([...grid.querySelectorAll('[title], a, [data-tid*="file-name"], [data-tid*="attachment-name"]')]
+                                    .map(e => (e.getAttribute('title') || e.textContent || '').trim())
+                                    .filter(t => t && t.length < 120 && !/^(Meer|More|Download)/i.test(t)))];
+                                if (namen.length) bijlagen.push(...namen.slice(0, 4));
+                                else bijlagen.push(grid.querySelector('[role="progressbar"]') ? 'Bijlage (nog aan het laden)' : 'Bijlage');
+                            }
+                            // Reacties: pilletjes met emoji + tekst "1 Leuk vinden-reactie." (aantal).
+                            const reacties = [];
+                            for (const knop of it.querySelectorAll('[data-tid="diverse-reaction-pill-button"]')) {
+                                const emoji = knop.querySelector('img')?.alt || '';
+                                const lab = knop.getAttribute('aria-labelledby');
+                                const labTekst = (lab ? (document.getElementById(lab)?.textContent || '') : '') +
+                                    ' ' + (knop.getAttribute('aria-label') || '') + ' ' + (knop.textContent || '');
+                                const n = parseInt((labTekst.match(/\d+/) || ['1'])[0], 10) || 1;
+                                if (emoji) reacties.push({ emoji, n, eigen: knop.getAttribute('aria-pressed') === 'true' });
+                            }
+                            const statusEl = it.querySelector('[id^="read-status-icon-"]');
+                            const status = statusEl ? (statusEl.getAttribute('aria-label') || '').trim() : '';
+                            const details = it.querySelector('[class*="__details"]');
+                            const bewerkt = /bewerkt|edited|modifi/i.test((details?.textContent || '') +
+                                ' ' + (it.querySelector('[data-tid*="edited" i]')?.textContent || ''));
+                            const vermeld = !!it.querySelector('[data-tid="mention-badge"]');
+                            const avImg = it.querySelector('[data-tid="message-avatar"] img, [class*="__avatar"] img');
+                            const avatar = (!uit && avImg) ? await avatarData(avImg.currentSrc || avImg.src) : '';
+
+                            let tekst = T(content).slice(0, 4000);
+                            let html = schoon(content).slice(0, 12000);
                             // Meegestuurde afbeelding in de bubbel. Alleen binnen de body zoeken
                             // (avatars staan erbuiten); emoji's en pictogrammen vallen af op
                             // formaat. Teams gebruikt blob:-URL's én https-media (asyncgw, met
                             // sessiecookies bereikbaar).
                             let beeld = '';
                             const geenAvatar = i =>
-                                !i.closest('[class*="Avatar"], [data-tid*="avatar"]');
+                                !i.closest('[class*="Avatar"], [data-tid*="avatar"]') && !isEmoji(i);
                             const zoekKandidaten = () =>
-                                [...(body || m).querySelectorAll('img')].filter(i => {
+                                [...body.querySelectorAll('img')].filter(i => {
                                     const src = i.src || i.currentSrc || '';
                                     if (!/^(blob:|data:image|https:)/.test(src)) return false;
                                     if (!geenAvatar(i)) return false;
@@ -1712,102 +1983,74 @@ public sealed class TeamsClient : IDisposable
                             let kandidaten = zoekKandidaten();
                             // Herkenbare beeldcontainer: in een verborgen sessie mount het
                             // img-element soms pas (veel) later dan de container eromheen.
-                            const container = !!(body || m).querySelector(
+                            const container = !!body.querySelector(
                                 '[data-testid*="image"], [data-tid*="image"], [itemtype*="Image"]');
-                            // Het bericht bevat een foto, ook als het ophalen zo meteen
-                            // mislukt: dan toont de cockpit een placeholder in plaats van
-                            // het bericht geruisloos te laten wegvallen. Een net verstuurde
-                            // foto kan nog zonder formaat in de DOM staan (upload bezig),
-                            // vandaar de tekstloze-terugval op elk niet-avatar-img.
+                            // Het bericht bevat een foto, ook als het ophalen zo meteen mislukt:
+                            // dan toont de cockpit een placeholder in plaats van het bericht
+                            // geruisloos te laten wegvallen.
                             const foto = kandidaten.length > 0 || container ||
                                 (tekst.length === 0 &&
-                                [...(body || m).querySelectorAll('img')].some(i =>
+                                [...body.querySelectorAll('img')].some(i =>
                                     geenAvatar(i) &&
                                     /^(blob:|data:image|https:)/.test(i.src || i.currentSrc || '')));
                             for (let poging = 0; poging < 3 && fotoBudget > 0 && !beeld &&
                                     (kandidaten.length > 0 || container); poging++) {
                                 if (kandidaten.length === 0) {
-                                    // Container zonder img: in beeld brengen en de mount
-                                    // even de tijd geven.
-                                    m.scrollIntoView({ block: 'center' });
-                                    await new Promise(r => setTimeout(r, 900));
+                                    it.scrollIntoView({ block: 'center' });
+                                    await wacht(900);
                                     kandidaten = zoekKandidaten();
                                     if (kandidaten.length === 0) continue;
                                 }
-                                // De grootste kandidaat: bij een bubbel met thumbnail + volle
-                                // foto levert dat de scherpste.
                                 const img = kandidaten.sort((a, b) =>
                                     (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth))[0];
                                 try {
-                                    // In beeld brengen: Teams laadt afbeeldingen lui, anders
-                                    // blijft de src een lege placeholder.
-                                    m.scrollIntoView({ block: 'center' });
-                                    await new Promise(r => setTimeout(r, 120));
+                                    // In beeld brengen: Teams laadt afbeeldingen lui.
+                                    it.scrollIntoView({ block: 'center' });
+                                    await wacht(120);
                                     if (!img.complete || !img.naturalWidth) {
                                         await new Promise(r => {
-                                            const klaar = () => r();
-                                            img.addEventListener('load', klaar, { once: true });
-                                            img.addEventListener('error', klaar, { once: true });
-                                            setTimeout(klaar, 1200);
+                                            img.addEventListener('load', () => r(), { once: true });
+                                            img.addEventListener('error', () => r(), { once: true });
+                                            setTimeout(r, 1200);
                                         });
                                     }
-                                    // Via canvas: meteen verkleinen naar maximaal 900 px breed en
-                                    // als JPEG opslaan, zodat grote foto's binnen de limiet passen.
                                     const bron = img.currentSrc || img.src;
-                                    const bitmap = await new Promise((res, rej) => {
-                                        const el = new Image();
-                                        el.crossOrigin = 'anonymous';
-                                        el.onload = () => res(el);
-                                        el.onerror = rej;
-                                        el.src = bron;
-                                    });
-                                    if (!bitmap.naturalWidth) {
-                                        throw new Error('nog niet geladen');
+                                    let bmp;
+                                    try {
+                                        bmp = await createImageBitmap(await (await fetch(bron, { credentials: 'include' })).blob());
+                                    } catch {
+                                        bmp = await new Promise((res, rej) => {
+                                            const el = new Image();
+                                            el.crossOrigin = 'use-credentials';
+                                            el.onload = () => res(el);
+                                            el.onerror = rej;
+                                            el.src = bron;
+                                        });
                                     }
-                                    const schaal = Math.min(1, 900 / bitmap.naturalWidth);
+                                    const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
+                                    if (!w) throw new Error('nog niet geladen');
+                                    const schaal = Math.min(1, 900 / w);
                                     const canvas = document.createElement('canvas');
-                                    canvas.width = Math.max(1, Math.round(bitmap.naturalWidth * schaal));
-                                    canvas.height = Math.max(1, Math.round((bitmap.naturalHeight || 1) * schaal));
-                                    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                                    canvas.width = Math.max(1, Math.round(w * schaal));
+                                    canvas.height = Math.max(1, Math.round((h || 1) * schaal));
+                                    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
                                     const jpeg = canvas.toDataURL('image/jpeg', 0.72);
-                                    if (jpeg.length > 200 && fotoTekens + jpeg.length <= 2500000) {
+                                    if (jpeg.length > 200 && fotoTekens + jpeg.length <= 1100000) {
                                         beeld = jpeg;
                                         fotoTekens += jpeg.length;
                                         fotoBudget--;
                                     }
-                                } catch {
-                                    // Canvas geblokkeerd (cross-origin zonder CORS-headers) of
-                                    // laden mislukt: dan de bytes via fetch proberen — de
-                                    // sessiecookies gaan daarbij vanzelf mee.
-                                    try {
-                                        const resp = await fetch(img.currentSrc || img.src);
-                                        const blob = await resp.blob();
-                                        if (blob.size <= 900000 && /^image\//.test(blob.type)) {
-                                            const dataUrl = await new Promise(res => {
-                                                const fr = new FileReader();
-                                                fr.onload = () => res(String(fr.result));
-                                                fr.onerror = () => res('');
-                                                fr.readAsDataURL(blob);
-                                            });
-                                            if (dataUrl && fotoTekens + dataUrl.length <= 2500000) {
-                                                beeld = dataUrl;
-                                                fotoTekens += dataUrl.length;
-                                                fotoBudget--;
-                                            }
-                                        }
-                                    } catch { /* volgende poging, of de placeholder */ }
-                                }
+                                } catch { /* volgende poging, of de placeholder */ }
                                 if (!beeld && poging < 2) {
-                                    // Net verstuurde foto: even ademen en opnieuw zoeken —
-                                    // een paar tellen later staat hij er meestal wél.
-                                    await new Promise(r => setTimeout(r, 1100));
+                                    await wacht(1100);
                                     kandidaten = zoekKandidaten();
                                 }
                             }
-                            uitkomst.push({ tijd, auteur, uit, tekst, beeld, foto });
+                            uitkomst.push({ tijd, iso, tijdVol, auteur, uit, tekst, html, beeld, foto, avatar,
+                                citaat, bijlagen, reacties, status, bewerkt, vermeld });
                         }
-                        window.__wmTeamsMsgs = uitkomst
-                            .filter(o => o.tekst.length > 0 || o.beeld.length > 0 || o.foto);
+                        window.__wmTeamsMsgs = uitkomst.filter(o => o.divider || o.systeem ||
+                            o.tekst.length > 0 || o.beeld.length > 0 || o.foto || o.bijlagen.length > 0 || o.citaat);
                       } catch (e) {
                         window.__wmTeamsMsgs = { leeg: true, diag: { fout: String(e).slice(0, 200) } };
                       }
@@ -1832,39 +2075,70 @@ public sealed class TeamsClient : IDisposable
                 throw new InvalidOperationException(
                     "Berichten uitlezen bleef hangen (geen resultaat).");
             }
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            using (var doc = JsonDocument.Parse(json))
             {
-                await ParkeerOpConceptenAsync();
-                throw new InvalidOperationException(
-                    $"0 berichten; DOM-stand: {doc.RootElement.GetProperty("diag").GetRawText()}");
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    await ParkeerOpConceptenAsync();
+                    throw new InvalidOperationException(
+                        $"0 berichten; DOM-stand: {doc.RootElement.GetProperty("diag").GetRawText()}");
+                }
             }
-            var regels = doc.RootElement.EnumerateArray()
-                .Select(e => new TeamsChatBericht(
-                    e.GetProperty("tijd").GetString() ?? "",
-                    e.GetProperty("auteur").GetString() ?? "",
-                    e.GetProperty("uit").GetBoolean(),
-                    e.GetProperty("tekst").GetString() ?? "",
-                    e.TryGetProperty("beeld", out var be) ? be.GetString() ?? "" : "",
-                    e.TryGetProperty("foto", out var fo) && fo.GetBoolean()))
-                .Where(b => b.Tekst.Length > 0 || b.Beeld.Length > 0 || b.Foto)
-                .ToList();
+            var ruw = JsonSerializer.Deserialize<List<TeamsRuw>>(json,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? [];
+            var regels = new List<TeamsChatBericht>();
+            foreach (var r in ruw)
+            {
+                if (r.Divider is { Length: > 0 } dag)
+                {
+                    regels.Add(new TeamsChatBericht("", "", false, dag) { Soort = "divider" });
+                    continue;
+                }
+                if (r.Systeem is { Length: > 0 } sys)
+                {
+                    regels.Add(new TeamsChatBericht("", "", false, sys) { Soort = "systeem" });
+                    continue;
+                }
+                var reacties = r.Reacties.Where(x => x.Emoji.Length > 0).ToList();
+                regels.Add(new TeamsChatBericht(r.Tijd, r.Auteur, r.Uit, r.Tekst, r.Beeld, r.Foto)
+                {
+                    Iso = r.Iso,
+                    TijdVol = r.TijdVol,
+                    Html = r.Html,
+                    AvatarUrl = r.Avatar,
+                    Citaat = r.Citaat is { } c && (c.Wat.Length > 0 || c.Wie.Length > 0)
+                        ? new TeamsCitaat(c.Wie, c.Wanneer, c.Wat, c.Doorgestuurd) : null,
+                    Bijlagen = r.Bijlagen,
+                    Reacties = string.Join(" ", reacties.Select(x => x.N > 1 ? $"{x.Emoji} {x.N}" : x.Emoji)),
+                    EigenReactie = reacties.Any(x => x.Eigen),
+                    Status = r.Status,
+                    Bewerkt = r.Bewerkt,
+                    Vermeld = r.Vermeld,
+                });
+            }
             // Teams zet de auteursnaam alleen boven het eerste bericht van een reeks; schuif
             // hem door naar de vervolgberichten zodat in groepschats elke afzender zichtbaar is.
             var vorigeAuteur = "";
+            var vorigeAvatar = "";
             for (var i = 0; i < regels.Count; i++)
             {
+                if (regels[i].Soort.Length > 0)
+                {
+                    continue;
+                }
                 if (regels[i].Uitgaand)
                 {
                     vorigeAuteur = "";
+                    vorigeAvatar = "";
                 }
                 else if (regels[i].Auteur.Length > 0)
                 {
                     vorigeAuteur = regels[i].Auteur;
+                    vorigeAvatar = regels[i].AvatarUrl.Length > 0 ? regels[i].AvatarUrl : vorigeAvatar;
                 }
                 else if (vorigeAuteur.Length > 0)
                 {
-                    regels[i] = regels[i] with { Auteur = vorigeAuteur };
+                    regels[i] = regels[i] with { Auteur = vorigeAuteur, AvatarUrl = vorigeAvatar };
                 }
             }
             await ParkeerOpConceptenAsync(); // de geopende chat weer sluiten
@@ -1874,6 +2148,85 @@ public sealed class TeamsClient : IDisposable
         {
             _slot.Release();
         }
+    }
+
+    /// <summary>Wat de pagina per item teruggeeft (zie het script in LaatsteBerichtenAsync).</summary>
+    private sealed class TeamsRuw
+    {
+        public string? Divider { get; set; }
+        public string? Systeem { get; set; }
+        public string Tijd { get; set; } = "";
+        public string Iso { get; set; } = "";
+        public string TijdVol { get; set; } = "";
+        public string Auteur { get; set; } = "";
+        public bool Uit { get; set; }
+        public string Tekst { get; set; } = "";
+        public string Html { get; set; } = "";
+        public string Beeld { get; set; } = "";
+        public bool Foto { get; set; }
+        public string Avatar { get; set; } = "";
+        public TeamsRuwCitaat? Citaat { get; set; }
+        public List<string> Bijlagen { get; set; } = [];
+        public List<TeamsRuwReactie> Reacties { get; set; } = [];
+        public string Status { get; set; } = "";
+        public bool Bewerkt { get; set; }
+        public bool Vermeld { get; set; }
+    }
+
+    private sealed class TeamsRuwCitaat
+    {
+        public string Wie { get; set; } = "";
+        public string Wanneer { get; set; } = "";
+        public string Wat { get; set; } = "";
+        public bool Doorgestuurd { get; set; }
+    }
+
+    private sealed class TeamsRuwReactie
+    {
+        public string Emoji { get; set; } = "";
+        public int N { get; set; } = 1;
+        public bool Eigen { get; set; }
+    }
+
+    /// <summary>
+    /// Tekst van een bericht voor transcripten (Claude, cockpitlijst): citaat, bijlagen,
+    /// foto en reacties als leesbare markeringen rond de tekst.
+    /// </summary>
+    public static string TranscriptTekst(TeamsChatBericht b)
+    {
+        var delen = new List<string>();
+        if (b.Citaat is { } c)
+        {
+            delen.Add((c.Doorgestuurd ? "[doorgestuurd van " : "[antwoord op ") +
+                (c.Wie.Length > 0 ? c.Wie : "bericht") + $": “{Kort(c.Wat, 120)}”]");
+        }
+        if (b.Beeld.Length > 0 || b.Foto)
+        {
+            delen.Add("[📷 afbeelding]");
+        }
+        foreach (var bijlage in b.Bijlagen)
+        {
+            delen.Add($"[📎 {bijlage}]");
+        }
+        if (b.Tekst.Length > 0)
+        {
+            delen.Add(b.Tekst);
+        }
+        if (b.Reacties.Length > 0)
+        {
+            delen.Add($"[reactie: {b.Reacties}]");
+        }
+        if (b.Bewerkt)
+        {
+            delen.Add("(bewerkt)");
+        }
+        return string.Join(" ", delen);
+    }
+
+    private static string Kort(string tekst, int max)
+    {
+        tekst = tekst.ReplaceLineEndings(" ").Trim();
+        return tekst.Length <= max ? tekst : tekst[..max] + "…";
     }
 
     /// <summary>
@@ -1897,15 +2250,7 @@ public sealed class TeamsClient : IDisposable
             {
                 await TerugNaarChatlijstAsync();
             }
-            for (var i = 0; i < 20; i++)
-            {
-                var rijen = await JsAsync($"document.querySelectorAll({RijSelector}).length");
-                if (int.TryParse(rijen, out var n) && n >= 5)
-                {
-                    break;
-                }
-                await Task.Delay(500, ct);
-            }
+            await WachtOpRijenAsync(20, 500, ct);
             // Zelfde rij-ontleding als de ongelezen-scrape: naam vóór het tijdstip, preview
             // erna. Alleen de gerenderde rijen (geen scrollen): chats van vandaag staan bovenaan.
             var json = await JsAsync(MetSelector(

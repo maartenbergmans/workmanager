@@ -61,6 +61,40 @@ public static class ApprovalRules
         rules.FirstOrDefault(r => string.Equals(
             r.Leverancier.Trim(), leverancier.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// Beoordeelt één factuur tegen de regels: automatisch goed te keuren of niet, met de
+    /// reden zoals de lijst die toont. Een factuur die al eerder via WorkManager
+    /// goedgekeurd werd (zelfde leverancier + nummer) wordt nooit automatisch aangevinkt.
+    /// </summary>
+    public static (bool Auto, string Reden) Beoordeel(
+        IEnumerable<ApprovalRule> rules, string leverancier, string factuurnummer, decimal? bedrag, string valuta)
+    {
+        var cultuur = System.Globalization.CultureInfo.GetCultureInfo("nl-BE");
+        if (ApprovalLog.EerderGoedgekeurd(leverancier, factuurnummer) is { } eerder)
+        {
+            return (false, $"⚠ al goedgekeurd op {eerder.LocalDateTime:d/M/yyyy} — dubbel?");
+        }
+        var rule = Match(rules, leverancier);
+        if (rule is null)
+        {
+            return (false, "geen regel voor deze leverancier");
+        }
+        if (bedrag is null)
+        {
+            return (false, "bedrag niet leesbaar");
+        }
+        if (!string.IsNullOrEmpty(valuta) &&
+            !valuta.Contains("EUR", StringComparison.OrdinalIgnoreCase) && !valuta.Contains('€'))
+        {
+            return (false, $"valuta {valuta}, geen EUR");
+        }
+        if (bedrag > rule.MaxBedrag)
+        {
+            return (false, string.Create(cultuur, $"boven plafond van € {rule.MaxBedrag:N2}"));
+        }
+        return (true, string.Create(cultuur, $"≤ plafond € {rule.MaxBedrag:N2}"));
+    }
+
     private static List<ApprovalRule> Defaults() => new()
     {
         new() { Leverancier = "Proximus (vaste telefonie)", MaxBedrag = 25000 },

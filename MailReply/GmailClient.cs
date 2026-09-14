@@ -40,6 +40,7 @@ public sealed class MailBericht
     public string OutlookMail = ""; // gevuld (omschrijving) als dit een CED-Outlookmail is (alleen uitlezen)
     public string OutlookUrl = ""; // directe OWA-link naar de mail (voor "Openen in browser" en mention-taken)
     public string SmartschoolBericht = ""; // gevuld ("kind|msgid") als dit een Smartschool-bericht is
+    public string Avatar = ""; // profielfoto van de afzender (data-URL) voor de berichtkop, leeg = geen
     public List<MailBericht> CcDetails = new(); // onderliggende mails van een CC-overzichtsrij (klikbaar detail)
     public string Vertaling = ""; // Nederlandse vertaling (gevuld als de mail Frans/Engels is)
     public bool VertaalVerborgen; // gebruiker zette de vertaling uit via de 🌐-knop

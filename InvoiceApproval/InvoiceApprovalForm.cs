@@ -13,7 +13,10 @@ namespace WorkManager;
 /// </summary>
 public class InvoiceApprovalForm : Form
 {
-    private const string InvoicesUrl = "https://start.isp-online.net/ced/prd/invoices?filter=my_activities";
+    internal const string InvoicesUrl = "https://start.isp-online.net/ced/prd/invoices?filter=my_activities";
+
+    /// <summary>Staat het venster open? (Dan blijft de stille peiler van het profiel af.)</summary>
+    public static bool IsOpen { get; private set; }
     private const string LoginEmail = "maarten.bergmans@ced.be"; // moet volledig in kleine letters staan
     private const string EmailJson = $"\"{LoginEmail}\"";
 
@@ -57,6 +60,8 @@ public class InvoiceApprovalForm : Form
         WindowState = FormWindowState.Maximized;
 
         _rules = ApprovalRules.Load();
+        IsOpen = true;
+        FormClosed += (_, _) => IsOpen = false;
 
         // Werkbalk
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top };
@@ -451,6 +456,16 @@ public class InvoiceApprovalForm : Form
             Log($"{_invoices.Count} facturen gevonden, totaal {FormatBedrag(total)}. " +
                 $"{_invoices.Count(i => i.AutoGoedkeuren)} voldoen aan de auto-goedkeuringsregels. " +
                 "Dubbelklik op een rij om de factuur rechts te bekijken.");
+            var dubbels = _invoices.Count(i => i.Reden.StartsWith("⚠ al goedgekeurd", StringComparison.Ordinal));
+            if (dubbels > 0)
+            {
+                Log($"⚠ {dubbels} factuur/facturen stonden al eerder in een goedkeuringsronde — mogelijk dubbel; " +
+                    "die zijn niet aangevinkt.");
+            }
+            if (ApprovalLog.LaatsteRonde() is { Length: > 0 } vorige)
+            {
+                Log($"Vorige goedkeuringsronde via WorkManager: {vorige}.");
+            }
             if (_invoices.Count > 30)
             {
                 Log("⚠ Meer dan 30 facturen — onverwacht hoog volume, controleer de lijst extra goed.");
@@ -492,34 +507,9 @@ public class InvoiceApprovalForm : Form
     {
         foreach (var inv in _invoices)
         {
-            var rule = ApprovalRules.Match(_rules, inv.Leverancier);
-            if (rule is null)
-            {
-                inv.AutoGoedkeuren = false;
-                inv.Reden = "geen regel voor deze leverancier";
-            }
-            else if (inv.Bedrag is null)
-            {
-                inv.AutoGoedkeuren = false;
-                inv.Reden = "bedrag niet leesbaar";
-            }
-            else if (!string.IsNullOrEmpty(inv.Valuta) &&
-                     !inv.Valuta.Contains("EUR", StringComparison.OrdinalIgnoreCase) &&
-                     !inv.Valuta.Contains('€'))
-            {
-                inv.AutoGoedkeuren = false;
-                inv.Reden = $"valuta {inv.Valuta}, geen EUR";
-            }
-            else if (inv.Bedrag > rule.MaxBedrag)
-            {
-                inv.AutoGoedkeuren = false;
-                inv.Reden = $"boven plafond van {FormatBedrag(rule.MaxBedrag)}";
-            }
-            else
-            {
-                inv.AutoGoedkeuren = true;
-                inv.Reden = $"≤ plafond {FormatBedrag(rule.MaxBedrag)}";
-            }
+            // Zelfde beoordeling als de stille peiler (cockpit), incl. dubbelcheck op het logboek.
+            (inv.AutoGoedkeuren, inv.Reden) =
+                ApprovalRules.Beoordeel(_rules, inv.Leverancier, inv.Factuurnummer, inv.Bedrag, inv.Valuta);
         }
     }
 
@@ -740,6 +730,9 @@ public class InvoiceApprovalForm : Form
                 Log("Geen resultaatdialoog gezien; controleer het resultaat in de browser.");
             }
 
+            // Logboek: terugkijken én dubbels vangen bij een volgende ronde.
+            ApprovalLog.Voeg(rows.Select(r => new Goedkeuring(
+                DateTimeOffset.Now, r.Leverancier, r.Factuurnummer, r.Bedrag, r.AutoGoedkeuren)));
             // Goedgekeurde facturen uit de lijst halen; wat overblijft is de "niet automatisch"-groep
             // en blijft bewust onaangevinkt.
             _invoices.RemoveAll(rows.Contains);
@@ -801,7 +794,7 @@ public class InvoiceApprovalForm : Form
 
     // Zoekt de tabel met de meeste checkbox-rijen (de facturentabel) en leest die generiek uit,
     // met kolomherkenning op de koptekst.
-    private const string FindTableJs = """
+    internal const string FindTableJs = """
         const norm = s => (s || '').replace(/\s+/g, ' ').trim();
         const findTable = () => {
             let best = null, bestCount = 0;
@@ -814,7 +807,7 @@ public class InvoiceApprovalForm : Form
         };
         """;
 
-    private const string ExtractScript = $$"""
+    internal const string ExtractScript = $$"""
         (() => {
             {{FindTableJs}}
             const table = findTable();
@@ -850,7 +843,7 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
-    private const string HeeftTabelScript = $$"""
+    internal const string HeeftTabelScript = $$"""
         (() => {
             {{FindTableJs}}
             return !!findTable();
@@ -939,7 +932,7 @@ public class InvoiceApprovalForm : Form
     // Herkent elk loginscherm: Microsoft-aanmeldpagina's op hun eigen host, en op ISPnext
     // zelf een zichtbaar wachtwoordveld of een 'Single Sign-On'-knop (ook in shadow
     // DOM/iframes, net als de assistent zelf).
-    private const string LoginSchermScript = """
+    internal const string LoginSchermScript = """
         (() => {
             if (location.hostname.includes('login.microsoftonline.com') ||
                 location.hostname.includes('login.live.com')) return true;

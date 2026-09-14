@@ -1102,7 +1102,7 @@ public sealed class OutlookClient : IDisposable
                         continue;
                     }
                     await Task.Delay(2500, ct); // leesvenster laten laden
-                    var (tekst, html, exact, _, _, _) = await LeesGeopendeMailKernAsync(ct);
+                    var (tekst, html, exact, _, _, _, _) = await LeesGeopendeMailKernAsync(ct);
                     Log($"gelezen: {b.Van} | {b.Onderwerp} (tekst {tekst.Length}, html {html.Length})");
                     if (tekst.Length > 0 || html.Length > 0)
                     {
@@ -2255,7 +2255,7 @@ public sealed class OutlookClient : IDisposable
     /// Outlook laden die URL's niet). Let op: hierdoor markeert Outlook de mail als gelezen.
     /// </summary>
     public async Task<(string Tekst, string Html, DateTimeOffset? Datum, string Url,
-            string Aan, string Cc)> LeesMailAsync(
+            string Aan, string Cc, List<string> Bijlagen)> LeesMailAsync(
         string van, string onderwerp, CancellationToken ct)
     {
         await _slot.WaitAsync(ct);
@@ -2289,7 +2289,7 @@ public sealed class OutlookClient : IDisposable
                     // Alleen diagnose.
                 }
                 await SluitZoekweergaveAsync();
-                return ("", "", null, "", "", "");
+                return ("", "", null, "", "", "", []);
             }
             await Task.Delay(2500, ct); // leesvenster laten laden
             var gelezen = await LeesGeopendeMailKernAsync(ct);
@@ -2325,7 +2325,7 @@ public sealed class OutlookClient : IDisposable
     /// Aanroeper houdt zelf het slot vast en heeft de mail al geopend.
     /// </summary>
     private async Task<(string Tekst, string Html, DateTimeOffset? Datum, string Url,
-            string Aan, string Cc)>
+            string Aan, string Cc, List<string> Bijlagen)>
         LeesGeopendeMailKernAsync(CancellationToken ct)
     {
         {
@@ -2356,21 +2356,124 @@ public sealed class OutlookClient : IDisposable
                                 el.remove();
                             }
                         }
+                        // Afbeeldingen inbedden, maar verkleind (max. 900 px, JPEG) en binnen een
+                        // budget: één handtekeningplaatje van 130 kB base64 duwde vroeger de
+                        // hele body voorbij de HTML-limiet, waarna de eigenlijke mailtekst
+                        // afgekapt in de cockpit stond.
                         const origineel = [...body.querySelectorAll('img')];
                         const kopie = [...kloon.querySelectorAll('img')];
+                        let beeldTekens = 0;
+                        const beeldBudget = 140000;
                         for (let i = 0; i < kopie.length; i++) {
+                            const k = kopie[i];
                             try {
-                                const src = origineel[i]?.src || kopie[i].src || '';
-                                if (!src || src.startsWith('data:')) continue;
-                                const resp = await fetch(src, { credentials: 'include' });
-                                const blob = await resp.blob();
-                                if (blob.size > 1_500_000) { kopie[i].remove(); continue; }
-                                kopie[i].src = await new Promise(res => {
-                                    const fr = new FileReader();
-                                    fr.onload = () => res(fr.result);
-                                    fr.readAsDataURL(blob);
-                                });
-                            } catch { /* afbeelding niet op te halen: origineel laten staan */ }
+                                const o = origineel[i];
+                                const src = o?.currentSrc || o?.src || k.src || '';
+                                if (!src || /^cid:/i.test(src)) { k.remove(); continue; } // onopgelost inline-plaatje
+                                if (src.startsWith('data:')) {
+                                    if (src.length < 20000) { beeldTekens += src.length; continue; }
+                                }
+                                const breed = o ? (o.naturalWidth || o.clientWidth) : 0;
+                                const hoog = o ? (o.naturalHeight || o.clientHeight) : 0;
+                                if (breed > 0 && breed < 24 && hoog < 24) { k.remove(); continue; } // spacers/pixels
+                                let dataUrl = '';
+                                try {
+                                    const blob = await (await fetch(src, { credentials: 'include' })).blob();
+                                    if (!/^image\//.test(blob.type)) throw new Error(blob.type);
+                                    const bmp = await createImageBitmap(blob);
+                                    const schaal = Math.min(1, 900 / (bmp.width || 900));
+                                    const cv = document.createElement('canvas');
+                                    cv.width = Math.max(1, Math.round(bmp.width * schaal));
+                                    cv.height = Math.max(1, Math.round(bmp.height * schaal));
+                                    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+                                    // Kleine logo's scherp (PNG met transparantie), foto's als JPEG.
+                                    dataUrl = blob.type === 'image/png' && bmp.width * bmp.height < 200000
+                                        ? cv.toDataURL('image/png') : cv.toDataURL('image/jpeg', 0.72);
+                                    if (dataUrl.length > 60000 && blob.type === 'image/png') {
+                                        dataUrl = cv.toDataURL('image/jpeg', 0.72);
+                                    }
+                                } catch { dataUrl = ''; }
+                                if (dataUrl && beeldTekens + dataUrl.length <= beeldBudget) {
+                                    k.src = dataUrl;
+                                    beeldTekens += dataUrl.length;
+                                    k.removeAttribute('srcset');
+                                    k.style.maxWidth = '100%';
+                                    k.style.height = 'auto';
+                                } else if (dataUrl || /outlook\.|office\.com|office365|attachment|safelinks/i.test(src)) {
+                                    // Budget op, of alleen met OWA-cookies bereikbaar: liever geen
+                                    // beeld dan een afgekapte mail of een kapot icoontje.
+                                    k.remove();
+                                }
+                                // Anders: publieke https-afbeelding, laten staan (laadt in de cockpit).
+                            } catch { try { k.remove(); } catch { } }
+                        }
+                        // Het geciteerde antwoordverleden ("Van: … Verzonden: …") inklapbaar
+                        // maken met <details> (werkt zonder scripts in het detailpaneel): de
+                        // kop en alles erna gaan in één blok, zo hoog mogelijk in de boom.
+                        try {
+                            const koppen = [...kloon.querySelectorAll('div, p, table, blockquote')].filter(el => {
+                                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                                return t.length < 900 && /^(Van|From|De|Von)\s*:/i.test(t) &&
+                                    /(Verzonden|Sent|Envoy|Gesendet|Date)\s*:/i.test(t);
+                            });
+                            let kop = koppen.length
+                                ? koppen.reduce((a, b) => ((a.textContent || '').length <= (b.textContent || '').length ? a : b))
+                                : kloon.querySelector('[id$="divRplyFwdMsg"], [id$="appendonsend"], .gmail_quote');
+                            if (kop) {
+                                let blok = kop;
+                                const kopStart = (kop.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+                                while (blok.parentElement && blok.parentElement !== kloon &&
+                                    (blok.parentElement.textContent || '').replace(/\s+/g, ' ').trim().startsWith(kopStart)) {
+                                    blok = blok.parentElement;
+                                }
+                                const totaal = (kloon.textContent || '').replace(/\s+/g, ' ').trim().length;
+                                const verleden = (blok.textContent || '').replace(/\s+/g, ' ').trim().length;
+                                // Alleen inklappen als er een echt eigen bericht vóór staat; een
+                                // kale "Fw:" is anders één dichtgeklapt blok.
+                                if (blok.parentElement && totaal - verleden >= 40) {
+                                    const details = document.createElement('details');
+                                    details.className = 'wm-verleden';
+                                    const summary = document.createElement('summary');
+                                    summary.textContent = 'Eerdere berichten in deze conversatie';
+                                    details.appendChild(summary);
+                                    const ouder = blok.parentElement;
+                                    let el = blok, volgende;
+                                    while (el) { volgende = el.nextSibling; details.appendChild(el); el = volgende; }
+                                    ouder.appendChild(details);
+                                }
+                            }
+                        } catch { /* inklappen is comfort */ }
+                        // HTML-limiet: nooit midden in een tag of base64-blok afkappen — eerst
+                        // de grootste afbeeldingen laten vallen, dan pas op een tag-grens knippen.
+                        let html = kloon.innerHTML;
+                        const limiet = 240000;
+                        if (html.length > limiet) {
+                            const beelden = [...kloon.querySelectorAll('img[src^="data:"]')]
+                                .sort((a, b) => b.src.length - a.src.length);
+                            for (const im of beelden) {
+                                if (html.length <= limiet) break;
+                                im.remove();
+                                html = kloon.innerHTML;
+                            }
+                        }
+                        if (html.length > limiet) {
+                            const grens = Math.max(html.lastIndexOf('</p>', limiet), html.lastIndexOf('</div>', limiet),
+                                html.lastIndexOf('</tr>', limiet), html.lastIndexOf('<br', limiet));
+                            html = html.slice(0, grens > limiet / 2 ? grens : limiet).replace(/<[^>]*$/, '') +
+                                '<p><i>[… mail ingekort …]</i></p>';
+                        }
+                        // Bijlagen: OWA toont ze als kaartjes boven de berichttekst, met de
+                        // bestandsnaam in title/aria-label. Alleen echte bestandsnamen tellen.
+                        const bijlagen = [];
+                        const mainEl = body.closest('[role="main"]');
+                        if (mainEl) {
+                            for (const el of mainEl.querySelectorAll('[title], [aria-label]')) {
+                                if (body.contains(el)) continue;
+                                const t = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim();
+                                const mm = t.match(/([^\\/:*?"<>|\n]{1,120}?\.(pdf|docx?|xlsx?|xlsm|pptx?|zip|7z|rar|png|jpe?g|gif|csv|txt|msg|eml|ics|json|xml|vsdx?|mp4|mp3))(?=\s|$|[,;)])/i);
+                                const naam = mm ? mm[1].trim() : '';
+                                if (naam && naam.length > 3 && !bijlagen.includes(naam) && bijlagen.length < 12) bijlagen.push(naam);
+                            }
                         }
                         // Directe link naar deze mail: OWA zet bij het openen de conversatie-id
                         // in het adres; anders zelf bouwen uit de geselecteerde rij.
@@ -2402,11 +2505,12 @@ public sealed class OutlookClient : IDisposable
                         };
                         window.__wmMail = {
                             tekst: (body.innerText || '').trim().slice(0, 12000),
-                            html: kloon.innerHTML.slice(0, 150000),
+                            html,
                             kop: (main?.innerText || '').slice(0, 2500),
                             aan: vindAdresregel(['aan:', 'to:', 'à :', 'à:']),
                             cc: vindAdresregel(['cc:', 'kopie:', 'copie :', 'copie:']),
                             url,
+                            bijlagen,
                         };
                     })();
                     return true;
@@ -2441,19 +2545,31 @@ public sealed class OutlookClient : IDisposable
                         doc.RootElement.TryGetProperty("aan", out var a)
                             ? StripLabel(a.GetString() ?? "") : "",
                         doc.RootElement.TryGetProperty("cc", out var c)
-                            ? StripLabel(c.GetString() ?? "") : "");
+                            ? StripLabel(c.GetString() ?? "") : "",
+                        doc.RootElement.TryGetProperty("bijlagen", out var bl) &&
+                            bl.ValueKind == JsonValueKind.Array
+                            ? bl.EnumerateArray().Select(x => x.GetString() ?? "")
+                                .Where(x => x.Length > 0).ToList()
+                            : []);
                 }
             }
-            return ("", "", null, "", "", "");
+            return ("", "", null, "", "", "", []);
         }
     }
 
     public sealed record OutlookMailVol(
         string Sleutel, string Van, string Onderwerp, string Tekst, DateTimeOffset Datum,
         string Html = "", int Pogingen = 0, string Url = "",
-        string Aan = "", string Cc = ""); // "Naam; Naam"-regels uit de mailkop
+        string Aan = "", string Cc = "", // "Naam; Naam"-regels uit de mailkop
+        List<string>? Bijlagen = null) // bestandsnamen van de bijlagen (openen: via Url in OWA)
+    {
+        public List<string> Bijlagen { get; init; } = Bijlagen ?? [];
+    }
 
     private static readonly string MailStoreFile = Path.Combine(DataDir, "outlook-mails.json");
+
+    /// <summary>De lokale mailcache (diagnose, bv. --outlookhtml).</summary>
+    public static List<OutlookMailVol> GecachteMails() => LaadMails();
 
     /// <summary>
     /// Alle zichtbare inboxmails, met de volledige tekst uit een lokale cache. Elke mail die
@@ -2514,13 +2630,14 @@ public sealed class OutlookClient : IDisposable
                     var url = "";
                     var aan = "";
                     var cc = "";
+                    var bijlagen = new List<string>();
                     DateTimeOffset? exact = null;
                     if (leesBudget > 0 && !nietAangemeld)
                     {
                         leesBudget--;
                         try
                         {
-                            (tekst, html, exact, url, aan, cc) =
+                            (tekst, html, exact, url, aan, cc, bijlagen) =
                                 await LeesMailAsync(b.Van, b.Onderwerp, ct);
                         }
                         catch (InvalidOperationException)
@@ -2535,7 +2652,7 @@ public sealed class OutlookClient : IDisposable
                     bekend = new OutlookMailVol(sleutel, b.Van, b.Onderwerp,
                         tekst.Length > 0 ? tekst : b.Preview, exact ?? moment, html,
                         Pogingen: tekst.Length > 0 || html.Length > 0 || nietAangemeld ? 0 : 1,
-                        Url: url, Aan: aan, Cc: cc);
+                        Url: url, Aan: aan, Cc: cc, Bijlagen: bijlagen);
                     store.Add(bekend);
                     gewijzigd = true;
                 }
@@ -2545,7 +2662,7 @@ public sealed class OutlookClient : IDisposable
                     // lijst viel: nog eens proberen, met een teller zodat het na 3 keer stopt.
                     try
                     {
-                        var (tekst2, html2, exact2, url2, aan2, cc2) =
+                        var (tekst2, html2, exact2, url2, aan2, cc2, bijlagen2) =
                             await LeesMailAsync(b.Van, b.Onderwerp, ct);
                         bekend = bekend with
                         {
@@ -2556,6 +2673,7 @@ public sealed class OutlookClient : IDisposable
                             Url = url2.Length > 0 ? url2 : bekend.Url,
                             Aan = aan2.Length > 0 ? aan2 : bekend.Aan,
                             Cc = cc2.Length > 0 ? cc2 : bekend.Cc,
+                            Bijlagen = bijlagen2.Count > 0 ? bijlagen2 : bekend.Bijlagen,
                         };
                     }
                     catch (InvalidOperationException)
@@ -2604,7 +2722,7 @@ public sealed class OutlookClient : IDisposable
     /// bij élke nieuwe mail opnieuw ingelezen én weggeschreven. Voor de leesweergave is dit
     /// ruim voldoende — is de mail langer, dan open je hem toch in Outlook zelf.
     /// </summary>
-    private const int MaxHtmlPerMail = 150_000;
+    private const int MaxHtmlPerMail = 250_000; // de scrape zelf houdt ±240 k aan (beeldbudget 140 k)
 
     /// <summary>Zoveel mails houden we bij; ouder dan dat is de inbox toch al opgeschoond.</summary>
     private const int MaxMailsInStore = 150;
@@ -2660,7 +2778,15 @@ public sealed class OutlookClient : IDisposable
         {
             if (mails[i].Html.Length > MaxHtmlPerMail)
             {
-                mails[i] = mails[i] with { Html = mails[i].Html[..MaxHtmlPerMail] };
+                // Op een tag-grens knippen, nooit midden in een tag of base64-blok.
+                var html = mails[i].Html;
+                var grens = Math.Max(html.LastIndexOf("</p>", MaxHtmlPerMail, StringComparison.Ordinal),
+                    html.LastIndexOf("</div>", MaxHtmlPerMail, StringComparison.Ordinal));
+                mails[i] = mails[i] with
+                {
+                    Html = html[..(grens > MaxHtmlPerMail / 2 ? grens : MaxHtmlPerMail)] +
+                        "<p><i>[… mail ingekort …]</i></p>",
+                };
             }
         }
         if (mails.Count > MaxMailsInStore)

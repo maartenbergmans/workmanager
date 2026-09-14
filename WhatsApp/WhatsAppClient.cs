@@ -299,15 +299,14 @@ public sealed class WhatsAppClient : IDisposable
                 resultaat.Add(new MailBericht
                 {
                     WhatsAppChat = naam,
-                    MessageId = "wa:" + naam + ":" + laatste.Pre + Kort(laatste.Tekst, 40),
+                    MessageId = "wa:" + naam + ":" + laatste.Pre + Kort(laatste.B.Tekst, 40),
                     Van = naam,
                     VanAdres = "whatsapp",
-                    Onderwerp = laatste.Tekst.Length > 0 ? Kort(laatste.Tekst, 80) : "📷 foto",
+                    Onderwerp = laatste.B.Tekst.Length > 0 ? Kort(laatste.B.Tekst, 80) : "📷 foto",
                     Datum = DateTimeOffset.Now,
-                    Tekst = string.Join("\n", berichten.Select(b =>
-                        (b.Uitgaand ? "[eerder] Maarten (ikzelf): " : b.Pre.Length > 0 ? b.Pre : $"{naam}: ") +
-                        (b.Tekst.Length > 0 ? b.Tekst : b.Beeld.Length > 0 ? "📷 (foto)" : "") +
-                        (b.Reacties.Length > 0 ? $" [reactie: {b.Reacties}]" : ""))),
+                    Tekst = string.Join("\n", berichten.Select(r =>
+                        (r.B.Uitgaand ? "[eerder] Maarten (ikzelf): " : r.Pre.Length > 0 ? r.Pre : $"{naam}: ") +
+                        TranscriptTekst(r.B))),
                 });
             }
             catch (OperationCanceledException)
@@ -414,15 +413,61 @@ public sealed class WhatsAppClient : IDisposable
     /// </summary>
     public sealed record WaBericht(
         string Tijd, string Afzender, bool Uitgaand, string Tekst, string Beeld = "",
-        string Reacties = "");
+        string Reacties = "")
+    {
+        /// <summary>Alleen het uur ("12:30"), zoals WhatsApp het in de bubbel toont.</summary>
+        public string Klok { get; init; } = "";
+        /// <summary>Datum in WhatsApps eigen vorm "13/9/2026" (voor de datumchips).</summary>
+        public string Datum { get; init; } = "";
+        /// <summary>Kleur van de afzendernaam in een groep (CSS, bv. "rgb(184, 5, 49)").</summary>
+        public string Kleur { get; init; } = "";
+        /// <summary>Telefoonnummer als de afzender geen bewaard contact is.</summary>
+        public string Nummer { get; init; } = "";
+        /// <summary>De naam is de eigen profielnaam van de afzender (WhatsApp: "~ Kathleen").</summary>
+        public bool Profielnaam { get; init; }
+        /// <summary>Groepslabel van het lid, bv. "Mama Gabrielle".</summary>
+        public string Label { get; init; } = "";
+        /// <summary>Profielfoto van de afzender (data-URL), leeg = initialen.</summary>
+        public string AvatarUrl { get; init; } = "";
+        /// <summary>Zelfde afzender als het bericht erboven: geen naam, avatar of staartje.</summary>
+        public bool Vervolg { get; init; }
+        /// <summary>"Doorgestuurd" / "Vaak doorgestuurd" (leeg als het niet doorgestuurd is).</summary>
+        public string Doorgestuurd { get; init; } = "";
+        public bool Bewerkt { get; init; }
+        /// <summary>Uitgaand: gelezen / afgeleverd / verzonden / wachtend.</summary>
+        public string Status { get; init; } = "";
+        public string CitaatKleur { get; init; } = "";
+        /// <summary>Miniatuur (data-URL) als het geciteerde bericht een foto/video is.</summary>
+        public string CitaatBeeld { get; init; } = "";
+        public WaLink? Link { get; init; }
+        /// <summary>Extra beelden van een album (na <see cref="Beeld"/>), plus hoeveel er nog meer zijn.</summary>
+        public List<string> Album { get; init; } = [];
+        public int AlbumMeer { get; init; }
+        /// <summary>Soort bijzonder bericht: video, audio, document, sticker, oproep, verwijderd,
+        /// poll, systeem of overig (leeg = gewone tekst/foto).</summary>
+        public string Media { get; init; } = "";
+        public string MediaInfo { get; init; } = "";
+        public WaPoll? Poll { get; init; }
+
+        /// <summary>Afzender zoals een lezer (of Claude) hem moet zien, met nummer erbij.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string AfzenderVolledig => Nummer.Length > 0 && Nummer != Afzender
+            ? $"{Afzender} ({Nummer})" : Afzender;
+    }
+
+    public sealed record WaLink(string Titel, string Omschrijving, string Domein, string Beeld, bool Groot);
+
+    public sealed record WaPoll(string Vraag, bool Meerdere, List<WaPollOptie> Opties);
+
+    public sealed record WaPollOptie(string Tekst, int Stemmen, bool Gekozen);
 
     /// <summary>
     /// De laatste berichten uit een chat, gestructureerd (tijd, afzender, richting, tekst)
     /// voor de bubbelweergave. Let op: hiervoor wordt de chat geopend, dus WhatsApp
     /// markeert hem als gelezen (blauwe vinkjes).
     /// </summary>
-    public async Task<(List<WaBericht> Berichten, string AvatarDataUrl)> LaatsteBerichtenAsync(
-        string naam, int max, CancellationToken ct)
+    public async Task<(List<WaBericht> Berichten, string AvatarDataUrl, string Ondertitel)>
+        LaatsteBerichtenAsync(string naam, int max, CancellationToken ct)
     {
         await _slot.WaitAsync(ct);
         try
@@ -433,30 +478,93 @@ public sealed class WhatsAppClient : IDisposable
             }
             var berichten = (await OpenEnLeesAsync(naam, ct))
                 .TakeLast(max)
-                .Select(r =>
-                {
-                    // Pre-formaat: "[21:20, 19/6/2026] Els Jaspers: ".
-                    var tijd = "";
-                    var afzender = r.Uitgaand ? "Ik" : naam;
-                    var m = System.Text.RegularExpressions.Regex.Match(
-                        r.Pre, @"^\[(?<tijd>[^\]]+)\]\s*(?<wie>[^:]*):\s*$");
-                    if (m.Success)
-                    {
-                        tijd = m.Groups["tijd"].Value.Trim();
-                        if (m.Groups["wie"].Value.Trim() is { Length: > 0 } wie)
-                        {
-                            afzender = wie;
-                        }
-                    }
-                    return new WaBericht(tijd, afzender, r.Uitgaand, r.Tekst, r.Beeld, r.Reacties);
-                })
+                .Select(r => r.B)
                 .ToList();
-            return (berichten, await AvatarDataUrlAsync(ct));
+            return (berichten, await AvatarDataUrlAsync(ct), await OndertitelAsync());
         }
         finally
         {
             _slot.Release();
         }
+    }
+
+    /// <summary>
+    /// Tekst van een bericht voor transcripten (Claude, cockpitlijst): media, polls en
+    /// oproepen krijgen een leesbare omschrijving, reacties komen erachter.
+    /// </summary>
+    public static string TranscriptTekst(WaBericht b)
+    {
+        var soort = b.Media switch
+        {
+            "video" => "🎥 video",
+            "audio" => "🎤 spraakbericht",
+            "document" => "📄 document",
+            "sticker" => "sticker",
+            "oproep" => "📞 oproep",
+            "verwijderd" => "🚫 verwijderd bericht",
+            _ => "",
+        };
+        var delen = new List<string>();
+        if (b.Doorgestuurd.Length > 0)
+        {
+            delen.Add($"[{b.Doorgestuurd.ToLowerInvariant()}]");
+        }
+        if (soort.Length > 0)
+        {
+            delen.Add(b.MediaInfo.Length > 0 ? $"[{soort}: {b.MediaInfo}]" : $"[{soort}]");
+        }
+        else if (b.Media == "overig" && b.MediaInfo.Length > 0)
+        {
+            delen.Add($"[{b.MediaInfo}]");
+        }
+        if (b.Beeld.Length > 0 && b.Media is "" or "sticker")
+        {
+            delen.Add(b.Album.Count + b.AlbumMeer > 0
+                ? $"[📷 {1 + b.Album.Count + b.AlbumMeer} foto's]" : "[📷 foto]");
+        }
+        if (b.Tekst.Length > 0)
+        {
+            delen.Add(b.Tekst);
+        }
+        if (b.Link is { Titel.Length: > 0 } link)
+        {
+            delen.Add($"[link: {link.Titel}]");
+        }
+        if (b.Reacties.Length > 0)
+        {
+            delen.Add($"[reactie: {b.Reacties}]");
+        }
+        return string.Join(" ", delen);
+    }
+
+    /// <summary>
+    /// De regel onder de chatnaam in WhatsApps kop: deelnemers van een groep ("Donna, Hilke,
+    /// …") of "laatst gezien …". Die verschijnt pas even na het openen; de tijdelijke tekst
+    /// "klik hier voor groepsinformatie" telt niet.
+    /// </summary>
+    private async Task<string> OndertitelAsync()
+    {
+        try
+        {
+            for (var i = 0; i < 8; i++)
+            {
+                var json = await JsAsync(
+                    "(document.querySelector('#main [data-testid=\"chat-subtitle\"]')?.textContent || '').trim()");
+                var tekst = JsonSerializer.Deserialize<string>(json) ?? "";
+                if (tekst.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(tekst,
+                        "klik hier|click here|cliquez|typt|typing|écrit",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                {
+                    return tekst;
+                }
+                await Task.Delay(400);
+            }
+        }
+        catch
+        {
+            // De kop is comfort.
+        }
+        return "";
     }
 
     /// <summary>
@@ -762,167 +870,462 @@ public sealed class WhatsAppClient : IDisposable
         return (totaal, chats);
     }
 
-    private sealed record Regel(
-        string Pre, bool Uitgaand, string Tekst, string Beeld = "", string Reacties = "");
+    /// <summary>Een uitgelezen bericht plus de ruwe berichtkop (voor sleutels en transcripten).</summary>
+    private sealed record Regel(string Pre, WaBericht B);
+
+    /// <summary>
+    /// JS-helper window.__wmWaTekst(el): de tekst van een bubbel zoals WhatsApp hem toont.
+    /// innerText volstaat niet: emoji's zijn &lt;img alt="🥐"&gt; (vallen weg), elke regel is
+    /// een blok-span die zelf al een "\n" bevat (dubbele witregels), lijsten zijn ul/li en
+    /// opmaak zit in stijlen. Opmaak komt terug als WhatsApp-markup (*vet*, _cursief_,
+    /// ~doorgehaald~, `code`) — dezelfde vorm als WhatsApps eigen kopiëren — en wordt in de
+    /// bubbelweergave weer als opmaak gerenderd.
+    /// </summary>
+    private const string WaTekstJs =
+        """
+        window.__wmWaTekst = function (root) {
+            const stijl = n => { try { return getComputedStyle(n); } catch { return null; } };
+            // Markering om de witruimte heen leggen: "*vet *" rendert WhatsApp niet.
+            const pak = (s, m) => {
+                const k = s.match(/^([\s\x01]*)([\s\S]*?)([\s\x01]*)$/);
+                return k[2] ? k[1] + m + k[2] + m + k[3] : s;
+            };
+            const REGEL = '\x01'; // "hier moet een nieuwe regel beginnen"
+            const tekst = (n, ps) => {
+                if (n.nodeType === 3) return n.nodeValue;
+                if (n.nodeType !== 1) return '';
+                const tag = n.tagName;
+                if (tag === 'IMG') return n.getAttribute('data-plain-text') || n.alt || '';
+                if (tag === 'BR') return '\n';
+                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'svg' ||
+                    n.matches('.read-more-button, [data-testid="caption-read-more-button"]')) return '';
+                const st = stijl(n);
+                const kinderen = [...n.childNodes].filter(k =>
+                    !((tag === 'UL' || tag === 'OL') && k.nodeType === 3 && !k.nodeValue.trim()));
+                let s = kinderen.map(k => tekst(k, st)).join('');
+                if (tag === 'LI') {
+                    const ol = n.parentElement && n.parentElement.tagName === 'OL';
+                    const nr = ol ? ([...n.parentElement.children].indexOf(n) + 1) + '. ' : '• ';
+                    return REGEL + nr + s.trim() + '\n';
+                }
+                if (tag === 'UL' || tag === 'OL') return REGEL + s;
+                // Blokelementen (regel-spans, citaatblokken) staan op een eigen regel.
+                if (st && /^(block|flex|grid|table)$/.test(st.display)) s = REGEL + s + REGEL;
+                // @vermeldingen zijn opgemaakte spans maar geen vetgedrukte tekst.
+                if (st && ps && !/^\s*@/.test(s)) {
+                    if (tag === 'STRONG' || tag === 'B' ||
+                        (+st.fontWeight >= 600 && +ps.fontWeight < 600)) s = pak(s, '*');
+                    if (tag === 'EM' || tag === 'I' ||
+                        (st.fontStyle === 'italic' && ps.fontStyle !== 'italic')) s = pak(s, '_');
+                    if (tag === 'DEL' || tag === 'S' ||
+                        (/line-through/.test(st.textDecorationLine) &&
+                         !/line-through/.test(ps.textDecorationLine))) s = pak(s, '~');
+                    if (tag === 'CODE' ||
+                        (/mono/i.test(st.fontFamily) && !/mono/i.test(ps.fontFamily))) s = pak(s, '`');
+                }
+                return s;
+            };
+            // Een reeks regelmarkeringen en "\n"'s wordt zoveel regeleinden als er echte
+            // "\n"'s in zitten, maar minstens één: zo verdubbelt een blok-span die zelf al
+            // op "\n" eindigt niets.
+            return tekst(root, root.parentElement ? stijl(root.parentElement) : null)
+                .replace(/[\n\x01]*\x01[\n\x01]*/g,
+                    m => '\n'.repeat(Math.max(1, m.split('\n').length - 1)))
+                .replace(/[ \t]+\n/g, '\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        };
+        """;
 
     private async Task<List<Regel>> OpenEnLeesAsync(string naam, CancellationToken ct)
     {
         await OpenChatAsync(naam, ct);
 
-        // Asynchrone verzamel-job in de pagina: foto's in bubbels zijn blob-URL's die
-        // per stuk opgehaald en naar data-URL's omgezet worden — dat kost even, dus het
+        // Asynchrone verzamel-job in de pagina: foto's en profielfoto's zijn blob-/CDN-URL's
+        // die per stuk opgehaald en naar data-URL's omgezet worden — dat kost even, dus het
         // resultaat komt in window.__wmWaMsgs en wordt hieronder gepolld.
-        await JsAsync(
+        // Per bericht wordt alles meegenomen wat WhatsApp zelf toont: gekleurde afzender,
+        // "~ profielnaam" + nummer, groepslabel, reeks (staartje), doorgestuurd, bewerkt,
+        // vinkjes, citaat, linkvoorbeeld, album, poll, oproep, video/spraak/document.
+        await JsAsync(WaTekstJs +
             """
             (function () {
                 window.__wmWaMsgs = null;
                 (async () => {
                   try {
-                    let rijen = [...document.querySelectorAll('#main .message-in, #main .message-out')];
-                    if (rijen.length === 0) {
-                        // Fallback voor nieuwere WhatsApp-DOM's: bubbels herkennen aan de
-                        // copyable-text met het pre-plain-text-attribuut.
-                        rijen = [...document.querySelectorAll('#main [data-pre-plain-text]')]
-                            .map(c => c.closest('[role="row"], [data-id]') || c);
+                    const wacht = ms => new Promise(r => setTimeout(r, ms));
+                    const T = el => el ? window.__wmWaTekst(el) : '';
+                    const zoekRijen = () => {
+                        // Elke rij met een bubbel (ook foto's, albums, polls en oproepen zonder
+                        // data-pre-plain-text) plus systeemmeldingen (rij met tekst, zonder bubbel).
+                        let r = [...document.querySelectorAll('#main [role="row"]')].filter(x =>
+                            x.querySelector('[data-testid="msg-container"]') ||
+                            (x.textContent || '').trim().length > 0);
+                        if (r.length === 0 || !r.some(x => x.querySelector('[data-testid="msg-container"]'))) {
+                            // Oudere DOM's: message-in/out-classes, anders de berichtkop
+                            // ("[tijd, datum] naam: "; lijstpunten dragen zelf "- ").
+                            let oud = [...document.querySelectorAll('#main .message-in, #main .message-out')];
+                            if (oud.length === 0) {
+                                oud = [...document.querySelectorAll('#main [data-pre-plain-text^="["]')]
+                                    .map(c => c.closest('[role="row"], [data-id]') || c);
+                            }
+                            if (oud.length > 0) r = oud;
+                        }
+                        return [...new Set(r)].slice(-25);
+                    };
+                    // Lange berichten zijn ingekort tot je op "Meer lezen" klikt: eerst
+                    // uitklappen (heel lange soms in meerdere stappen), anders valt de staart weg.
+                    for (let i = 0; i < 5; i++) {
+                        const knoppen = zoekRijen().flatMap(m => [...m.querySelectorAll(
+                            '[data-testid="caption-read-more-button"], .read-more-button')]);
+                        if (knoppen.length === 0) break;
+                        for (const k of knoppen) k.click();
+                        await wacht(400);
                     }
+                    const rijen = zoekRijen();
                     const mainRect = document.querySelector('#main').getBoundingClientRect();
-                    const msgs = [];
-                    let fotoBudget = 12; // niet eindeloos blobben bij een fotoreeks
-                    // Totaalcap: de uiteindelijke HTML gaat via NavigateToString (limiet
-                    // ±1,5 MB); daarboven zou de hele bubbelweergave wegvallen.
-                    let fotoTekens = 0;
-                    for (const m of rijen.slice(-25)) {
-                        const c = m.querySelector('[data-pre-plain-text]') ||
-                            (m.hasAttribute && m.hasAttribute('data-pre-plain-text') ? m : null);
-                        // Geneste treffers ontdubbelen: anders staat elke tekst er dubbel in.
-                        let delen = [...m.querySelectorAll('span.selectable-text')];
-                        if (delen.length === 0) delen = [...m.querySelectorAll('.copyable-text span')];
-                        delen = delen.filter(s => !delen.some(o => o !== s && o.contains(s)));
-                        // Reactie op een eerder bericht: WhatsApp zet het geciteerde bericht
-                        // als blok bovenin de bubbel. Zonder onderscheid leek dat citaat de
-                        // tekst van de afzender zelf ("Els zegt X" terwijl X jouw bericht
-                        // was). Het citaatblok herkennen, uit de eigen tekst filteren en er
-                        // los als "↪ antwoord op …" vóór zetten.
-                        let citaat = '';
-                        const qm = m.querySelector('.quoted-mention, [class*="quoted"], ' +
-                            '[data-testid="quoted-message"], [aria-label*="geciteerd" i], ' +
-                            '[aria-label*="quoted" i]');
-                        if (qm) {
-                            let citaatEl = qm.closest('[role="button"]') ||
-                                qm.parentElement?.parentElement || qm;
-                            // Te hoog gegrepen (hele bubbel)? Dan alleen het quote-element
-                            // zelf nemen, anders bleef er geen eigen tekst over.
-                            if (delen.length > 0 && delen.every(s => citaatEl.contains(s))) {
-                                citaatEl = qm;
-                            }
-                            delen = delen.filter(s => !citaatEl.contains(s));
-                            const regels = (citaatEl.innerText || '')
-                                .split('\n').map(r => r.trim()).filter(Boolean);
-                            let wie = regels.length > 1 ? regels[0] : '';
-                            if (/^(jij|you|vous|u)$/i.test(wie)) wie = 'jou';
-                            const wat = (regels.length > 1
-                                ? regels.slice(1).join(' ') : regels[0] || '').slice(0, 120);
-                            if (wat) {
-                                citaat = '↪ antwoord op ' + (wie ? wie + ': ' : '') +
-                                    '“' + wat + '”';
-                            }
-                        }
-                        // Richting, van sterk naar zwak signaal: de message-in/out-class,
-                        // het data-id (begint bij eigen berichten met "true_", inkomend
-                        // "false_"), en anders de positie — eigen bubbels staan rechts van
-                        // het midden van het gesprek, wat ook nieuwe DOM's overleeft.
-                        const dataId = (m.getAttribute && m.getAttribute('data-id')) ||
-                            m.closest('[data-id]')?.getAttribute('data-id') ||
-                            m.querySelector('[data-id]')?.getAttribute('data-id') || '';
-                        let uit;
-                        if (m.matches('.message-out, .message-out *') ||
-                            m.querySelector('.message-out')) uit = true;
-                        else if (m.matches('.message-in, .message-in *') ||
-                            m.querySelector('.message-in')) uit = false;
-                        else if (/^(true|false)_/.test(dataId)) uit = dataId.startsWith('true_');
-                        else {
-                            const rect = (c || delen[0] || m).getBoundingClientRect();
-                            uit = rect.width > 0 &&
-                                rect.left + rect.width / 2 > mainRect.left + mainRect.width / 2;
-                        }
-                        // Foto in de bubbel. WhatsApp gebruikt afwisselend blob:-URL's,
-                        // ingebedde data:-thumbnails en https-media; alle drie meenemen.
-                        // Emoji's en pictogrammen vallen af op formaat.
-                        let beeld = '';
-                        const kandidaten = [...m.querySelectorAll('img')].filter(i => {
-                            const src = i.src || i.currentSrc || '';
-                            if (!/^(blob:|data:image|https:)/.test(src)) return false;
-                            const b = i.getBoundingClientRect();
-                            const breed = i.naturalWidth || i.clientWidth || b.width;
-                            const hoog = i.naturalHeight || i.clientHeight || b.height;
-                            return breed >= 50 && hoog >= 50;
+                    const heeftStaarten = rijen.some(r => r.querySelector('[data-icon^="tail-"]'));
+
+                    // Profielfoto's naast de bubbels staan niet ín de rij maar in een eigen laag:
+                    // koppelen op hoogte (de avatar staat naast de eerste bubbel van een reeks).
+                    // Eerst alles meten — het foto-scrollen hieronder verschuift de boel.
+                    const avatars = [...document.querySelectorAll(
+                        '#main [data-testid="group-chat-profile-picture"]')].map(a => {
+                            const im = a.querySelector('img');
+                            return { top: a.getBoundingClientRect().top,
+                                     src: im ? (im.currentSrc || im.src || '') : '' };
                         });
-                        // De grootste kandidaat: bij een bubbel met thumbnail + volle foto
-                        // levert dat de scherpste.
-                        const img = kandidaten.sort((a, b) =>
-                            (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth))[0];
-                        if (img && fotoBudget > 0) {
+                    const avatarVan = new Map();
+                    for (const m of rijen) {
+                        const staart = m.querySelector('[data-icon="tail-in"]');
+                        if (!staart) continue;
+                        const top = (m.querySelector('[data-testid="msg-container"]') || m)
+                            .getBoundingClientRect().top;
+                        let best = null, afstand = 45;
+                        for (const a of avatars) {
+                            const d = Math.abs(a.top - top);
+                            if (d < afstand) { afstand = d; best = a; }
+                        }
+                        if (best) avatarVan.set(m, best.src);
+                    }
+                    const avatarCache = new Map();
+                    const avatarData = async src => {
+                        if (!src) return '';
+                        if (avatarCache.has(src)) return avatarCache.get(src);
+                        let d = '';
+                        try {
+                            const bmp = await createImageBitmap(await (await fetch(src)).blob());
+                            const cv = document.createElement('canvas');
+                            cv.width = cv.height = 64;
+                            const z = Math.min(bmp.width, bmp.height);
+                            cv.getContext('2d').drawImage(bmp, (bmp.width - z) / 2,
+                                (bmp.height - z) / 2, z, z, 0, 0, 64, 64);
+                            d = cv.toDataURL('image/jpeg', 0.8);
+                        } catch { d = ''; }
+                        avatarCache.set(src, d);
+                        return d;
+                    };
+
+                    // Beeld naar verkleinde JPEG-data-URL. Budget: de uiteindelijke HTML gaat via
+                    // NavigateToString (±1,5 MB); daarboven valt de hele bubbelweergave weg.
+                    let fotoBudget = 14;
+                    let fotoTekens = 0;
+                    const beeldData = async (img, m, maxBreed) => {
+                        if (!img || fotoBudget <= 0) return '';
+                        try {
+                            // In beeld brengen: WhatsApp laadt media pas als de bubbel
+                            // zichtbaar is (lazy loading), anders blijft src leeg.
+                            m.scrollIntoView({ block: 'center' });
+                            await wacht(120);
+                            if (!img.complete || !img.naturalWidth) {
+                                await new Promise(r => {
+                                    img.addEventListener('load', () => r(), { once: true });
+                                    img.addEventListener('error', () => r(), { once: true });
+                                    setTimeout(r, 1200);
+                                });
+                            }
+                            const bron = img.currentSrc || img.src;
+                            let bmp;
                             try {
-                                // In beeld brengen: WhatsApp laadt afbeeldingen pas als de
-                                // bubbel zichtbaar is (lazy loading), anders blijft src leeg.
-                                m.scrollIntoView({ block: 'center' });
-                                await new Promise(r => setTimeout(r, 120));
-                                if (!img.complete || !img.naturalWidth) {
-                                    await new Promise(r => {
-                                        const klaar = () => r();
-                                        img.addEventListener('load', klaar, { once: true });
-                                        img.addEventListener('error', klaar, { once: true });
-                                        setTimeout(klaar, 1200);
-                                    });
-                                }
-                                // Via canvas: meteen verkleinen naar maximaal 900 px breed en
-                                // als JPEG opslaan. Zo passen grote foto's alsnog binnen de
-                                // limiet in plaats van dat ze wegvallen.
-                                const bron = img.currentSrc || img.src;
-                                const bitmap = await new Promise((res, rej) => {
+                                // Via fetch → blob: nooit een "besmet" canvas (cross-origin).
+                                bmp = await createImageBitmap(await (await fetch(bron)).blob());
+                            } catch {
+                                bmp = await new Promise((res, rej) => {
                                     const el = new Image();
                                     el.crossOrigin = 'anonymous';
                                     el.onload = () => res(el);
                                     el.onerror = rej;
                                     el.src = bron;
                                 });
-                                const schaal = Math.min(1, 900 / (bitmap.naturalWidth || 900));
-                                const canvas = document.createElement('canvas');
-                                canvas.width = Math.max(1, Math.round((bitmap.naturalWidth || 1) * schaal));
-                                canvas.height = Math.max(1, Math.round((bitmap.naturalHeight || 1) * schaal));
-                                canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-                                const uit = canvas.toDataURL('image/jpeg', 0.72);
-                                if (uit.length > 200 && fotoTekens + uit.length <= 2500000) {
-                                    beeld = uit;
-                                    fotoTekens += uit.length;
-                                    fotoBudget--;
+                            }
+                            const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
+                            const schaal = Math.min(1, maxBreed / (w || maxBreed));
+                            const cv = document.createElement('canvas');
+                            cv.width = Math.max(1, Math.round(w * schaal));
+                            cv.height = Math.max(1, Math.round(h * schaal));
+                            cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+                            const d = cv.toDataURL('image/jpeg', 0.72);
+                            if (d.length > 200 && fotoTekens + d.length <= 1100000) {
+                                fotoTekens += d.length;
+                                fotoBudget--;
+                                return d;
+                            }
+                        } catch { /* geen beeld: de rest van het bericht volstaat */ }
+                        return '';
+                    };
+                    const grootste = (a, b) =>
+                        (b.naturalWidth || b.clientWidth) - (a.naturalWidth || a.clientWidth);
+                    const diepKleur = el => {
+                        let d = el;
+                        while (d.firstElementChild &&
+                            ![...d.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim())) {
+                            d = d.firstElementChild;
+                        }
+                        return getComputedStyle(d).color;
+                    };
+
+                    const msgs = [];
+                    // Nieuwste eerst verwerken: raakt het fotobudget op, dan missen de oudste
+                    // berichten hun beeld en niet de nieuwste. Achteraf terugdraaien.
+                    for (const m of [...rijen].reverse()) {
+                        const cont = m.querySelector('[data-testid="msg-container"]');
+                        const oudeDom = m.matches('.message-in, .message-out') ||
+                            m.querySelector('.message-in, .message-out, [data-pre-plain-text]');
+                        if (!cont && !oudeDom) {
+                            // Systeemmelding ("X heeft Y toegevoegd", beveiligingscode, …).
+                            const t = T(m).replace(/\s*\n\s*/g, ' ').trim();
+                            if (t) msgs.push({ systeem: true, uit: false, pre: '', txt: t.slice(0, 300) });
+                            continue;
+                        }
+                        const scope = cont || m;
+                        const c = scope.querySelector('[data-pre-plain-text^="["]') ||
+                            (m.hasAttribute && m.hasAttribute('data-pre-plain-text') ? m : null);
+                        const bijzonder = '[data-testid="quoted-message"], ' +
+                            '[data-testid="link-preview-container"], [data-testid="poll-bubble"]';
+
+                        // Eigen tekst (geneste treffers ontdubbeld, citaat/link/poll apart).
+                        let delen = [...scope.querySelectorAll('span.selectable-text')];
+                        if (delen.length === 0) delen = [...scope.querySelectorAll('.copyable-text span')];
+                        delen = delen.filter(s => !s.closest(bijzonder));
+                        delen = delen.filter(s => !delen.some(o => o !== s && o.contains(s)));
+
+                        // Citaat: het geciteerde bericht bovenin de bubbel, als
+                        // "↪ antwoord op wie: “wat”" vóór de eigen tekst, met de kleur van de streep.
+                        let citaat = '', citKleur = '', citBeeld = '';
+                        const qm = scope.querySelector('[data-testid="quoted-message"]') ||
+                            scope.querySelector('.quoted-mention, [aria-label*="geciteerd" i], ' +
+                                '[aria-label*="quoted" i]');
+                        if (qm) {
+                            delen = delen.filter(s => !qm.contains(s));
+                            const qa = [...qm.querySelectorAll('[data-testid="author"]')];
+                            let wie = qa[0] ? T(qa[0]).trim() : '';
+                            let wat = T(qm.querySelector(
+                                'span.selectable-text, span[data-testid="selectable-text"]'));
+                            if (!wat) {
+                                // Geciteerde foto/video zonder tekst: rest van het blok.
+                                wat = T(qm);
+                                for (const a of qa) wat = wat.split(a.textContent).join('');
+                            }
+                            if (!qa.length && !wie) {
+                                // Oudere DOM: eerste regel = wie, rest = wat.
+                                const regels = T(qm).split('\n').map(r => r.trim()).filter(Boolean);
+                                if (regels.length > 1) { wie = regels[0]; wat = regels.slice(1).join(' '); }
+                            }
+                            const streep = [...qm.querySelectorAll('span, div')].find(e => {
+                                const bg = getComputedStyle(e).backgroundColor;
+                                const b = e.getBoundingClientRect();
+                                return bg && bg !== 'rgba(0, 0, 0, 0)' && b.width > 0 && b.width <= 6;
+                            });
+                            citKleur = streep ? getComputedStyle(streep).backgroundColor
+                                : (qa[0] ? diepKleur(qa[0]) : '');
+                            if (/^(jij|you|vous|u)$/i.test(wie)) wie = 'jou';
+                            // Geciteerde foto/video: WhatsApp toont rechts in het citaat een miniatuur.
+                            const qImg = [...qm.querySelectorAll('img')].filter(i =>
+                                !i.classList.contains('emoji') && (i.naturalWidth || i.clientWidth) >= 30)
+                                .sort(grootste)[0];
+                            if (qImg) citBeeld = await beeldData(qImg, m, 120);
+                            wat = wat.replace(/\s+/g, ' ').trim().slice(0, 120);
+                            // Geciteerde media zonder miniatuur: WhatsApp zet er een symbool voor
+                            // ("📷 2 foto's", "🎥 Video", "🎤 Spraakbericht").
+                            const sym = qm.querySelector('[data-testid="chat-msg-symbol"] title')?.textContent || '';
+                            const symEmoji = /image|camera/i.test(sym) ? '📷' : /video/i.test(sym) ? '🎥' :
+                                /ptt|audio|mic/i.test(sym) ? '🎤' : /doc/i.test(sym) ? '📄' :
+                                /sticker/i.test(sym) ? '🩵' : /location|map/i.test(sym) ? '📍' : '';
+                            if (symEmoji && !/^\p{Extended_Pictographic}/u.test(wat)) wat = (symEmoji + ' ' + wat).trim();
+                            if (!wat && citBeeld) wat = '📷 Foto';
+                            if (wat) citaat = '↪ antwoord op ' + (wie ? wie + ': ' : '') + '“' + wat + '”';
+                        }
+
+                        // Afzender zoals WhatsApp hem in een groep toont.
+                        const auteurs = [...scope.querySelectorAll('[data-testid="author"]')]
+                            .filter(a => !a.closest('[data-testid="quoted-message"]'));
+                        let auteur = '', nummer = '', profiel = false, kleur = '', label = '';
+                        if (auteurs[0]) {
+                            auteur = T(auteurs[0]).trim();
+                            kleur = diepKleur(auteurs[0]);
+                            profiel = /^(mogelijk|maybe|peut-être)\b/i.test(
+                                auteurs[0].getAttribute('aria-label') || '');
+                            if (auteurs[1]) nummer = T(auteurs[1]).trim();
+                            // Groepslabel ("Mama Gabrielle"): een kaal knopje vlak na de naam.
+                            let el = auteurs[auteurs.length - 1];
+                            zoek: for (let k = 0; k < 3 && el && el !== scope; k++, el = el.parentElement) {
+                                let sib = el.nextElementSibling;
+                                for (let j = 0; j < 2 && sib; j++, sib = sib.nextElementSibling) {
+                                    if (sib.hasAttribute('data-testid') || sib.hasAttribute('data-pre-plain-text') ||
+                                        sib.querySelector('[data-testid], [data-pre-plain-text], img')) continue;
+                                    const t = (sib.textContent || '').trim();
+                                    if (t && t.length <= 60) { label = t; break zoek; }
                                 }
-                            } catch {
-                                // Canvas geblokkeerd (cross-origin) of laden mislukt: dan
-                                // alsnog de ruwe blob proberen, dat werkt voor eigen media.
-                                try {
-                                    const resp = await fetch(img.currentSrc || img.src);
-                                    const blob = await resp.blob();
-                                    if (blob.size <= 900000) {
-                                        const dataUrl = await new Promise(res => {
-                                            const fr = new FileReader();
-                                            fr.onload = () => res(String(fr.result));
-                                            fr.onerror = () => res('');
-                                            fr.readAsDataURL(blob);
-                                        });
-                                        if (dataUrl && fotoTekens + dataUrl.length <= 2500000) {
-                                            beeld = dataUrl;
-                                            fotoTekens += dataUrl.length;
-                                            fotoBudget--;
-                                        }
-                                    }
-                                } catch { /* geen foto: de tekst volstaat */ }
                             }
                         }
-                        // Emoji-reacties (❤️ 👍 …) onder de bubbel: WhatsApp toont ze als een
-                        // knopje met een aria-label ("2 reacties in totaal, …") en de emoji's
-                        // zelf als <img alt="❤️">. De hover-knop "Reageren"/"React" matcht
-                        // hier bewust niet (die bevat "reactie"/"reaction" niet).
+
+                        // Meta: tijd, "Bewerkt" en de vinkjes.
+                        const meta = scope.querySelector('[data-testid="msg-meta"]');
+                        const metaTekst = meta ? T(meta) : '';
+                        const metaLabels = meta ? [...meta.querySelectorAll('[aria-label], [data-icon], title')]
+                            .map(x => x.getAttribute('aria-label') || x.getAttribute('data-icon') ||
+                                x.textContent || '').join(' ') : '';
+                        const klok = (metaTekst.match(/\d{1,2}:\d{2}(\s?[AP]M)?/i) || [''])[0];
+                        const bewerkt = /bewerkt|edited|modifi/i.test(metaTekst);
+                        let status = '';
+                        if (/gelezen|\bread\b|\blu\b/i.test(metaLabels)) status = 'gelezen';
+                        else if (/afgeleverd|delivered|dblcheck|distribu/i.test(metaLabels)) status = 'afgeleverd';
+                        else if (/verzonden|\bsent\b|msg-check|envoy/i.test(metaLabels)) status = 'verzonden';
+                        else if (/behandeling|pending|clock|attente/i.test(metaLabels)) status = 'wachtend';
+
+                        // Richting, van sterk naar zwak signaal: oude classes, het staartje,
+                        // het data-id ("true_"/"false_" in oudere builds), de vinkjes (alleen
+                        // bij eigen berichten) en anders de positie in het gesprek.
+                        const tailIn = !!scope.querySelector('[data-icon="tail-in"]');
+                        const tailOut = !!scope.querySelector('[data-icon="tail-out"]');
+                        const dataId = (m.getAttribute && m.getAttribute('data-id')) ||
+                            m.querySelector('[data-id]')?.getAttribute('data-id') || '';
+                        let uit, dirZeker = true;
+                        if (m.matches('.message-out, .message-out *') || m.querySelector('.message-out')) uit = true;
+                        else if (m.matches('.message-in, .message-in *') || m.querySelector('.message-in')) uit = false;
+                        else if (tailOut) uit = true;
+                        else if (tailIn) uit = false;
+                        else if (/^(true|false)_/.test(dataId)) uit = dataId.startsWith('true_');
+                        else if (status) uit = true;
+                        else {
+                            // Vervolgbericht zonder staartje: de bubbelkleur beslist (eigen bubbels
+                            // zijn groen, in het lichte én het donkere thema). De positie in het
+                            // paneel is onbetrouwbaar: het verborgen venster is smal. De C#-kant
+                            // erft bij twijfel de richting van het vorige bericht van de reeks.
+                            dirZeker = false;
+                            const bub = [...scope.querySelectorAll('div')]
+                                .map(d => getComputedStyle(d).backgroundColor
+                                    .match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/))
+                                .find(k => k && k[4] !== '0');
+                            if (bub) {
+                                uit = +bub[2] > +bub[1] && +bub[2] > +bub[3];
+                            } else {
+                                const rect = (scope.firstElementChild || scope).getBoundingClientRect();
+                                uit = rect.width > 0 &&
+                                    rect.left + rect.width / 2 > mainRect.left + mainRect.width / 2;
+                            }
+                        }
+
+                        const fh = scope.querySelector('[data-testid="forwarded-header"]');
+                        // (Cursief in WhatsApp; hier zonder markup, de weergave zet het zelf schuin.)
+                        const fwd = fh ? (T(fh).replace(/[_*~]/g, '').trim() || 'Doorgestuurd') : '';
+
+                        // Linkvoorbeeld (titel, omschrijving, domein, thumbnail).
+                        let link = null;
+                        const lp = scope.querySelector('[data-testid="link-preview-container"]');
+                        const lpT = scope.querySelector('[data-testid^="link-preview-thumbnail"]');
+                        const lpImg = lpT ? (lpT.tagName === 'IMG' ? lpT : lpT.querySelector('img')) : null;
+                        if (lp) {
+                            let lb = '';
+                            if (lpImg && /^data:image/.test(lpImg.src) && lpImg.src.length < 80000) lb = lpImg.src;
+                            else if (lpImg) lb = await beeldData(lpImg, m, 400);
+                            link = {
+                                titel: T(lp.querySelector('[data-testid="link-preview-title"]')),
+                                omschrijving: T(lp.querySelector('[data-testid="link-description"]')),
+                                domein: T(lp.querySelector('[data-testid="url-element"]')),
+                                beeld: lb,
+                                groot: !!scope.querySelector('[data-testid="high-quality-layout"]'),
+                            };
+                        }
+
+                        // Beelden: album (tot 4 + "+N") of één foto/videostill/sticker.
+                        let beeld = '', album = [], albumMeer = 0;
+                        const albumEl = scope.querySelector('[data-testid="media-album"]');
+                        if (albumEl) {
+                            for (const th of [...albumEl.querySelectorAll('[data-testid="image-thumb"]')].slice(0, 4)) {
+                                const im = [...th.querySelectorAll('img')].sort(grootste)[0];
+                                const d = await beeldData(im, m, 480);
+                                if (d) album.push(d);
+                            }
+                            const plus = [...albumEl.querySelectorAll('span')]
+                                .map(s => (s.textContent || '').trim()).find(t => /^\+\d+$/.test(t));
+                            if (plus) albumMeer = parseInt(plus.slice(1), 10);
+                            beeld = album.shift() || '';
+                        } else {
+                            const kandidaten = [...scope.querySelectorAll('img')].filter(i => {
+                                if (i.closest(bijzonder) || i === lpImg || i.classList.contains('emoji')) return false;
+                                const src = i.src || i.currentSrc || '';
+                                if (!/^(blob:|data:image|https:)/.test(src)) return false;
+                                const b = i.getBoundingClientRect();
+                                const breed = i.naturalWidth || i.clientWidth || b.width;
+                                const hoog = i.naturalHeight || i.clientHeight || b.height;
+                                return breed >= 50 && hoog >= 50;
+                            });
+                            beeld = await beeldData(kandidaten.sort(grootste)[0], m, 900);
+                        }
+
+                        // Bijzondere berichtsoorten.
+                        let media = '', mediaInfo = '';
+                        const tijdenIn = el => (T(el).match(/\b\d{1,2}:\d{2}\b/g) || []).filter(t => t !== klok);
+                        const pollEl = scope.querySelector('[data-testid="poll-bubble"]');
+                        let poll = null;
+                        if (pollEl) {
+                            media = 'poll';
+                            const opties = [...pollEl.querySelectorAll('input[type="checkbox"], input[type="radio"]')]
+                                .map(inp => {
+                                    const lab = inp.id ? pollEl.querySelector('label[for="' + CSS.escape(inp.id) + '"]') : null;
+                                    const al = inp.getAttribute('aria-label') || '';
+                                    return {
+                                        tekst: lab ? T(lab) : al.replace(/\s*\d+\s*(stemmen|stem|votes?|voix)\s*$/i, ''),
+                                        stemmen: parseInt((al.match(/(\d+)\s*(stem|vote|voix)/i) || [])[1] || '0', 10),
+                                        gekozen: inp.getAttribute('aria-checked') === 'true' || !!inp.checked,
+                                    };
+                                });
+                            poll = {
+                                // De vraag is in WhatsApp altijd vet: geen *markup* eromheen.
+                                vraag: T(pollEl.querySelector('[data-pre-plain-text] span.selectable-text, ' +
+                                    '[data-pre-plain-text] span[data-testid="selectable-text"]'))
+                                    .replace(/^\*([\s\S]*)\*$/, '$1'),
+                                meerdere: !!pollEl.querySelector('[data-icon*="multi-select"]'),
+                                opties,
+                            };
+                        } else if (scope.querySelector('[data-testid="call-log-system-message"]')) {
+                            media = 'oproep';
+                            mediaInfo = T(scope.querySelector('[data-testid="call-log-system-message"]'))
+                                .split('\n').map(s => s.trim()).filter(s => s && s !== klok).join(' · ');
+                        } else if (scope.querySelector('[data-testid="video-content"], [data-testid*="video-thumb"]')) {
+                            media = 'video';
+                            mediaInfo = tijdenIn(scope.querySelector('[data-testid="video-content"]') || scope)[0] || '';
+                        } else if (scope.querySelector('[data-testid*="audio"], [data-testid*="ptt"], ' +
+                            '[data-icon*="audio"], [data-icon*="ptt"], [aria-label*="spraakbericht" i], ' +
+                            '[aria-label*="voice message" i]')) {
+                            media = 'audio';
+                            mediaInfo = tijdenIn(scope)[0] || '';
+                        } else if (scope.querySelector('[data-testid*="document"], [data-icon*="document"], ' +
+                            '[data-icon^="doc-"], [data-icon*="-doc"]')) {
+                            media = 'document';
+                            const titel = scope.querySelector('[title]')?.getAttribute('title') || '';
+                            const rest = T(scope).split('\n').map(s => s.trim())
+                                .filter(s => s && s !== klok && s !== auteur && s !== nummer && s !== label && s !== titel);
+                            mediaInfo = [titel, ...rest].filter(Boolean).slice(0, 3).join(' · ');
+                        } else if (scope.querySelector('[data-testid*="sticker"]')) {
+                            media = 'sticker';
+                        } else if (scope.querySelector('[data-icon*="recalled"]')) {
+                            media = 'verwijderd';
+                        }
+
+                        // Emoji-reacties (❤️ 👍 …) onder de bubbel: een knopje met aria-label en
+                        // de emoji's als <img alt>. Die staan naast de bubbel, dus in de rij zoeken.
                         let reacties = '';
                         const rEl = m.querySelector(
                             '[aria-label*="reactie" i], [aria-label*="reaction" i], ' +
@@ -931,28 +1334,46 @@ public sealed class WhatsAppClient : IDisposable
                             reacties = [...rEl.querySelectorAll('img')]
                                 .map(i => i.alt || '').filter(Boolean).join('');
                             if (!reacties) {
-                                // Nieuwere DOM zonder emoji-img's: pak de pictogrammen uit
-                                // het label of de tekst van het knopje zelf.
                                 const bron = (rEl.getAttribute('aria-label') || '') + ' ' +
                                     (rEl.textContent || '');
                                 reacties = [...bron.matchAll(/\p{Extended_Pictographic}/gu)]
                                     .map(x => x[0]).join('');
                             }
-                            // Totaal (bv. "❤️ 3") erbij zodra er meer reacties dan emoji's zijn.
                             const totaal = parseInt((rEl.getAttribute('aria-label') || '')
                                 .match(/\d+/)?.[0] || '', 10);
                             if (reacties && totaal > 1) { reacties += ' ' + totaal; }
                         }
+
+                        let txt = ((citaat ? citaat + '\n' : '') +
+                            delen.map(s => T(s)).join(' ').trim()).trim();
+                        if (!media && /^(dit bericht is verwijderd|je hebt dit bericht verwijderd|this message was deleted|you deleted this message)/i.test(txt)) {
+                            media = 'verwijderd';
+                        }
+                        if (poll) {
+                            // Als tekst (voor Claude en de cockpitlijst) de vraag met de stand.
+                            txt = (citaat ? citaat + '\n' : '') + '📊 ' + poll.vraag + '\n' +
+                                poll.opties.map(o => '• ' + o.tekst + ' (' + o.stemmen + ')').join('\n');
+                        }
+                        if (!txt && !beeld && !media && !link) {
+                            // Onbekende soort (contactkaart, locatie, evenement…): de zichtbare
+                            // tekst van de bubbel zonder naam en tijd, zodat niets verdwijnt.
+                            mediaInfo = T(scope).split('\n').map(s => s.trim())
+                                .filter(s => s && s !== klok && s !== auteur && s !== nummer && s !== label &&
+                                    !/^(bewerkt|edited)$/i.test(s))
+                                .join(' · ').slice(0, 200);
+                            if (mediaInfo) media = 'overig';
+                        }
                         msgs.push({
                             pre: c ? c.getAttribute('data-pre-plain-text') : '',
-                            uit,
-                            txt: ((citaat ? citaat + '\n' : '') +
-                                delen.map(s => s.innerText).join(' ').trim()).trim(),
-                            beeld,
-                            reacties,
+                            uit, dirZeker, txt, beeld, reacties, klok, kleur, auteur, nummer, profiel, label,
+                            avatar: uit ? '' : await avatarData(avatarVan.get(m) || ''),
+                            vervolg: heeftStaarten && !tailIn && !tailOut,
+                            fwd, bewerkt, status: uit ? status : '', citKleur, citBeeld, link, album, albumMeer,
+                            media, mediaInfo, poll, systeem: false,
                         });
                     }
-                    const gevuld = msgs.filter(m => m.txt || m.beeld);
+                    msgs.reverse();
+                    const gevuld = msgs.filter(m => m.txt || m.beeld || m.media || m.link);
                     window.__wmWaMsgs = gevuld.length > 0 ? gevuld : { leeg: true, diag: {
                         msgIn: document.querySelectorAll('#main .message-in').length,
                         prePlain: document.querySelectorAll('#main [data-pre-plain-text]').length,
@@ -969,7 +1390,7 @@ public sealed class WhatsAppClient : IDisposable
             })()
             """);
         var json = "null";
-        for (var i = 0; i < 40; i++) // foto's omzetten kan even duren (max. ~12 s)
+        for (var i = 0; i < 60; i++) // foto's en avatars omzetten kan even duren (max. ~18 s)
         {
             await Task.Delay(300, ct);
             var klaar = await JsAsync("JSON.stringify(window.__wmWaMsgs)");
@@ -983,21 +1404,167 @@ public sealed class WhatsAppClient : IDisposable
         {
             throw new InvalidOperationException("Berichten uitlezen bleef hangen (geen resultaat).");
         }
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind == JsonValueKind.Object)
+        using (var doc = JsonDocument.Parse(json))
         {
-            // Diagnose-object: geen berichten gevonden — meld wát er dan wél in de DOM staat.
-            throw new InvalidOperationException(
-                $"0 berichten; DOM-stand: {doc.RootElement.GetProperty("diag").GetRawText()}");
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                // Diagnose-object: geen berichten gevonden — meld wát er dan wél in de DOM staat.
+                throw new InvalidOperationException(
+                    $"0 berichten; DOM-stand: {doc.RootElement.GetProperty("diag").GetRawText()}");
+            }
         }
-        return doc.RootElement.EnumerateArray()
-            .Select(m => new Regel(
-                m.GetProperty("pre").GetString() ?? "",
-                m.GetProperty("uit").GetBoolean(),
-                m.GetProperty("txt").GetString() ?? "",
-                m.TryGetProperty("beeld", out var b) ? b.GetString() ?? "" : "",
-                m.TryGetProperty("reacties", out var re) ? re.GetString() ?? "" : ""))
-            .ToList();
+        var ruw = JsonSerializer.Deserialize<List<WaRuw>>(json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? [];
+        return NaarBerichten(ruw, naam);
+    }
+
+    /// <summary>Wat de pagina per bericht teruggeeft (zie het script in OpenEnLeesAsync).</summary>
+    private sealed class WaRuw
+    {
+        public string Pre { get; set; } = "";
+        public bool Uit { get; set; }
+        public bool DirZeker { get; set; } = true;
+        public string Txt { get; set; } = "";
+        public string Beeld { get; set; } = "";
+        public string Reacties { get; set; } = "";
+        public string Klok { get; set; } = "";
+        public string Kleur { get; set; } = "";
+        public string Auteur { get; set; } = "";
+        public string Nummer { get; set; } = "";
+        public bool Profiel { get; set; }
+        public string Label { get; set; } = "";
+        public string Avatar { get; set; } = "";
+        public bool Vervolg { get; set; }
+        public string Fwd { get; set; } = "";
+        public bool Bewerkt { get; set; }
+        public string Status { get; set; } = "";
+        public string CitKleur { get; set; } = "";
+        public string CitBeeld { get; set; } = "";
+        public WaRuwLink? Link { get; set; }
+        public List<string> Album { get; set; } = [];
+        public int AlbumMeer { get; set; }
+        public string Media { get; set; } = "";
+        public string MediaInfo { get; set; } = "";
+        public WaRuwPoll? Poll { get; set; }
+        public bool Systeem { get; set; }
+    }
+
+    private sealed class WaRuwLink
+    {
+        public string Titel { get; set; } = "";
+        public string Omschrijving { get; set; } = "";
+        public string Domein { get; set; } = "";
+        public string Beeld { get; set; } = "";
+        public bool Groot { get; set; }
+    }
+
+    private sealed class WaRuwPoll
+    {
+        public string Vraag { get; set; } = "";
+        public bool Meerdere { get; set; }
+        public List<WaRuwOptie> Opties { get; set; } = [];
+    }
+
+    private sealed class WaRuwOptie
+    {
+        public string Tekst { get; set; } = "";
+        public int Stemmen { get; set; }
+        public bool Gekozen { get; set; }
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex PreRegex = new(
+        @"^\[(?<klok>[^,\]]+),\s*(?<datum>[^\]]+)\]\s*(?<wie>[^:]*):\s*$");
+
+    /// <summary>
+    /// Zet de ruwe pagina-uitlezing om naar berichten: tijd en datum uit de berichtkop
+    /// ("[12:30, 13/9/2026] Naam: "), datum doorgeschoven naar berichten zonder kop (foto,
+    /// album, poll), en vervolgberichten erven de afzender van het bericht erboven.
+    /// </summary>
+    private static List<Regel> NaarBerichten(List<WaRuw> ruw, string chatNaam)
+    {
+        var uit = new List<Regel>();
+        var datum = "";
+        WhatsAppClient.WaBericht? vorige = null;
+        foreach (var r in ruw)
+        {
+            if (r.Systeem)
+            {
+                var sys = new WaBericht("", "", false, r.Txt) { Media = "systeem", Datum = datum };
+                uit.Add(new Regel("", sys));
+                vorige = null; // na een systeemmelding begint WhatsApp een nieuwe reeks
+                continue;
+            }
+            var m = PreRegex.Match(r.Pre);
+            var klok = r.Klok.Length > 0 ? r.Klok : m.Success ? m.Groups["klok"].Value.Trim() : "";
+            if (m.Success)
+            {
+                datum = m.Groups["datum"].Value.Trim();
+            }
+            var wie = m.Success ? m.Groups["wie"].Value.Trim() : "";
+            string afzender;
+            string nummer = r.Nummer, kleur = r.Kleur, label = r.Label, avatar = r.Avatar;
+            var profiel = r.Profiel;
+            if (!r.DirZeker && r.Vervolg && vorige is not null && r.Auteur.Length == 0)
+            {
+                // Richting was gegokt (geen staartje, geen vinkjes): een vervolgbericht
+                // hoort bij dezelfde kant als het bericht erboven.
+                r.Uit = vorige.Uitgaand;
+            }
+            if (r.Uit)
+            {
+                afzender = "Ik";
+            }
+            else if (r.Auteur.Length > 0)
+            {
+                afzender = r.Auteur;
+            }
+            else if (vorige is { Uitgaand: false } && (r.Vervolg || wie.Length == 0 ||
+                     wie == vorige.Nummer || wie == vorige.Afzender))
+            {
+                // Vervolgbericht: WhatsApp toont de naam alleen boven het eerste van de reeks.
+                afzender = vorige.Afzender;
+                nummer = vorige.Nummer;
+                kleur = vorige.Kleur;
+                label = vorige.Label;
+                profiel = vorige.Profielnaam;
+                avatar = vorige.AvatarUrl;
+            }
+            else
+            {
+                afzender = wie.Length > 0 ? wie : chatNaam;
+            }
+            var tijd = klok.Length > 0 && datum.Length > 0 ? $"{klok}, {datum}"
+                : m.Success ? $"{m.Groups["klok"].Value.Trim()}, {m.Groups["datum"].Value.Trim()}" : klok;
+            var b = new WaBericht(tijd, afzender, r.Uit, r.Txt, r.Beeld, r.Reacties)
+            {
+                Klok = klok,
+                Datum = datum,
+                Kleur = kleur,
+                Nummer = nummer,
+                Profielnaam = profiel,
+                Label = label,
+                AvatarUrl = avatar,
+                Vervolg = r.Vervolg,
+                Doorgestuurd = r.Fwd,
+                Bewerkt = r.Bewerkt,
+                Status = r.Status,
+                CitaatKleur = r.CitKleur,
+                CitaatBeeld = r.CitBeeld,
+                Link = r.Link is { } l && (l.Titel.Length > 0 || l.Domein.Length > 0)
+                    ? new WaLink(l.Titel, l.Omschrijving, l.Domein, l.Beeld, l.Groot) : null,
+                Album = r.Album,
+                AlbumMeer = r.AlbumMeer,
+                Media = r.Media,
+                MediaInfo = r.MediaInfo,
+                Poll = r.Poll is { } p
+                    ? new WaPoll(p.Vraag, p.Meerdere,
+                        p.Opties.Select(o => new WaPollOptie(o.Tekst, o.Stemmen, o.Gekozen)).ToList())
+                    : null,
+            };
+            uit.Add(new Regel(r.Pre, b));
+            vorige = b;
+        }
+        return uit;
     }
 
     private async Task OpenChatAsync(string naam, CancellationToken ct)
@@ -1229,9 +1796,9 @@ public sealed class WhatsAppClient : IDisposable
 
             // En nu de echte proef: dezelfde route als de fetch, één foto omzetten.
             var berichten = await OpenEnLeesAsync(doel, ct);
-            var metFoto = berichten.Count(b => b.Beeld.Length > 0);
+            var metFoto = berichten.Count(r => r.B.Beeld.Length > 0);
             log($"Berichten uitgelezen: {berichten.Count}, met foto: {metFoto}.");
-            var voorbeeld = berichten.LastOrDefault(b => b.Beeld.Length > 0)?.Beeld ?? "";
+            var voorbeeld = berichten.LastOrDefault(r => r.B.Beeld.Length > 0)?.B.Beeld ?? "";
             if (voorbeeld.Length > 0)
             {
                 log($"Grootte van de omgezette foto: {voorbeeld.Length / 1024} kB (data-URL).");
@@ -1245,6 +1812,103 @@ public sealed class WhatsAppClient : IDisposable
     }
 
     private sealed record Rij(string Naam, bool Ongelezen);
+
+    /// <summary>
+    /// Diagnose (CLI --wajs): opent optioneel een chat en draait een stuk JavaScript in de
+    /// WhatsApp-sessie. Handig als WhatsApp zijn bubbel-DOM weer eens wijzigt. Let op: een
+    /// chat openen markeert hem als gelezen.
+    /// </summary>
+    public async Task<string> DiagnoseJsAsync(string chat, string script, CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct, wachtSeconden: 25))
+            {
+                return "(niet ingelogd)";
+            }
+            if (chat.Length > 0)
+            {
+                await OpenChatAsync(chat, ct);
+            }
+            // Het script mag ook een Promise opleveren (async-diagnoses): het resultaat
+            // komt dan in window.__wmDiag en wordt gepolld.
+            await JsAsync(
+                "window.__wmDiag = null; Promise.resolve(eval(" + JsonSerializer.Serialize(script) +
+                ")).then(v => { window.__wmDiag = String(v); }, e => { window.__wmDiag = 'FOUT: ' + e; }); true");
+            for (var i = 0; i < 100; i++)
+            {
+                await Task.Delay(300, ct);
+                var klaar = await JsAsync("window.__wmDiag");
+                if (klaar != "null")
+                {
+                    return JsonSerializer.Deserialize<string>(klaar) ?? "";
+                }
+            }
+            return "(geen resultaat binnen 30 s)";
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Diagnose (CLI --wascreenshot): chat openen, onderaan zetten en een PNG maken van hoe
+    /// WhatsApp Web hem zelf toont — referentiebeeld voor de bubbelweergave.
+    /// </summary>
+    public async Task DiagnoseScreenshotAsync(string chat, string pad, CancellationToken ct,
+        string voorafJs = "")
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct, wachtSeconden: 25))
+            {
+                throw new InvalidOperationException("niet ingelogd");
+            }
+            _venster!.Size = new Size(1500, 1250); // breed: gesprekspaneel zoals op een desktop
+            if (chat.Length > 0)
+            {
+                await OpenChatAsync(chat, ct);
+            }
+            await Task.Delay(1500, ct);
+            if (voorafJs.Length > 0)
+            {
+                await JsAsync(voorafJs); // bv. omhoog scrollen naar een ouder stuk gesprek
+                await Task.Delay(1500, ct);
+            }
+            using var beeld = new MemoryStream();
+            await _web!.CoreWebView2!.CapturePreviewAsync(
+                CoreWebView2CapturePreviewImageFormat.Png, beeld);
+            File.WriteAllBytes(pad, beeld.ToArray());
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>Diagnose (CLI --waberichten): de bubbel-leescode draaien op één chat.</summary>
+    public async Task<string> DiagnoseBerichtenAsync(string chat, CancellationToken ct)
+    {
+        var (berichten, _, ondertitel) = await LaatsteBerichtenAsync(chat, 25, ct);
+        return $"ondertitel: {ondertitel}\n" + string.Join("\n---\n", berichten.Select(b =>
+            $"[{b.Datum} {b.Klok}] {b.AfzenderVolledig}{(b.Uitgaand ? " (uit)" : "")}" +
+            (b.Profielnaam ? " ~" : "") + (b.Label.Length > 0 ? $" «{b.Label}»" : "") +
+            (b.Kleur.Length > 0 ? $" {b.Kleur}" : "") + (b.Vervolg ? " (vervolg)" : "") +
+            (b.AvatarUrl.Length > 0 ? $" avatar:{b.AvatarUrl.Length / 1024}kB" : "") +
+            (b.Status.Length > 0 ? $" ✓{b.Status}" : "") + (b.Bewerkt ? " bewerkt" : "") +
+            (b.Doorgestuurd.Length > 0 ? $" [{b.Doorgestuurd}]" : "") +
+            (b.CitaatKleur.Length > 0 ? $" citaat:{b.CitaatKleur}" : "") +
+            (b.CitaatBeeld.Length > 0 ? $" citaatbeeld:{b.CitaatBeeld.Length / 1024}kB" : "") +
+            (b.Media.Length > 0 ? $" <{b.Media}: {b.MediaInfo}>" : "") +
+            (b.Beeld.Length > 0 ? $" beeld:{b.Beeld.Length / 1024}kB" : "") +
+            (b.Album.Count > 0 ? $" album+{b.Album.Count}(+{b.AlbumMeer})" : "") +
+            (b.Link is { } l ? $" link:«{l.Titel}» {l.Domein} beeld:{l.Beeld.Length / 1024}kB" : "") +
+            (b.Poll is { } p ? $" poll:{p.Opties.Count} opties" : "") +
+            $":\n{b.Tekst}" + (b.Reacties.Length > 0 ? $"  {{{b.Reacties}}}" : "")));
+    }
 
     public async Task<string> ZelftestAsync(CancellationToken ct)
     {

@@ -39,7 +39,15 @@ public sealed class SmartschoolClient : IDisposable
     public sealed record SmartschoolBericht(
         string Sleutel, string Kind, string MsgId, string Van, string Onderwerp,
         string Tekst, string Html, DateTimeOffset Datum, string Bijlagen = "",
-        int Pogingen = 0);
+        int Pogingen = 0)
+    {
+        /// <summary>Profielfoto van de afzender (data-URL), leeg = geen.</summary>
+        public string Avatar { get; init; } = "";
+        /// <summary>Ontvangersregel zoals Smartschool die toont ("Maarten Bergmans, vader van …").</summary>
+        public string Ontvangers { get; init; } = "";
+        /// <summary>Aantal overige ontvangers ("Toon overige (681)").</summary>
+        public int Overige { get; init; }
+    }
 
     /// <summary>Laat de volgende beurt écht bij Smartschool kijken (bv. na een meldingsmail).</summary>
     public void ForceerVerversing() => _laatstOpgehaald = DateTimeOffset.MinValue;
@@ -73,14 +81,32 @@ public sealed class SmartschoolClient : IDisposable
                     "Smartschool-aanmelding mislukt — controleer smartschool-login.json.");
             }
             var vers = new List<SmartschoolBericht>();
+            var meldingen = new List<SmartschoolMelding>();
             var kinderen = await KinderenAsync(ct);
             foreach (var (kindNaam, accountId) in kinderen)
             {
                 ct.ThrowIfCancellationRequested();
                 await NavigeerAsync($"{Basis}/Studentcard/Chain/gotourl/accountID/{accountId}", ct);
-                vers.AddRange(await LeesPostvakAsync(kindNaam, cache, ct));
+                var postvak = await LeesPostvakAsync(kindNaam, cache, ct);
+                vers.AddRange(postvak);
+                try
+                {
+                    // Belletje: meldingen van al afgehandelde berichten wissen, de rest
+                    // (agenda, resultaten, …) voor de cockpit meenemen.
+                    meldingen.AddRange(await VerwerkMeldingenAsync(kindNaam,
+                        postvak.Select(b => b.MsgId).ToHashSet(), ct));
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _debugStappen.Add($"meldingen {kindNaam}: {ex.Message}");
+                }
             }
             await ArchiveerDubbeleAsync(vers, kinderen, ct);
+            BewaarMeldingen(meldingen);
             try
             {
                 // Diagnose: als de lijst leeg blijft wil je zien of het aan de kinderen
@@ -205,6 +231,20 @@ public sealed class SmartschoolClient : IDisposable
             {
                 return false;
             }
+            if (msgId.StartsWith("melding:", StringComparison.Ordinal))
+            {
+                // Geen bericht maar een melding uit het belletje: die wissen.
+                await NavigeerAsync($"{Basis}/Studentcard/Chain/gotourl/accountID/{accountId}", ct);
+                await NavigeerAsync($"{Basis}/index.php?module=Messages", ct);
+                var sleutel = msgId["melding:".Length..];
+                var gewist = await WisMeldingAsync(sleutel, ct);
+                var lijst = Meldingen();
+                if (lijst.RemoveAll(m => m.Kind == kind && m.Sleutel == sleutel) > 0)
+                {
+                    BewaarMeldingen(lijst);
+                }
+                return gewist || true; // uit de cockpit is hij sowieso weg; Smartschool volgt bij de volgende ronde
+            }
             return await ArchiveerKernAsync(accountId, kind, msgId, ct);
         }
         finally
@@ -281,11 +321,20 @@ public sealed class SmartschoolClient : IDisposable
                 """);
             if (await JsAsync("!!document.getElementById(" + msgIdJs + ")") == "false")
             {
-                // Rij weg uit de lijst: ook uit de cache halen.
+                // Rij weg uit de lijst: ook uit de cache halen, en de melding in het
+                // belletje wissen (anders blijft de teller in Smartschool staan).
                 var cache = LaadCache();
                 if (cache.RemoveAll(b => b.Kind == kind && b.MsgId == msgId) > 0)
                 {
                     BewaarCache(cache);
+                }
+                try
+                {
+                    await WisMeldingAsync($"/?module=Messages&msgID={msgId}", ct);
+                }
+                catch
+                {
+                    // Best effort; de volgende ophaalbeurt wist hem alsnog.
                 }
                 return true;
             }
@@ -572,6 +621,110 @@ public sealed class SmartschoolClient : IDisposable
         catch
         {
             return new List<string>();
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Diagnose (CLI --smsdiag): naar een pagina navigeren (pad relatief aan de school-URL,
+    /// of "-" = blijven staan), een script draaien (mag een Promise opleveren) en optioneel
+    /// een screenshot maken van hoe Smartschool het zelf toont.
+    /// </summary>
+    public async Task<string> DiagnoseInAsync(string pad, string script, string screenshotPad,
+        CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct, wachtSeconden: 45))
+            {
+                return "(niet aangemeld)";
+            }
+            if (pad.Length > 0 && pad != "-")
+            {
+                await NavigeerAsync(pad.StartsWith("http") ? pad : Basis + "/" + pad.TrimStart('/'), ct);
+                await Task.Delay(1500, ct);
+            }
+            var uit = "";
+            if (script.Length > 0)
+            {
+                await JsAsync(
+                    "window.__wmDiag = null; Promise.resolve(eval(" + JsonSerializer.Serialize(script) +
+                    ")).then(v => { window.__wmDiag = String(v); }, e => { window.__wmDiag = 'FOUT: ' + e; }); true");
+                for (var i = 0; i < 100; i++)
+                {
+                    await Task.Delay(300, ct);
+                    var klaar = await JsAsync("window.__wmDiag");
+                    if (klaar != "null")
+                    {
+                        uit = Ontdubbel(klaar);
+                        break;
+                    }
+                }
+            }
+            if (screenshotPad.Length > 0)
+            {
+                await Task.Delay(500, ct);
+                using var beeld = new MemoryStream();
+                await _web!.CoreWebView2!.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                File.WriteAllBytes(screenshotPad, beeld.ToArray());
+            }
+            return uit;
+        }
+        finally
+        {
+            _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Diagnose (CLI --smslees): opent één bericht via zijn msgID (ook uit het archief) en
+    /// leest het met de echte leescode; geeft het resultaat terug als bericht-record.
+    /// </summary>
+    public async Task<SmartschoolBericht?> DiagnoseLeesAsync(string msgId, CancellationToken ct)
+    {
+        await _slot.WaitAsync(ct);
+        try
+        {
+            if (!await StartAsync(ct, wachtSeconden: 45))
+            {
+                return null;
+            }
+            await NavigeerAsync($"{Basis}/?module=Messages&msgID={msgId}", ct);
+            await WachtOpAsync("#msglist .modern-message", ct);
+            await Task.Delay(800, ct);
+            var rij = Ontdubbel(await JsAsync(
+                $$"""
+                (function () {
+                    const r = document.getElementById({{JsonSerializer.Serialize("row_" + msgId)}});
+                    if (!r) return '';
+                    return JSON.stringify({
+                        van: (r.querySelector('.modern-message__name')?.textContent || '').replace(/\s+/g, ' ').trim(),
+                        onderwerp: (r.querySelector('.modern-message__subject')?.textContent || '').replace(/\s+/g, ' ').trim(),
+                        datum: (r.querySelector('.modern-message__date')?.textContent || '').trim(),
+                    });
+                })()
+                """));
+            var van = "";
+            var onderwerp = "";
+            var datum = DateTimeOffset.Now;
+            if (rij.StartsWith('{'))
+            {
+                using var doc = JsonDocument.Parse(rij);
+                van = doc.RootElement.GetProperty("van").GetString() ?? "";
+                onderwerp = doc.RootElement.GetProperty("onderwerp").GetString() ?? "";
+                datum = ParseMoment(doc.RootElement.GetProperty("datum").GetString() ?? "");
+            }
+            var g = await LeesBerichtAsync(msgId, ct);
+            return new SmartschoolBericht($"smartschool:diag:{msgId}", "diag", msgId, van, onderwerp,
+                g.Tekst, g.Html, datum, g.Bijlagen)
+            {
+                Avatar = g.Avatar, Ontvangers = g.Ontvangers, Overige = g.Overige,
+            };
         }
         finally
         {
@@ -878,10 +1031,13 @@ public sealed class SmartschoolClient : IDisposable
             var bekend = cache.FirstOrDefault(b => b.Sleutel == sleutel);
             if (bekend is null || (bekend.Tekst.Length == 0 && bekend.Pogingen < 3))
             {
-                var (tekst, html, bijlagen) = await LeesBerichtAsync(msgId, ct);
+                var g = await LeesBerichtAsync(msgId, ct);
                 bekend = new SmartschoolBericht(sleutel, kind, msgId, van, onderwerp,
-                    tekst, html, datum, bijlagen,
-                    Pogingen: tekst.Length > 0 ? 0 : (bekend?.Pogingen ?? 0) + 1);
+                    g.Tekst, g.Html, datum, g.Bijlagen,
+                    Pogingen: g.Tekst.Length > 0 ? 0 : (bekend?.Pogingen ?? 0) + 1)
+                {
+                    Avatar = g.Avatar, Ontvangers = g.Ontvangers, Overige = g.Overige,
+                };
             }
             if (bekend.Bijlagen.Length > 0 && LokaleBijlagen(msgId).Count == 0)
             {
@@ -909,9 +1065,20 @@ public sealed class SmartschoolClient : IDisposable
         return resultaat;
     }
 
-    /// <summary>Opent één bericht (klik op de rij) en leest tekst, HTML en bijlagenamen.</summary>
-    private async Task<(string Tekst, string Html, string Bijlagen)> LeesBerichtAsync(
-        string msgId, CancellationToken ct)
+    /// <summary>Wat het leesvenster van één bericht oplevert.</summary>
+    private sealed record GelezenBericht(
+        string Tekst, string Html, string Bijlagen, string Avatar, string Ontvangers, int Overige)
+    {
+        public static readonly GelezenBericht Leeg = new("", "", "", "", "", 0);
+    }
+
+    /// <summary>
+    /// Opent één bericht (klik op de rij) en leest de inhoud zoals Smartschool die toont:
+    /// alleen de berichttekst (niet de kop, die staat apart in afzender/onderwerp/ontvangers),
+    /// met afbeeldingen verkleind ingebed (de schoolserver geeft ze buiten de sessie niet
+    /// af), de profielfoto van de afzender en de ontvangersregel.
+    /// </summary>
+    private async Task<GelezenBericht> LeesBerichtAsync(string msgId, CancellationToken ct)
     {
         var idJs = JsonSerializer.Serialize("row_" + msgId);
         if (await JsAsync(
@@ -924,93 +1091,329 @@ public sealed class SmartschoolClient : IDisposable
             })()
             """) is not "\"ok\"")
         {
-            return ("", "", "");
+            return GelezenBericht.Leeg;
         }
-        var klaarVanaf = -1; // ronde waarin de tekst er stond (bijlagen komen daarná)
+        // De tekst staat er snel; de bijlagenlijst (#attachlist) laadt asynchroon ná het
+        // bericht (aparte mustache-XHR) — maximaal ~3 s extra wachten op bijlagen.
+        var klaarVanaf = -1;
         for (var i = 0; i < 16; i++)
         {
             await Task.Delay(500, ct);
-            var json = await JsAsync(
+            var stand = await JsAsync(
                 """
                 (function () {
                     const d = document.querySelector('#msgdetail');
-                    if (!d || (d.innerText || '').trim().length < 5) return 'null';
-                    // De bijlagenlijst (#attachlist) laadt asynchroon ná het bericht
-                    // (aparte mustache-XHR) en rendert als .attachment-divs met de naam
-                    // in .attachment__title__label — géén links, dus niet op <a> zoeken.
-                    const bijlagen = [...new Set(
-                        [...d.querySelectorAll(
-                            '.attachment .attachment__title__label, .attachment__title[title]')]
-                        .map(a => ((a.textContent || '').trim() ||
-                            a.getAttribute('title') || '').replace(/\s+/g, ' ').trim())
-                        .filter(Boolean))];
-                    // Relatieve links/afbeeldingen absoluut maken: de HTML wordt buiten
-                    // Smartschool getoond en zou anders nergens heen wijzen.
-                    const kloon = d.cloneNode(true);
-                    for (const el of kloon.querySelectorAll('[src], [href]')) {
-                        for (const at of ['src', 'href']) {
-                            const v = el.getAttribute(at);
-                            if (v && v.startsWith('/')) {
-                                el.setAttribute(at, location.origin + v);
+                    if (!d || (d.innerText || '').trim().length < 5) return 'leeg';
+                    return d.querySelectorAll('.attachment .attachment__title__label, .attachment__title[title]').length > 0
+                        ? 'bijlagen' : 'tekst';
+                })()
+                """);
+            if (stand.Contains("leeg"))
+            {
+                continue;
+            }
+            if (klaarVanaf < 0)
+            {
+                klaarVanaf = i;
+            }
+            if (stand.Contains("bijlagen") || i - klaarVanaf >= 6)
+            {
+                break;
+            }
+        }
+        if (klaarVanaf < 0)
+        {
+            return GelezenBericht.Leeg;
+        }
+        await JsAsync(
+            """
+            (function () {
+                window.__wmSms = null;
+                (async () => {
+                    try {
+                        const d = document.querySelector('#msgdetail');
+                        if (!d) { window.__wmSms = 'leeg'; return; }
+                        const bijlagen = [...new Set(
+                            [...d.querySelectorAll('.attachment .attachment__title__label, .attachment__title[title]')]
+                            .map(a => ((a.textContent || '').trim() || a.getAttribute('title') || '')
+                                .replace(/\s+/g, ' ').trim()).filter(Boolean))];
+                        const body = d.querySelector('.msgContentVal') || d.querySelector('.msgContent') || d;
+                        const kloon = body.cloneNode(true);
+                        for (const el of kloon.querySelectorAll('[src], [href]')) {
+                            for (const at of ['src', 'href']) {
+                                const v = el.getAttribute(at);
+                                if (v && v.startsWith('/')) el.setAttribute(at, location.origin + v);
                             }
                         }
-                    }
-                    return JSON.stringify({
-                        tekst: (d.innerText || '').trim().slice(0, 12000),
-                        html: (kloon.innerHTML || '').slice(0, 120000),
-                        bijlagen: bijlagen.slice(0, 12).join('; '),
-                    });
-                })()
-                """);
-            if (json is not ("null" or "\"null\""))
-            {
-                using var doc = JsonDocument.Parse(Ontdubbel(json));
-                var bijlagen = doc.RootElement.GetProperty("bijlagen").GetString() ?? "";
-                if (bijlagen.Length == 0 && klaarVanaf < 0)
-                {
-                    // Tekst staat er, bijlagen (nog) niet: maximaal ~3 s extra wachten.
-                    klaarVanaf = i;
-                }
-                if (bijlagen.Length > 0 || (klaarVanaf >= 0 && i - klaarVanaf >= 6))
-                {
-                    return (
-                        doc.RootElement.GetProperty("tekst").GetString() ?? "",
-                        doc.RootElement.GetProperty("html").GetString() ?? "",
-                        bijlagen);
-                }
-            }
-        }
-        if (klaarVanaf >= 0)
+                        // Afbeelding → verkleinde data-URL (fetch mét sessiecookies).
+                        const naarData = async (src, maxBreed, kwaliteit) => {
+                            try {
+                                const blob = await (await fetch(src, { credentials: 'include' })).blob();
+                                if (!/^image\//.test(blob.type)) return '';
+                                const bmp = await createImageBitmap(blob);
+                                const schaal = Math.min(1, maxBreed / (bmp.width || maxBreed));
+                                const cv = document.createElement('canvas');
+                                cv.width = Math.max(1, Math.round(bmp.width * schaal));
+                                cv.height = Math.max(1, Math.round(bmp.height * schaal));
+                                cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+                                const png = blob.type === 'image/png' && bmp.width * bmp.height < 200000;
+                                let uit = png ? cv.toDataURL('image/png') : cv.toDataURL('image/jpeg', kwaliteit);
+                                if (png && uit.length > 60000) uit = cv.toDataURL('image/jpeg', kwaliteit);
+                                return uit;
+                            } catch { return ''; }
+                        };
+                        let budget = 120000;
+                        const orig = [...body.querySelectorAll('img')];
+                        const kop = [...kloon.querySelectorAll('img')];
+                        for (let i = 0; i < kop.length; i++) {
+                            const src = orig[i]?.currentSrc || orig[i]?.src || kop[i].getAttribute('src') || '';
+                            if (!src || src.startsWith('data:')) continue;
+                            const w = orig[i]?.naturalWidth || 0, h = orig[i]?.naturalHeight || 0;
+                            if (w && w < 24 && h < 24) { kop[i].remove(); continue; }
+                            const data = await naarData(src, 900, 0.75);
+                            if (data && data.length <= budget) {
+                                kop[i].src = data;
+                                budget -= data.length;
+                                kop[i].removeAttribute('width');
+                                kop[i].removeAttribute('height');
+                                kop[i].style.maxWidth = '100%';
+                                kop[i].style.height = 'auto';
+                            } else {
+                                kop[i].remove();
+                            }
+                        }
+                        // Profielfoto: staat op een aparte host (userpicture*.smartschool.be) zonder
+                        // CORS, dus fetchen lukt niet — de URL is wél publiek (hash-gebaseerd),
+                        // dus de cockpit laadt hem rechtstreeks.
+                        const foto = d.querySelector('.msgHeaderImg img');
+                        const fotoSrc = foto ? (foto.currentSrc || foto.src || '') : '';
+                        const avatar = fotoSrc ? (await naarData(fotoSrc, 64, 0.8) || fotoSrc) : '';
+                        const ontvEl = [...d.querySelectorAll('.msgHeaderVal')]
+                            .find(e => /ontvangers/i.test(e.textContent || ''));
+                        let ontvangers = '', overige = 0;
+                        if (ontvEl) {
+                            const t = (ontvEl.textContent || '').replace(/\s+/g, ' ')
+                                .replace(/^\s*Ontvangers:\s*/i, '').trim();
+                            const m = t.match(/Toon overige \((\d+)\)/i);
+                            overige = m ? parseInt(m[1], 10) : 0;
+                            ontvangers = t.replace(/,?\s*Toon overige.*$/i, '').trim();
+                        }
+                        window.__wmSms = JSON.stringify({
+                            tekst: (body.innerText || '').trim().slice(0, 12000),
+                            html: kloon.innerHTML.slice(0, 160000),
+                            bijlagen: bijlagen.slice(0, 12).join('; '),
+                            avatar, ontvangers, overige,
+                        });
+                    } catch (e) { window.__wmSms = 'FOUT: ' + e; }
+                })();
+                return true;
+            })()
+            """);
+        for (var i = 0; i < 40; i++) // afbeeldingen inbedden kan even duren
         {
-            // Tekst was er wel maar de lus liep af: nog één keer zonder bijlage-eis lezen.
-            var laatste = await JsAsync(
-                """
-                (function () {
-                    const d = document.querySelector('#msgdetail');
-                    if (!d) return 'null';
-                    return JSON.stringify({
-                        tekst: (d.innerText || '').trim().slice(0, 12000),
-                        html: (d.innerHTML || '').slice(0, 120000),
-                    });
-                })()
-                """);
-            if (laatste is not ("null" or "\"null\""))
+            await Task.Delay(300, ct);
+            var klaar = await JsAsync("window.__wmSms");
+            if (klaar == "null")
             {
-                using var doc = JsonDocument.Parse(Ontdubbel(laatste));
-                return (
-                    doc.RootElement.GetProperty("tekst").GetString() ?? "",
-                    doc.RootElement.GetProperty("html").GetString() ?? "", "");
+                continue;
+            }
+            var json = Ontdubbel(klaar);
+            if (!json.StartsWith('{'))
+            {
+                _debugStappen.Add($"lezen {msgId}: {json}");
+                return GelezenBericht.Leeg;
+            }
+            using var doc = JsonDocument.Parse(json);
+            string S(string naam) => doc.RootElement.TryGetProperty(naam, out var v) ? v.GetString() ?? "" : "";
+            return new GelezenBericht(S("tekst"), S("html"), S("bijlagen"), S("avatar"), S("ontvangers"),
+                doc.RootElement.TryGetProperty("overige", out var o) && o.ValueKind == JsonValueKind.Number
+                    ? o.GetInt32() : 0);
+        }
+        return GelezenBericht.Leeg;
+    }
+
+    // ---------- Meldingen (het belletje) ----------
+
+    /// <summary>
+    /// Eén melding uit het belletje van een co-account. Module "messages" = melding van een
+    /// bericht (Url bevat msgID); andere modules (agenda, resultaten, …) tonen we als eigen
+    /// rij in de cockpit.
+    /// </summary>
+    public sealed record SmartschoolMelding(
+        string Kind, string Sleutel, string Module, string Titel, string Info, string Datum,
+        string Url, bool Ongelezen)
+    {
+        public string MsgId => System.Text.RegularExpressions.Regex.Match(Url, @"msgID=(\d+)").Groups[1].Value;
+    }
+
+    private static readonly string MeldingenFile = Path.Combine(DataDir, "smartschool-meldingen.json");
+
+    /// <summary>De niet-berichtmeldingen van de laatste ophaalbeurt (uit de cache).</summary>
+    public static List<SmartschoolMelding> Meldingen()
+    {
+        try
+        {
+            if (File.Exists(MeldingenFile) &&
+                JsonSerializer.Deserialize<List<SmartschoolMelding>>(File.ReadAllText(MeldingenFile)) is { } lijst)
+            {
+                return lijst;
             }
         }
-        return ("", "", "");
+        catch
+        {
+            // Onleesbaar: dan even geen meldingen.
+        }
+        return new List<SmartschoolMelding>();
+    }
+
+    private static void BewaarMeldingen(List<SmartschoolMelding> meldingen)
+    {
+        try
+        {
+            File.WriteAllText(MeldingenFile, JsonSerializer.Serialize(meldingen));
+        }
+        catch
+        {
+            // Cache is comfort.
+        }
+    }
+
+    /// <summary>Leest het belletje van het actieve co-account (staat in de DOM, ook dicht).</summary>
+    private async Task<List<SmartschoolMelding>> LeesMeldingenAsync(string kind)
+    {
+        var json = Ontdubbel(await JsAsync(
+            """
+            JSON.stringify([...document.querySelectorAll('.js-notifs-list .notification')].map(n => {
+                const a = n.querySelector('a.js-notif-btn, a');
+                const infos = [...n.querySelectorAll('.notification__info')]
+                    .map(i => (i.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+                const mod = ((n.querySelector('.notification__image')?.className) || '')
+                    .match(/module-([a-z0-9_]+)--/i);
+                return {
+                    href: a ? (a.getAttribute('href') || '') : '',
+                    titel: (n.querySelector('.notification__title')?.textContent || '').replace(/\s+/g, ' ').trim(),
+                    info: infos.filter(t => !/^\d{4}-\d{2}-\d{2}/.test(t)).join(' · '),
+                    datum: infos.find(t => /^\d{4}-\d{2}-\d{2}/.test(t)) || '',
+                    module: mod ? mod[1].toLowerCase() : '',
+                    ongelezen: !!(a && a.classList.contains('notification__btn--unread')),
+                };
+            }))
+            """));
+        var uit = new List<SmartschoolMelding>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var e in doc.RootElement.EnumerateArray())
+            {
+                string S(string naam) => e.TryGetProperty(naam, out var v) ? v.GetString() ?? "" : "";
+                var href = S("href");
+                var url = href.Length > 0 ? (href.StartsWith("http") ? href : Basis + href) : "";
+                var sleutel = href.Length > 0 ? href : $"{S("titel")}|{S("info")}|{S("datum")}";
+                uit.Add(new SmartschoolMelding(kind, sleutel, S("module"), S("titel"), S("info"), S("datum"), url,
+                    e.TryGetProperty("ongelezen", out var o) && o.ValueKind == JsonValueKind.True));
+            }
+        }
+        catch
+        {
+            _debugStappen.Add($"meldingen {kind}: onleesbaar");
+        }
+        return uit;
+    }
+
+    /// <summary>Wist één melding uit het belletje (het kruisje van die regel). Zelfde pagina.</summary>
+    private async Task<bool> WisMeldingAsync(string sleutel, CancellationToken ct)
+    {
+        var uit = await JsAsync(
+            $$"""
+            (function () {
+                const sleutel = {{JsonSerializer.Serialize(sleutel)}};
+                for (const n of document.querySelectorAll('.js-notifs-list .notification')) {
+                    const a = n.querySelector('a.js-notif-btn, a');
+                    const href = a ? (a.getAttribute('href') || '') : '';
+                    const infos = [...n.querySelectorAll('.notification__info')]
+                        .map(i => (i.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+                    const titel = (n.querySelector('.notification__title')?.textContent || '').replace(/\s+/g, ' ').trim();
+                    const alt = titel + '|' + infos.filter(t => !/^\d{4}-\d{2}-\d{2}/.test(t)).join(' · ') + '|' +
+                        (infos.find(t => /^\d{4}-\d{2}-\d{2}/.test(t)) || '');
+                    if (href === sleutel || alt === sleutel) {
+                        const x = n.querySelector('.js-notif-close');
+                        if (!x) return 'geen-kruisje';
+                        x.click();
+                        return 'ok';
+                    }
+                }
+                return 'niet-gevonden';
+            })()
+            """);
+        await Task.Delay(400, ct);
+        return uit.Contains("ok");
+    }
+
+    /// <summary>
+    /// Meldingen van dit kind verwerken: berichtmeldingen waarvan het bericht al uit het
+    /// Postvak IN is (in de cockpit gearchiveerd) worden gewist — anders blijft het
+    /// belletje in Smartschool eeuwig een teller tonen; overige meldingen komen terug
+    /// als cockpitrijen. Aanroeper staat op de berichtenpagina van het kind.
+    /// </summary>
+    private async Task<List<SmartschoolMelding>> VerwerkMeldingenAsync(
+        string kind, HashSet<string> inboxIds, CancellationToken ct)
+    {
+        var meldingen = await LeesMeldingenAsync(kind);
+        var overige = new List<SmartschoolMelding>();
+        foreach (var m in meldingen)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (m.MsgId.Length > 0)
+            {
+                if (!inboxIds.Contains(m.MsgId))
+                {
+                    var gewist = await WisMeldingAsync(m.Sleutel, ct);
+                    _debugStappen.Add($"melding {kind} bericht {m.MsgId} (al afgehandeld): " +
+                        (gewist ? "gewist" : "niet gewist"));
+                }
+                continue; // berichtmeldingen staan al als bericht in de cockpit
+            }
+            overige.Add(m);
+        }
+        return overige;
     }
 
     // ---------- Hulpjes ----------
+
+    /// <summary>
+    /// De wizard "Berichtenonderhoud" (jQuery-dialoog) verschijnt af en toe bovenop de
+    /// berichtenmodule en blokkeert de lijst. Sluiten via het kruisje — nooit via OK, dat
+    /// zou berichten verplaatsen/verwijderen — en anders de dialoog client-side weghalen.
+    /// </summary>
+    private async Task SluitWizardAsync()
+    {
+        try
+        {
+            await JsAsync(
+                """
+                (function () {
+                    const dlg = document.querySelector('.ui-dialog.rulesDialogue');
+                    if (!dlg) return 'geen';
+                    dlg.querySelector('.ui-dialog-titlebar-close')?.click();
+                    setTimeout(() => {
+                        document.querySelectorAll('.ui-dialog.rulesDialogue, .ui-widget-overlay').forEach(e => e.remove());
+                    }, 300);
+                    return 'gesloten';
+                })()
+                """);
+        }
+        catch
+        {
+            // Best effort.
+        }
+    }
+
 
     private async Task NavigeerAsync(string url, CancellationToken ct)
     {
         _web!.CoreWebView2!.Navigate(url);
         await Task.Delay(1200, ct);
+        await SluitWizardAsync();
         // Terug op /login of de verificatievraag beland (Smartschool laat de sessie
         // geregeld vallen, o.a. na de kindwissel): opnieuw aanmelden en de doelpagina
         // nog één keer laden.
@@ -1022,6 +1425,7 @@ public sealed class SmartschoolClient : IDisposable
         {
             _web.CoreWebView2!.Navigate(url);
             await Task.Delay(1200, ct);
+            await SluitWizardAsync();
         }
     }
 

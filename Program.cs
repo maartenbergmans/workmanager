@@ -197,6 +197,96 @@ static class Program
             return;
         }
 
+        // Diagnose: stille ISPnext-peiling (zonder aanmelden) en de samenvatting afdrukken.
+        if (args.Length == 1 && args[0] == "--isppeil")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarIsp = new TaskCompletionSource<string>();
+            var pompIsp = new System.Windows.Forms.Timer { Interval = 50 };
+            pompIsp.Tick += async (_, _) =>
+            {
+                pompIsp.Stop();
+                try
+                {
+                    var p = await IspNextClient.Instance.PeilAsync(CancellationToken.None);
+                    klaarIsp.SetResult(p is null ? "geen uitkomst (venster open of pagina onleesbaar)"
+                        : IspRadar.Samenvatting(p) + Environment.NewLine + string.Join(Environment.NewLine,
+                            p.Facturen.Select(f => $"  {f.Leverancier} | {f.Factuurnummer} | {f.BedragText} {f.Valuta} | " +
+                                $"verval {f.Vervaldatum}{(f.Vervallen ? " ⚠" : "")} | {(f.Auto ? "AUTO" : "handmatig")}: {f.Reden}")));
+                }
+                catch (Exception ex)
+                {
+                    klaarIsp.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompIsp.Start();
+            Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine(klaarIsp.Task.Result);
+            return;
+        }
+
+        // Diagnose: één Smartschool-bericht lezen + renderen. Gebruik: --smslees <msgId> uit.png [poll]
+        if (args.Length is 3 or 4 && args[0] == "--smslees")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarSl = new TaskCompletionSource<string>();
+            var pompSl = new System.Windows.Forms.Timer { Interval = 50 };
+            pompSl.Tick += async (_, _) =>
+            {
+                pompSl.Stop();
+                try
+                {
+                    await CockpitForm.SmartschoolWeergaveScreenshotAsync(args[1], args[2],
+                        args.Length == 4 && args[3] == "poll");
+                    klaarSl.SetResult("OK: " + args[2]);
+                }
+                catch (Exception ex)
+                {
+                    klaarSl.SetResult("FOUT: " + ex);
+                }
+                Application.ExitThread();
+            };
+            pompSl.Start();
+            Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine(klaarSl.Task.Result);
+            return;
+        }
+
+        // Diagnose: Smartschool-pagina openen, script draaien (of "@bestand.js"; Promise mag)
+        // en optioneel een screenshot. Gebruik: --smsdiag "<pad of ->" "<script>" [uit.png]
+        if (args.Length is 3 or 4 && args[0] == "--smsdiag")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarSd = new TaskCompletionSource<string>();
+            var pompSd = new System.Windows.Forms.Timer { Interval = 50 };
+            pompSd.Tick += async (_, _) =>
+            {
+                pompSd.Stop();
+                try
+                {
+                    klaarSd.SetResult(await SmartschoolClient.Instance.DiagnoseInAsync(args[1],
+                        args[2].StartsWith('@') ? File.ReadAllText(args[2][1..]) : args[2],
+                        args.Length == 4 ? args[3] : "", CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarSd.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompSd.Start();
+            Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine(klaarSd.Task.Result);
+            return;
+        }
+
         // Diagnose: één Smartschool-bericht archiveren en het resultaat tonen (true =
         // rij is echt uit het Postvak IN verdwenen). De tray-app moet dicht zijn.
         // Gebruik: WorkManager.exe --smsarchief Emilia 278474
@@ -295,6 +385,93 @@ static class Program
             return;
         }
 
+        // Zelfde als --owajs, maar dan in de verborgen WhatsApp-sessie, optioneel met een
+        // chat open (markeert die als gelezen). Gebruik: --wajs "<chat of leeg>" "<script>"
+        // (of "@pad\naar\script.js").
+        // --waberichten "<chat>" draait de bubbel-leescode en drukt de tekst af.
+        if ((args.Length == 3 && args[0] == "--wajs") ||
+            (args.Length == 2 && args[0] == "--waberichten"))
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarWa = new TaskCompletionSource<string>();
+            var pompWa = new System.Windows.Forms.Timer { Interval = 50 };
+            pompWa.Tick += async (_, _) =>
+            {
+                pompWa.Stop();
+                try
+                {
+                    klaarWa.SetResult(args[0] == "--wajs"
+                        ? await WhatsAppClient.Instance.DiagnoseJsAsync(args[1],
+                            args[2].StartsWith('@') ? File.ReadAllText(args[2][1..]) : args[2],
+                            CancellationToken.None)
+                        : await WhatsAppClient.Instance.DiagnoseBerichtenAsync(
+                            args[1], CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarWa.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompWa.Start();
+            Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine(klaarWa.Task.Result);
+            return;
+        }
+
+        // Diagnose: screenshot van een chat zoals WhatsApp Web hem toont (--wascreenshot) of
+        // zoals de cockpit hem uit de cache rendert (--wahtml), om ze te kunnen vergelijken.
+        // Gebruik: --wascreenshot "<chat>" uit.png ["<js vooraf>"]  |  --wahtml "<chat>" uit.png [vers,donker]
+        if (args.Length is 3 or 4 && args[0] is "--wascreenshot" or "--wahtml" or "--teamshtml" or "--outlookhtml")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarShot = new TaskCompletionSource<string>();
+            var pompShot = new System.Windows.Forms.Timer { Interval = 50 };
+            pompShot.Tick += async (_, _) =>
+            {
+                pompShot.Stop();
+                try
+                {
+                    if (args[0] == "--wascreenshot")
+                    {
+                        await WhatsAppClient.Instance.DiagnoseScreenshotAsync(
+                            args[1], args[2], CancellationToken.None,
+                            args.Length == 4 ? args[3] : "");
+                    }
+                    else if (args[0] == "--outlookhtml")
+                    {
+                        await CockpitForm.OutlookWeergaveScreenshotAsync(args[1], args[2],
+                            vers: args.Length == 4 && args[3].Contains("vers"));
+                    }
+                    else if (args[0] == "--teamshtml")
+                    {
+                        await CockpitForm.TeamsWeergaveScreenshotAsync(args[1], args[2],
+                            vers: args.Length == 4 && args[3].Contains("vers"),
+                            donker: args.Length == 4 && args[3].Contains("donker"));
+                    }
+                    else
+                    {
+                        await CockpitForm.WaWeergaveScreenshotAsync(args[1], args[2],
+                            vers: args.Length == 4 && args[3].Contains("vers"),
+                            donker: args.Length == 4 && args[3].Contains("donker"));
+                    }
+                    klaarShot.SetResult("OK: " + args[2]);
+                }
+                catch (Exception ex)
+                {
+                    klaarShot.SetResult("FOUT: " + ex);
+                }
+                Application.ExitThread();
+            };
+            pompShot.Start();
+            Application.Run();
+            Console.WriteLine(klaarShot.Task.Result);
+            return;
+        }
+
         // Diagnose: een Teams-chat openen en de DOM-opbouw van de berichten dumpen
         // (auteurskandidaten). Zonder naam: de chatlijst tonen.
         if (args.Length >= 1 && args[0] == "--teamschat")
@@ -323,6 +500,39 @@ static class Program
             return;
         }
 
+        // Diagnose: chat openen, script draaien (of "@pad.js"; mag een Promise opleveren) en
+        // optioneel een screenshot van de echte Teams-weergave maken.
+        // Gebruik: --teamsdiag "<chat>" "<script of @bestand of leeg>" [uit.png]
+        if (args.Length is 3 or 4 && args[0] == "--teamsdiag")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaarDiag = new TaskCompletionSource<string>();
+            var pompDiag = new System.Windows.Forms.Timer { Interval = 50 };
+            pompDiag.Tick += async (_, _) =>
+            {
+                pompDiag.Stop();
+                try
+                {
+                    // "-" = geen chat openen (PowerShell laat een lege "" weg).
+                    klaarDiag.SetResult(await TeamsClient.Instance.DiagnoseInChatAsync(
+                        args[1] == "-" ? "" : args[1],
+                        args[2].StartsWith('@') ? File.ReadAllText(args[2][1..]) : args[2],
+                        args.Length == 4 ? args[3] : "", CancellationToken.None));
+                }
+                catch (Exception ex)
+                {
+                    klaarDiag.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pompDiag.Start();
+            Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine(klaarDiag.Task.Result);
+            return;
+        }
+
         // Diagnose: de bubbelweergave-leescode zelf draaien en het resultaat afdrukken.
         if (args.Length == 2 && args[0] == "--teamsberichten")
         {
@@ -338,10 +548,16 @@ static class Program
                     var berichten = await TeamsClient.Instance.LaatsteBerichtenAsync(
                         args[1], 15, CancellationToken.None);
                     klaarBer.SetResult(string.Join(Environment.NewLine, berichten.Select(b =>
-                        $"[{b.Tijd}] {(b.Uitgaand ? "IK" : b.Auteur)}: " +
-                        $"{(b.Beeld.Length > 0 ? $"[📷 {b.Beeld.Length} tekens] "
+                        b.Soort.Length > 0 ? $"<{b.Soort}> {b.Tekst}" :
+                        $"[{b.Tijd} | {b.TijdVol} | {b.Iso}] {(b.Uitgaand ? "IK" : b.Auteur)}" +
+                        (b.AvatarUrl.Length > 0 ? $" avatar:{b.AvatarUrl.Length / 1024}kB" : "") +
+                        (b.Status.Length > 0 ? $" ✓{b.Status}" : "") + (b.Bewerkt ? " bewerkt" : "") +
+                        (b.Vermeld ? " @vermeld" : "") + ": " +
+                        $"{(b.Beeld.Length > 0 ? $"[📷 {b.Beeld.Length / 1024} kB] "
                             : b.Foto ? "[📷 niet opgehaald] " : "")}" +
-                        $"{b.Tekst[..Math.Min(60, b.Tekst.Length)]}")));
+                        TeamsClient.TranscriptTekst(b).ReplaceLineEndings(" ⏎ ")[..Math.Min(160,
+                            TeamsClient.TranscriptTekst(b).ReplaceLineEndings(" ⏎ ").Length)] +
+                        (b.Html.Length > 0 ? $"  {{html {b.Html.Length}}}" : ""))));
                 }
                 catch (Exception ex)
                 {
@@ -351,6 +567,7 @@ static class Program
             };
             pompBer.Start();
             Application.Run();
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.WriteLine(klaarBer.Task.Result);
             return;
         }

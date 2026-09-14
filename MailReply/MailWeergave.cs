@@ -80,11 +80,28 @@ internal static class MailWeergave
               </style>
               """
             : "";
+        // WhatsApp heeft een eigen kop (foto, naam, deelnemers) zoals WhatsApp Web; de mailkop
+        // erboven (laatste bericht als onderwerp + tijdstip) is dan dubbel.
+        var waKop = (mail.WhatsAppChat.Length > 0 && body.Contains("wa-kop")) ||
+            (mail.TeamsChat.Length > 0 && body.Contains("tm-kop"));
 
         // Donkere pagina met de mail als witte afgeronde kaart (mails zijn op wit ontworpen).
+        // Geciteerd antwoordverleden inklapbaar: Outlook-mails krijgen het <details>-blok al
+        // bij het uitlezen (in de OWA-DOM); Gmail-HTML hier, op het gmail_quote-blok.
+        body = VouwGmailVerleden(body);
+        const string VerledenCss =
+            """
+            <style>
+              details.wm-verleden { margin-top: 14px; }
+              details.wm-verleden > summary { cursor: pointer; color: #5f6368; font-size: 12px;
+                padding: 6px 0; border-top: 1px solid #e0e0e0; list-style: none; user-select: none; }
+              details.wm-verleden > summary::before { content: "▸ "; }
+              details[open].wm-verleden > summary::before { content: "▾ "; }
+            </style>
+            """;
         var html =
             $"""
-            <!doctype html><html><head><meta charset="utf-8">{chatCss}</head>
+            <!doctype html><html><head><meta charset="utf-8">{VerledenCss}{chatCss}</head>
             <body style="margin:0;background:{Theme.Hex(Theme.Bg)};font-family:'Segoe UI Variable Text','Segoe UI',Arial,sans-serif;padding:12px">
             {(terugNaarCcOverzicht
                 ? "<a href=\"wm-ccterug:\" style=\"display:inline-block;margin:0 0 10px;padding:4px 10px;" +
@@ -94,11 +111,16 @@ internal static class MailWeergave
                 : "")}
             <div class="wm-kaart" style="background:#ffffff;border-radius:12px;overflow:hidden;
                  box-shadow:0 6px 28px rgba(0,0,0,{(Theme.Palet.Donker ? ".5" : ".14")})">
-            <div style="padding:12px 16px;background:#f6f8fc;border-bottom:1px solid #e0e0e0;font-size:13px">
+            <div style="padding:12px 16px;background:#f6f8fc;border-bottom:1px solid #e0e0e0;font-size:13px{(waKop ? ";display:none" : "")}">
+            {(mail.Avatar.StartsWith("data:image", StringComparison.OrdinalIgnoreCase) ||
+              mail.Avatar.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? $"<img src=\"{mail.Avatar}\" style=\"float:left;width:44px;height:44px;border-radius:50%;object-fit:cover;margin:0 12px 6px 0\">"
+                : "")}
               <div style="font-size:16px;font-weight:600;color:#1f1f1f;margin-bottom:6px">{WebUtility.HtmlEncode(mail.Onderwerp)}</div>
             {(mail.Van.Length == 0 && mail.VanAdres.Length == 0
                 ? "" // taak zonder bronbericht: geen afzender, dus ook geen lege "<>"-regel
-                : $"<div><b>{WebUtility.HtmlEncode(mail.Van)}</b> <span style=\"color:#5f6368\">&lt;{WebUtility.HtmlEncode(mail.VanAdres)}&gt;</span></div>")}
+                : $"<div><b>{WebUtility.HtmlEncode(mail.Van)}</b>" + (mail.VanAdres.Length == 0 ? "" :
+                    $" <span style=\"color:#5f6368\">&lt;{WebUtility.HtmlEncode(mail.VanAdres)}&gt;</span>") + "</div>")}
             {(mail.Aan.Count > 1
                 ? $"<div style=\"color:#5f6368\">Aan: {WebUtility.HtmlEncode(string.Join("; ", mail.Aan))}</div>"
                 : "")}
@@ -129,6 +151,30 @@ internal static class MailWeergave
             Datum = mail.Datum,
             Tekst = mail.Tekst.Length > 100_000 ? mail.Tekst[..100_000] + "\n[… ingekort …]" : mail.Tekst,
         });
+    }
+
+    /// <summary>
+    /// Zet het geciteerde verleden van een Gmail-mail (het gmail_quote-blok, dat tot het
+    /// einde van de body loopt) in een ingeklapt &lt;details&gt;-blok — alleen als er een
+    /// eigen bericht vóór staat, anders blijft alles open.
+    /// </summary>
+    private static string VouwGmailVerleden(string body)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(body,
+            @"<(div|blockquote)[^>]*class=""[^""]*gmail_quote[^""]*""",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success || body.Contains("wm-verleden", StringComparison.Ordinal))
+        {
+            return body;
+        }
+        var voor = System.Text.RegularExpressions.Regex.Replace(body[..m.Index], "<[^>]+>", " ");
+        if (WebUtility.HtmlDecode(voor).Trim().Length < 40)
+        {
+            return body;
+        }
+        return body[..m.Index] +
+            "<details class=\"wm-verleden\"><summary>Eerdere berichten in deze conversatie</summary>" +
+            body[m.Index..] + "</details>";
     }
 
     /// <summary>
