@@ -82,8 +82,32 @@ public class TeamNakijkForm : Form
         bewerken.Click += (_, _) => Bewerken();
         var latenStaan = new ModernButton { Text = "Laten staan", Width = 115 };
         latenStaan.Click += (_, _) => VerwijderSelectieUitLijst();
+        // Gesprekspunten: Claude vat per teamlid samen wat sleept, wat af is en waar een
+        // afspraak nodig is — voorbereiding voor de 1-op-1 of de teammeeting.
+        var gesprek = new ModernButton { Text = "Gesprekspunten (Claude)…", Width = 200, Glyph = Fluent.Ster };
+        gesprek.Click += async (_, _) =>
+        {
+            gesprek.Enabled = false;
+            gesprek.Bezig = true;
+            try
+            {
+                var tekst = await ClaudeTeamAntwoord.GesprekspuntenAsync(_data, CancellationToken.None);
+                var pad = Path.Combine(Path.GetTempPath(), "WorkManager-gesprekspunten.md");
+                File.WriteAllText(pad, $"# Gesprekspunten team — {DateTime.Now:d MMMM yyyy}\n\n{tekst}\n");
+                new LeesVenster("Gesprekspunten per teamlid", pad).Show(this);
+            }
+            catch (Exception ex)
+            {
+                Toast.Fout(this, "Gesprekspunten mislukt", ex.Message);
+            }
+            finally
+            {
+                gesprek.Enabled = true;
+                gesprek.Bezig = false;
+            }
+        };
         _status = new Label { AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(12, 11, 0, 0) };
-        acties.Controls.AddRange(new Control[] { afgevinkt, deadline, uitMail, bewerken, latenStaan, _status });
+        acties.Controls.AddRange(new Control[] { afgevinkt, deadline, uitMail, bewerken, latenStaan, gesprek, _status });
 
         var knoppen = new FlowLayoutPanel
         {

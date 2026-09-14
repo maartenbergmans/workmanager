@@ -592,10 +592,15 @@ public class TeamTasksForm : Form
             var hoog = eigen.Count(t => t.Prioriteit == 0);
             var vandaagDag = DateOnly.FromDateTime(DateTime.Now);
             var teLaat = eigen.Count(t => t.Deadline is { } dl && dl < vandaagDag);
-            // Werkdruk in één oogopslag: hoeveel open, hoeveel daarvan in de mail (★★★), te laat.
+            // Werkdruk in één oogopslag: hoeveel open, hoeveel daarvan in de mail (★★★), te
+            // laat, en wanneer er voor het laatst iets afgewerkt werd (stilte valt zo op).
+            var laatstKlaar = _data.Taken
+                .Where(t => t.Klaar && string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase))
+                .Max(t => t.KlaarOp);
             var group = new ListViewGroup(
                 $"{lid}  ({eigen.Count} open" + (hoog > 0 ? $" · {hoog} ★★★" : "") +
                 (teLaat > 0 ? $" · ⚠ {teLaat} te laat" : "") + ")" +
+                (laatstKlaar is { } lk ? $"  ·  laatst afgewerkt {lk.LocalDateTime:d/M}" : "") +
                 (AfwezigVandaag(lid) ? "  ·  🏖 vandaag afwezig" : ""))
             {
                 Tag = lid,
@@ -853,6 +858,19 @@ public class TeamTasksForm : Form
         _data.Taken.Add(taak);
         TeamTaskStore.Save(_data);
         VulLijst(taak.Id);
+    }
+
+    /// <summary>Afvinken vanuit een ander venster (antwoord van een teamlid via de cockpit).</summary>
+    public void VinkAf(Guid id)
+    {
+        if (_data.Taken.FirstOrDefault(t => t.Id == id) is not { } taak || taak.Klaar)
+        {
+            return;
+        }
+        taak.Klaar = true;
+        taak.KlaarOp = DateTimeOffset.Now;
+        TeamTaskStore.Save(_data);
+        VulLijst();
     }
 
     /// <summary>Zet de prioriteit van de geselecteerde taken.</summary>

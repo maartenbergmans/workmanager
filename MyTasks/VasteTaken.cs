@@ -69,7 +69,8 @@ public static class VasteTaken
                 break;
             case DayOfWeek.Friday:
                 MaakEensPerDag(vandaag, WeekmailTaak, s => s.WeekmailAangemaakt,
-                    (s, d) => s.WeekmailAangemaakt = d);
+                    (s, d) => s.WeekmailAangemaakt = d, bestaandePrefix: WeekmailTaak);
+                WerkWeekmailTaakBij();
                 break;
         }
         if (vandaag.Day == DateTime.DaysInMonth(vandaag.Year, vandaag.Month))
@@ -126,6 +127,37 @@ public static class VasteTaken
         if (stateGewijzigd)
         {
             SaveState(state);
+        }
+    }
+
+    /// <summary>
+    /// Zet in de weekmailtaak hoeveel slepende ★★★-taken er na te kijken zijn, zodat je
+    /// vrijdag meteen ziet of de mail een formaliteit is of een opruimbeurt.
+    /// </summary>
+    private static void WerkWeekmailTaakBij()
+    {
+        try
+        {
+            var data = MijnTaakStore.Load();
+            var taak = data.Taken.FirstOrDefault(t => !t.Klaar &&
+                t.Tekst.StartsWith(WeekmailTaak, StringComparison.OrdinalIgnoreCase));
+            if (taak is null)
+            {
+                return;
+            }
+            var kandidaten = TeamNakijkForm.Kandidaten(TeamTaskStore.Load()).Count;
+            var tekst = kandidaten > 0
+                ? $"{WeekmailTaak} — {kandidaten} slepende ★★★-taken na te kijken"
+                : WeekmailTaak;
+            if (taak.Tekst != tekst)
+            {
+                taak.Tekst = tekst;
+                MijnTaakStore.Save(data);
+            }
+        }
+        catch
+        {
+            // Comfort: de taak zelf staat er sowieso.
         }
     }
 

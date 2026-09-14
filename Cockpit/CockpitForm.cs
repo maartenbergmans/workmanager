@@ -1412,6 +1412,11 @@ public class CockpitForm : Form
         var teamTaakItem = new ToolStripMenuItem("Teamtaak maken…");
         teamTaakItem.Click += (_, _) => MaakTeamTaakVanBericht();
         berichtenMenu.Items.Add(teamTaakItem);
+        // Antwoord van een teamlid op de weekmail: Claude leest wat af is en wat er nieuw
+        // bij komt; Maarten bevestigt per regel.
+        var teamAntwoordItem = new ToolStripMenuItem("Teamtaken bijwerken uit dit antwoord (Claude)…");
+        teamAntwoordItem.Click += async (_, _) => await TeamtakenUitAntwoordAsync();
+        berichtenMenu.Items.Add(teamAntwoordItem);
         var mailTimesheetItem = new ToolStripMenuItem("Timesheet maken…");
         mailTimesheetItem.Click += async (_, _) =>
         {
@@ -7931,6 +7936,72 @@ public class CockpitForm : Form
             TeamTaskStore.Save(data);
         }
         Toast.Toon(this, $"Teamtaak voor {dialog.Lid} toegevoegd", Fluent.Checkbox);
+    }
+
+    /// <summary>
+    /// Leest met Claude het geselecteerde bericht als antwoord van een teamlid: afgewerkte
+    /// taken afvinken en genoemde nieuwe taken toevoegen, na bevestiging.
+    /// </summary>
+    private async Task TeamtakenUitAntwoordAsync()
+    {
+        if (GeselecteerdBericht() is not { } bericht)
+        {
+            return;
+        }
+        var data = TeamTaskStore.Load();
+        Toast.Toon(this, "Claude leest het antwoord…", Fluent.Ster);
+        ClaudeTeamAntwoord.Uitkomst uitkomst;
+        try
+        {
+            uitkomst = await ClaudeTeamAntwoord.GenereerAsync(bericht.Van, ZonderHistorie(bericht.Tekst), data, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Toast.Fout(this, "Antwoord lezen mislukt", ex.Message);
+            return;
+        }
+        using var dialog = new TeamAntwoordForm(bericht.Van, uitkomst);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+        // Staat het Taken team-venster open, dan telt zíjn geheugenkopie (zelfde regel als
+        // bij "Teamtaak maken"); anders rechtstreeks in het bestand.
+        var open = Application.OpenForms.OfType<TeamTasksForm>().FirstOrDefault();
+        data = open is null ? TeamTaskStore.Load() : null!;
+        foreach (var taak in dialog.AfTeVinken)
+        {
+            if (open is not null)
+            {
+                open.VinkAf(taak.Id);
+            }
+            else if (data.Taken.FirstOrDefault(t => t.Id == taak.Id) is { } echte)
+            {
+                echte.Klaar = true;
+                echte.KlaarOp = DateTimeOffset.Now;
+            }
+        }
+        foreach (var v in dialog.ToeTeVoegen)
+        {
+            var nieuw = new TeamTaak { Lid = v.Lid, Tekst = v.Tekst, Prioriteit = v.Prioriteit, Deadline = v.Deadline };
+            if (open is not null)
+            {
+                open.VoegTaakToe(nieuw);
+            }
+            else
+            {
+                data.Taken.Add(nieuw);
+            }
+        }
+        if (open is null)
+        {
+            TeamTaskStore.Save(data);
+        }
+        Toast.Toon(this, $"{dialog.AfTeVinken.Count} afgevinkt, {dialog.ToeTeVoegen.Count} toegevoegd", Fluent.Check);
     }
 
     private async Task TaakVanBerichtAsync(MailBericht? bron = null)

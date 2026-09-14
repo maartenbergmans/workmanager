@@ -197,6 +197,27 @@ static class Program
             return;
         }
 
+        // Diagnose: gesprekspunten per teamlid (Claude) of een teamantwoord laten lezen.
+        // Gebruik: --teamgesprek  |  --teamantwoord "<afzender>" "@mail.txt"
+        if ((args.Length == 1 && args[0] == "--teamgesprek") || (args.Length == 3 && args[0] == "--teamantwoord"))
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            var data = TeamTaskStore.Load();
+            if (args[0] == "--teamgesprek")
+            {
+                Console.WriteLine(ClaudeTeamAntwoord.GesprekspuntenAsync(data, CancellationToken.None).GetAwaiter().GetResult());
+            }
+            else
+            {
+                var mail = args[2].StartsWith('@') ? File.ReadAllText(args[2][1..]) : args[2];
+                var uit = ClaudeTeamAntwoord.GenereerAsync(args[1], mail, data, CancellationToken.None).GetAwaiter().GetResult();
+                Console.WriteLine("samenvatting: " + uit.Samenvatting);
+                foreach (var t in uit.Klaar) Console.WriteLine("klaar: [" + t.Lid + "] " + t.Tekst);
+                foreach (var n in uit.Nieuw) Console.WriteLine("nieuw: [" + n.Lid + "] ★" + n.Prioriteit + " " + n.Tekst);
+            }
+            return;
+        }
+
         // Diagnose: de weekmail voor het team opbouwen uit de huidige data en afdrukken.
         if (args.Length == 1 && args[0] == "--teammail")
         {
