@@ -21,6 +21,7 @@ public class TeamTasksForm : Form
     private bool _loading;
     private bool _negeerCheck; // dubbelklik mag de checkbox niet omzetten
     private bool _sorteerOpPrio; // weergave op ★★★ eerst; de eigen (sleep)volgorde blijft bewaard
+    private string _filterTekst = ""; // zoekveld: alleen taken (of subtaken) met deze tekst tonen
 
     /// <summary>Inspring-/bulletprefix waarmee subtaakrijen onder hun hoofdtaak verschijnen.</summary>
     private const string SubPrefix = "        ◦  ";
@@ -95,6 +96,17 @@ public class TeamTasksForm : Form
         var ledenItem = new ToolStripMenuItem("Leden beheren…");
         ledenItem.Click += (_, _) => LedenBeheren();
         beheerMenu.Items.Add(ledenItem);
+        var afgerondItem = new ToolStripMenuItem("\"Afgerond sinds de vorige mail\" in de weekmail")
+        {
+            Checked = _data.AfgerondInMail, CheckOnClick = true,
+        };
+        afgerondItem.CheckedChanged += (_, _) =>
+        {
+            _data.AfgerondInMail = afgerondItem.Checked;
+            TeamTaskStore.Save(_data);
+            WerkPreviewBij();
+        };
+        beheerMenu.Items.Add(afgerondItem);
         var stijlItem = new ToolStripMenuItem("Stijl weekmail…");
         stijlItem.Click += (_, _) =>
         {
@@ -117,12 +129,31 @@ public class TeamTasksForm : Form
             VulLijst();
         };
 
+        // Zoekveld: bij 40 open taken plus subtaken is bladeren te traag.
+        var filter = new TextBox
+        {
+            Width = 160, PlaceholderText = "Zoeken…", Margin = new Padding(8, 5, 3, 3),
+        };
+        filter.TextChanged += (_, _) =>
+        {
+            _filterTekst = filter.Text.Trim();
+            VulLijst();
+        };
+        filter.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                filter.Clear();
+                e.SuppressKeyPress = true;
+            }
+        };
+
         _status = new Label { AutoSize = true };
         Theme.AsStatus(_status);
         toolbar.Controls.AddRange(new Control[]
         {
             _lidCombo, _nieuweTaak, addButton, claudeButton, _mailButton, vakantiesButton,
-            beheerButton, prioSort, _status,
+            beheerButton, prioSort, filter, _status,
         });
 
         // Takenlijst: één groep per teamlid, vinkje = klaar
@@ -135,10 +166,13 @@ public class TeamTasksForm : Form
             ShowItemToolTips = true, // subtaken verschijnen als tooltip op de taak
         };
         _list.Columns.Add("Taak", 800);
+        _list.Columns.Add("Wanneer", 150); // deadline ("tegen vr 19/9") of leeftijd ("sinds 23/7 (7 w)")
+        _list.Columns.Add("Mail", 62);     // 📧 3× = al drie keer in de weekmail
         _list.Columns.Add("Prio", 70);
         _list.Resize += (_, _) =>
-            _list.Columns[0].Width = Math.Max(200, _list.ClientSize.Width - _list.Columns[1].Width - 4);
-        _list.SterrenKolom = 1;
+            _list.Columns[0].Width = Math.Max(200, _list.ClientSize.Width -
+                _list.Columns[1].Width - _list.Columns[2].Width - _list.Columns[3].Width - 4);
+        _list.SterrenKolom = 3;
         _list.SterGeklikt += (item, aantal) =>
         {
             var prio = 3 - aantal; // 3 sterren = hoog (0), 1 ster = laag (2)
@@ -308,6 +342,21 @@ public class TeamTasksForm : Form
             prioMenuItem.DropDownItems.Add(keuze);
         }
         listMenu.Items.Add(prioMenuItem);
+        // Deadline snel zetten: de gangbare keuzes; een andere datum via Bewerken….
+        var deadlineMenuItem = new ToolStripMenuItem("Deadline");
+        foreach (var (naam, kies) in new (string, Func<DateOnly?>)[]
+                 {
+                     ("Deze vrijdag", () => Vrijdag(0)),
+                     ("Volgende vrijdag", () => Vrijdag(1)),
+                     ("Over twee weken (vr)", () => Vrijdag(2)),
+                     ("Geen deadline", () => null),
+                 })
+        {
+            var keuze = new ToolStripMenuItem(naam);
+            keuze.Click += (_, _) => SelectieDeadline(kies());
+            deadlineMenuItem.DropDownItems.Add(keuze);
+        }
+        listMenu.Items.Add(deadlineMenuItem);
         var verwijderItem = new ToolStripMenuItem("Verwijderen\tDel");
         verwijderItem.Click += (_, _) => SelectieVerwijderen();
         listMenu.Items.Add(verwijderItem);
@@ -487,11 +536,16 @@ public class TeamTasksForm : Form
             // Afgevinkte taken niet meer tonen (per ongeluk afvinken is terug te draaien via
             // de undo-toast direct na het afvinken; opruimen gebeurt via "Afgevinkte opruimen").
             var taken = _data.Taken.Where(t => !t.Klaar &&
-                string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase));
+                string.Equals(t.Lid, lid, StringComparison.OrdinalIgnoreCase) && VoldoetAanFilter(t));
             if (_sorteerOpPrio)
             {
-                // OrderBy is stabiel: binnen dezelfde prioriteit blijft de eigen volgorde staan.
-                taken = taken.OrderBy(t => t.Prioriteit);
+                // OrderBy is stabiel: binnen dezelfde prioriteit blijft de eigen volgorde staan;
+                // binnen een prioriteit komt een (naderende) deadline eerst.
+                taken = taken.OrderBy(t => t.Prioriteit).ThenBy(t => t.Deadline ?? DateOnly.MaxValue);
+            }
+            if (_filterTekst.Length > 0)
+            {
+                group.CollapsedState = ListViewGroupCollapsedState.Expanded; // zoekresultaat altijd zichtbaar
             }
             foreach (var taak in taken)
             {
@@ -500,6 +554,8 @@ public class TeamTasksForm : Form
                     Tag = taak,
                     Checked = taak.Klaar,
                 };
+                item.SubItems.Add("");
+                item.SubItems.Add("");
                 item.SubItems.Add("");
                 MaakItemOp(item, taak);
                 _list.Items.Add(item);
@@ -520,6 +576,8 @@ public class TeamTasksForm : Form
                         Tag = sub,
                         Checked = sub.Klaar,
                     };
+                    subItem.SubItems.Add("");
+                    subItem.SubItems.Add("");
                     subItem.SubItems.Add("");
                     MaakSubItemOp(subItem, sub);
                     _list.Items.Add(subItem);
@@ -550,8 +608,68 @@ public class TeamTasksForm : Form
         item.SubItems[0].ForeColor = taak.Klaar ? Theme.Muted : Theme.Text;
         item.SubItems[0].Font = item.Font;
 
-        var prio = item.SubItems[1];
+        var wanneer = item.SubItems[1];
+        (wanneer.Text, wanneer.ForeColor) = taak.Klaar ? ("", Theme.Muted) : WanneerTekst(taak);
+        var mail = item.SubItems[2];
+        mail.Text = !taak.Klaar && taak.InMail >= 2 ? $"📧 {taak.InMail}×" : "";
+        mail.ForeColor = taak.InMail >= 4 ? Theme.Warn : Theme.Muted;
+        item.ToolTipText = taak.InMail >= 2
+            ? $"Al {taak.InMail} keer in de weekmail (laatst {taak.LaatstInMail?.LocalDateTime:d/M})"
+            : "";
+
+        var prio = item.SubItems[3];
         (prio.Text, prio.ForeColor) = taak.Klaar ? ("", Theme.Muted) : Theme.PrioSterren(taak.Prioriteit);
+    }
+
+    /// <summary>
+    /// "tegen vr 19/9" (rood als de datum voorbij is, accent als het deze week is) of, zonder
+    /// deadline, de leeftijd zodra een taak drie weken of ouder is — zo springen de taken
+    /// eruit die al weken meegaan.
+    /// </summary>
+    private static (string Tekst, Color Kleur) WanneerTekst(TeamTaak taak)
+    {
+        var vandaag = DateOnly.FromDateTime(DateTime.Now);
+        if (taak.Deadline is { } d)
+        {
+            var dagen = d.DayNumber - vandaag.DayNumber;
+            var tekst = "tegen " + d.ToString("ddd d/M", System.Globalization.CultureInfo.GetCultureInfo("nl-BE"));
+            return dagen < 0 ? ("⚠ " + tekst, Theme.Warn)
+                : dagen <= 2 ? (tekst, Theme.Accent)
+                : (tekst, Theme.Text);
+        }
+        var leeftijd = taak.Leeftijd;
+        return leeftijd >= 21
+            ? ($"sinds {taak.Aangemaakt.LocalDateTime:d/M} ({leeftijd / 7} w)", leeftijd >= 42 ? Theme.Warn : Theme.Muted)
+            : ("", Theme.Muted);
+    }
+
+    /// <summary>Eerstvolgende vrijdag (vandaag als het vrijdag is), plus zoveel weken.</summary>
+    private static DateOnly Vrijdag(int wekenErbij)
+    {
+        var vandaag = DateOnly.FromDateTime(DateTime.Now);
+        var naarVrijdag = ((int)DayOfWeek.Friday - (int)vandaag.DayOfWeek + 7) % 7;
+        return vandaag.AddDays(naarVrijdag + 7 * wekenErbij);
+    }
+
+    private bool VoldoetAanFilter(TeamTaak taak) =>
+        _filterTekst.Length == 0 ||
+        taak.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase) ||
+        taak.Subtaken.Any(s => s.Tekst.Contains(_filterTekst, StringComparison.OrdinalIgnoreCase));
+
+    private void SelectieDeadline(DateOnly? deadline)
+    {
+        var taken = _list.SelectedItems.Cast<ListViewItem>()
+            .Select(i => i.Tag).OfType<TeamTaak>().ToList();
+        if (taken.Count == 0)
+        {
+            return;
+        }
+        foreach (var taak in taken)
+        {
+            taak.Deadline = deadline;
+        }
+        TeamTaskStore.Save(_data);
+        VulLijst(taken[0].Id);
     }
 
     private void MaakSubItemOp(ListViewItem item, SubTaak sub)
@@ -562,7 +680,7 @@ public class TeamTasksForm : Form
         item.SubItems[0].ForeColor = sub.Klaar ? Theme.Muted : Theme.Mix(Theme.Text, Theme.Muted, 0.5f);
         item.SubItems[0].Font = item.Font;
 
-        var prio = item.SubItems[1];
+        var prio = item.SubItems[3];
         (prio.Text, prio.ForeColor) = sub.Klaar ? ("", Theme.Muted) : Theme.PrioSterren(sub.Prioriteit);
     }
 
@@ -570,11 +688,18 @@ public class TeamTasksForm : Form
     {
         var open = _data.Taken.Count(t => !t.Klaar);
         var klaar = _data.Taken.Count(t => t.Klaar);
+        // Taken die al weken meegaan of over hun deadline zijn, apart tellen: dat is
+        // waar het gesprek met het teamlid over moet gaan.
+        var vandaag = DateOnly.FromDateTime(DateTime.Now);
+        var oud = _data.Taken.Count(t => !t.Klaar && t.Prioriteit == 0 && t.Leeftijd >= 42);
+        var teLaat = _data.Taken.Count(t => !t.Klaar && t.Deadline is { } dl && dl < vandaag);
+        var extra = (oud > 0 ? $"   ·   {oud} ★★★ ouder dan 6 weken" : "") +
+                    (teLaat > 0 ? $"   ·   ⚠ {teLaat} over deadline" : "");
         // Ook tonen wanneer de teamvakanties het laatst (op donderdag) opgehaald zijn.
         var vak = TeamVakantieCheck.LaatsteSucces is { } d
             ? $"   ·   🌴 vakanties gecheckt {d:ddd d/M}"
             : "   ·   🌴 vakanties nog niet gecheckt";
-        _status.Text = $"{open} open, {klaar} afgevinkt{vak}";
+        _status.Text = $"{open} open, {klaar} afgevinkt{extra}{vak}";
         WerkPreviewBij();
     }
 
@@ -670,6 +795,7 @@ public class TeamTasksForm : Form
         taak.Tekst = form.TaakTekst;
         taak.Lid = form.Lid;
         taak.Prioriteit = form.Prioriteit;
+        taak.Deadline = form.Deadline;
         taak.Subtaken = form.Subtaken;
         TeamTaskStore.Save(_data);
         VulLijst(taak.Id);

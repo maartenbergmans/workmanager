@@ -9,6 +9,7 @@ public class TeamTaakBewerkForm : Form
     private readonly TextBox _tekst;
     private readonly ComboBox _lid;
     private readonly ComboBox _prio;
+    private readonly DatumKiezer _deadline;
     private readonly TextBox _subtaken;
 
     private readonly List<SubTaak> _bestaandeSubtaken;
@@ -16,6 +17,7 @@ public class TeamTaakBewerkForm : Form
     public string TaakTekst => _tekst.Text.Trim();
     public string Lid => _lid.SelectedItem as string ?? "";
     public int Prioriteit => _prio.SelectedIndex; // 0 = hoog, 1 = normaal, 2 = laag
+    public DateOnly? Deadline => _deadline.Waarde;
 
     /// <summary>
     /// De ingegeven subtaken (één per regel). Bestond een subtaak met dezelfde tekst al, dan
@@ -35,7 +37,7 @@ public class TeamTaakBewerkForm : Form
         _bestaandeSubtaken = taak.Subtaken;
         Text = "Taak bewerken";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(600, 420);
+        Size = new Size(600, 460);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -87,6 +89,19 @@ public class TeamTaakBewerkForm : Form
         }, 0, 2);
         grid.Controls.Add(_prio, 1, 2);
 
+        // Deadline: komt als "(tegen vr 19/9)" in de weekmail en kleurt rood in de lijst
+        // zodra ze voorbij is. Leeg = geen afspraakdatum.
+        _deadline = new DatumKiezer
+        {
+            Width = 220, Waarde = taak.Deadline, LeegTekst = "geen deadline",
+        };
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        grid.Controls.Add(new Label
+        {
+            Text = "Deadline:", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 6, 0, 0),
+        }, 0, 3);
+        grid.Controls.Add(_deadline, 1, 3);
+
         _subtaken = new TextBox
         {
             Dock = DockStyle.Fill,
@@ -101,8 +116,8 @@ public class TeamTaakBewerkForm : Form
         {
             Text = "Subtaken:", AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Top,
             Padding = new Padding(0, 6, 0, 0),
-        }, 0, 3);
-        grid.Controls.Add(_subtaken, 1, 3);
+        }, 0, 4);
+        grid.Controls.Add(_subtaken, 1, 4);
 
         var buttons = new FlowLayoutPanel
         {

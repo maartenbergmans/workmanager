@@ -158,7 +158,7 @@ public static class TeamMailBuilder
                 : lid);
             foreach (var taak in taken)
             {
-                sb.AppendLine($"  • {taak.Tekst}");
+                sb.AppendLine($"  • {taak.Tekst}{DeadlineSuffix(taak, taal)}");
                 foreach (var sub in taak.Subtaken
                              .Where(s => !s.Klaar && !string.IsNullOrWhiteSpace(s.Tekst)))
                 {
@@ -166,6 +166,46 @@ public static class TeamMailBuilder
                 }
             }
             sb.AppendLine();
+        }
+
+        // Wat er sinds de vorige weekmail afgewerkt is: het team ziet zijn voortgang terug
+        // en Maarten hoeft het niet apart te melden. Uit te zetten via AfgerondInMail.
+        if (data.AfgerondInMail)
+        {
+            var sinds = data.LaatsteMailVerzonden ?? DateTimeOffset.Now.AddDays(-7);
+            var afgerond = data.Taken
+                .Where(t => t.Klaar && t.KlaarOp is { } k && k > sinds && t.Tekst.Trim().Length > 0 &&
+                            !data.NietInMail.Contains(t.Lid, StringComparer.OrdinalIgnoreCase))
+                .GroupBy(t => t.Lid, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(g => data.Leden.FindIndex(l => l.Equals(g.Key, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (afgerond.Count > 0)
+            {
+                sb.AppendLine(taal switch
+                {
+                    1 => "Terminé depuis le dernier mail :",
+                    2 => "Done since the last mail:",
+                    _ => "Afgerond sinds de vorige mail:",
+                });
+                foreach (var groep in afgerond)
+                {
+                    // Hooguit vijf per persoon: het blok is een schouderklopje, geen logboek.
+                    var lijst = groep.Select(t => t.Tekst.Trim()).ToList();
+                    var rest = lijst.Count - 5;
+                    var regel = string.Join(" · ", lijst.Take(5));
+                    if (rest > 0)
+                    {
+                        regel += taal switch
+                        {
+                            1 => $" · et {rest} autres",
+                            2 => $" · and {rest} more",
+                            _ => $" · en nog {rest} andere",
+                        };
+                    }
+                    sb.AppendLine($"  {groep.Key}: {regel}");
+                }
+                sb.AppendLine();
+            }
         }
 
         sb.AppendLine(taal switch
@@ -176,6 +216,42 @@ public static class TeamMailBuilder
         });
         sb.AppendLine("Maarten");
         return new WeekMail("Prioriteiten volgende week", sb.ToString());
+    }
+
+    /// <summary>"(tegen vr 19/9)" achter een taak met deadline, in de taal van de mail.</summary>
+    private static string DeadlineSuffix(TeamTaak taak, int taal)
+    {
+        if (taak.Deadline is not { } d)
+        {
+            return "";
+        }
+        var cultuur = System.Globalization.CultureInfo.GetCultureInfo(taal switch
+        {
+            1 => "fr-BE", 2 => "en-GB", _ => "nl-BE",
+        });
+        var dag = d.ToString("ddd d/M", cultuur);
+        return taal switch
+        {
+            1 => $" (pour le {dag})",
+            2 => $" (by {dag})",
+            _ => $" (tegen {dag})",
+        };
+    }
+
+    /// <summary>
+    /// Na het versturen: het moment onthouden (voor het "afgerond sinds"-blok) en per taak
+    /// tellen hoe vaak hij al in een weekmail stond — een taak die voor de vierde keer
+    /// meegaat, verdient een gesprek in plaats van nog een mail.
+    /// </summary>
+    public static void MarkeerVerzonden(TeamTasksData data)
+    {
+        data.LaatsteMailVerzonden = DateTimeOffset.Now;
+        foreach (var taak in data.Taken.Where(t => !t.Klaar && t.Prioriteit == 0 &&
+                     !data.NietInMail.Contains(t.Lid, StringComparer.OrdinalIgnoreCase)))
+        {
+            taak.InMail++;
+            taak.LaatstInMail = DateTimeOffset.Now;
+        }
     }
 
     /// <summary>Verstuurt de weekmail via de Gmail-SMTP-instellingen van de mailassistent.</summary>

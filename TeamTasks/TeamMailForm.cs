@@ -211,6 +211,8 @@ public class TeamMailForm : Form
         {
             await TeamMailBuilder.VerstuurAsync(settings, aan, _onderwerp.Text.Trim(), _tekst.Text, _cts.Token);
             VasteTaken.VinkAf(VasteTaken.WeekmailTaak); // wekelijkse taak in Mijn taken afvinken
+            TeamMailBuilder.MarkeerVerzonden(_data); // 📧-tellers + "afgerond sinds"-moment
+            TeamTaskStore.Save(_data);
             MessageBox.Show(this, "De weekmail is verstuurd.",
                 "Weekmail team", MessageBoxButtons.OK, MessageBoxIcon.Information);
             DialogResult = DialogResult.OK;

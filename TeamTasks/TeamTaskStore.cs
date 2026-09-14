@@ -31,6 +31,17 @@ public sealed class TeamTaak
     public bool Klaar { get; set; }
     public DateTimeOffset Aangemaakt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset? KlaarOp { get; set; }
+
+    /// <summary>Optionele afspraakdatum: komt als "(tegen vr 19/9)" in de weekmail, rood in de lijst als ze voorbij is.</summary>
+    public DateOnly? Deadline { get; set; }
+
+    /// <summary>Hoe vaak deze taak al in een verstuurde weekmail stond (📧-teller in de lijst).</summary>
+    public int InMail { get; set; }
+    public DateTimeOffset? LaatstInMail { get; set; }
+
+    /// <summary>Dagen sinds de taak aangemaakt werd.</summary>
+    [JsonIgnore]
+    public int Leeftijd => (int)(DateTimeOffset.Now - Aangemaakt).TotalDays;
 }
 
 /// <summary>
@@ -136,6 +147,12 @@ public sealed class TeamTasksData
     /// werkweek afwezig is krijgt in de weekmail geen taken toegewezen.
     /// </summary>
     public List<VakantiePeriode> Vakanties { get; set; } = new();
+
+    /// <summary>Wanneer de weekmail het laatst verstuurd is (voor "afgerond sinds de vorige mail").</summary>
+    public DateTimeOffset? LaatsteMailVerzonden { get; set; }
+
+    /// <summary>Het blok "Afgerond sinds de vorige mail" in de weekmail opnemen.</summary>
+    public bool AfgerondInMail { get; set; } = true;
 }
 
 /// <summary>
@@ -182,6 +199,10 @@ public static class TeamTaskStore
     {
         // Lang verlopen vakanties opruimen zodat de lijst niet eindeloos groeit.
         data.Vakanties.RemoveAll(v => v.Tot < DateOnly.FromDateTime(DateTime.Now).AddDays(-30));
+        // Afgevinkte taken na twee maanden vanzelf weg (het "afgerond"-blok in de weekmail
+        // kijkt hooguit één mail terug): anders groeide het bestand eindeloos (125 taken
+        // waarvan 85 afgevinkt in september 2026).
+        data.Taken.RemoveAll(t => t.Klaar && (t.KlaarOp ?? t.Aangemaakt) < DateTimeOffset.Now.AddDays(-60));
         Directory.CreateDirectory(DataDir);
         File.WriteAllText(TasksFile, JsonSerializer.Serialize(data, JsonOpts));
     }

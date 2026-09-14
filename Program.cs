@@ -197,6 +197,16 @@ static class Program
             return;
         }
 
+        // Diagnose: de weekmail voor het team opbouwen uit de huidige data en afdrukken.
+        if (args.Length == 1 && args[0] == "--teammail")
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            var mail = TeamMailBuilder.BouwZelf(TeamTaskStore.Load());
+            Console.WriteLine("Onderwerp: " + mail.Onderwerp);
+            Console.WriteLine(mail.Tekst);
+            return;
+        }
+
         // Diagnose: stille ISPnext-peiling (zonder aanmelden) en de samenvatting afdrukken.
         if (args.Length == 1 && args[0] == "--isppeil")
         {
@@ -744,6 +754,7 @@ static class Program
                     Van = "Jan Peeters", Onderwerp = "Offerte servermigratie",
                 }),
                 "uittekst" => new TakenUitTekstForm(MijnTaakStore.Load().Categorieen),
+                "teamtaken" => new TeamTasksForm(),
                 "teamuittekst" => new TeamUitTekstForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" }, "Wim"),
                 "timesheetdash" => new TimesheetDashboardForm(),
