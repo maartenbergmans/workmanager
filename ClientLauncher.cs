@@ -134,8 +134,9 @@ public static class ClientLauncher
         if (TryWslPad(werkmap, out var distro, out var linux))
         {
             // Windows-omgevingsvariabelen komen WSL niet in (geen WSLENV), dus daar is
-            // geen opruimwerk nodig.
-            return $"{titelArgs}wsl.exe -d {distro} --cd \"{linux}\" -- {commando}";
+            // geen opruimwerk nodig. wsl.exe -- draait via een niet-login "bash -c" die
+            // .profile niet leest, dus ~/.local/bin (native installer) zelf vooraan zetten.
+            return $"{titelArgs}wsl.exe -d {distro} --cd \"{linux}\" -- PATH=$HOME/.local/bin:$PATH {commando}";
         }
 
         // Windows: eerst de geërfde Claude-markers wissen, dan claude starten. Als
