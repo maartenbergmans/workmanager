@@ -363,20 +363,83 @@ public static class ClientLauncher
     }
 
     /// <summary>
-    /// Voert een shellscript uit de projectmap uit in een zichtbare WSL-console (bv. start.sh
-    /// dat de dev-app opstart). Na afloop of Ctrl-C blijft de shell openstaan zodat de uitvoer
+    /// Voert een commando uit de projectmap uit in een zichtbare WSL-console: "./start.sh"
+    /// dat de dev-app opstart, of "npm start" voor projecten zonder eigen start.sh (cellaware-
+    /// en movaware-frontend). Na afloop of Ctrl-C blijft de shell openstaan zodat de uitvoer
     /// en eventuele fouten leesbaar blijven.
     /// </summary>
-    public static void StartWslScript(string werkmap, string script)
+    public static void StartWslCommando(string werkmap, string commando)
     {
         if (!TryWslPad(werkmap, out var distro, out var linux))
         {
             throw new ArgumentException($"Geen WSL-pad: {werkmap}");
         }
+        // Een script ("./start.sh") via bash starten: met core.fileMode=false kan de x-bit in
+        // de werkkopie wegvallen en dan faalt "./start.sh" met "Permission denied".
+        var uitvoer = commando.StartsWith("./") && commando.EndsWith(".sh") ? "bash " + commando : commando;
         // Bewust wsl.exe rechtstreeks (niet via wt.exe): Windows Terminal splitst zijn
         // commandoregel op ';' en zou het script in stukken hakken.
-        Start(false, "wsl.exe", $"-d {distro} --cd \"{linux}\" -e bash -i -c \"./{script} ; exec bash -i\"");
-        Log($"{script} gestart in {werkmap}");
+        Start(false, "wsl.exe", $"-d {distro} --cd \"{linux}\" -e bash -i -c \"{uitvoer} ; exec bash -i\"");
+        Log($"{commando} gestart in {werkmap}");
+    }
+
+    /// <summary>
+    /// De Angular-dev-servers (<c>ng serve</c>) die nu in de WSL-distro draaien, gegroepeerd
+    /// per werkmap (Linux-pad, bv. /home/maarten/projecten/aqurat/webapp). Alle dev-apps
+    /// luisteren op localhost:4200, dus elke treffer botst met een nieuwe start.
+    /// </summary>
+    public static List<(string Map, List<int> Pids)> DraaiendeDevApps(string distro)
+    {
+        // '[n]g serve' zodat pgrep deze bash -c zelf (met "ng serve" in zijn commandoregel)
+        // niet meetelt. Ook de "sh -c ng serve"-ouder van npm matcht: die gaat mee dicht.
+        var uit = WslUitvoer(distro,
+            "for p in $(pgrep -f '[n]g serve'); do echo \"$p $(readlink /proc/$p/cwd)\"; done");
+        return uit.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(regel => regel.Split(' ', 2))
+            .Where(d => d.Length == 2 && int.TryParse(d[0], out _))
+            .GroupBy(d => d[1], d => int.Parse(d[0]))
+            .Select(g => (g.Key, g.ToList()))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Sluit een draaiende dev-server (zie <see cref="DraaiendeDevApps"/>) en wacht tot poort
+    /// 4200 weer vrij is: eerst netjes (SIGTERM), na 5 seconden hard (SIGKILL). De console
+    /// waarin hij draaide blijft open met een gewone shell.
+    /// </summary>
+    public static void StopDevApp(string distro, IEnumerable<int> pids)
+    {
+        var lijst = string.Join(' ', pids);
+        WslUitvoer(distro,
+            $"kill {lijst} 2>/dev/null; for i in $(seq 50); do kill -0 {lijst} 2>/dev/null || exit 0; " +
+            $"sleep 0.1; done; kill -9 {lijst} 2>/dev/null; sleep 0.5");
+        Log($"dev-app gestopt in {distro} (pid {lijst})");
+    }
+
+    /// <summary>Draait een kort bash-script onzichtbaar in WSL en geeft stdout terug.</summary>
+    private static string WslUitvoer(string distro, string script)
+    {
+        var psi = new ProcessStartInfo("wsl.exe")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+        };
+        foreach (var arg in new[] { "-d", distro, "-e", "bash", "-c", script })
+        {
+            psi.ArgumentList.Add(arg);
+        }
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("wsl.exe start niet");
+        var uit = proc.StandardOutput.ReadToEndAsync();
+        _ = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(15_000))
+        {
+            try { proc.Kill(); } catch { }
+            throw new TimeoutException("WSL antwoordt niet");
+        }
+        return uit.Result;
     }
 
     /// <summary>Opent een DataGrip-project (map onder C:\Users\...\DataGripProjects).</summary>

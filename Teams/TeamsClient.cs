@@ -718,6 +718,21 @@ public sealed class TeamsClient : IDisposable
     }
 
     /// <summary>
+    /// Momentopname van de gerenderde chatlijst (aantal + begin van elke rijtekst), om te
+    /// zien of een klik op de filterknop de lijst überhaupt veranderd heeft.
+    /// </summary>
+    private Task<string> RijBeeldAsync() => JsAsync(MetSelector(
+        """
+        (function () {
+            let items = [...document.querySelectorAll(__SELECTOR__)];
+            items = items.filter(it => !items.some(o => o !== it && it.contains(o)));
+            return items.length + ' # ' + items.slice(0, 30)
+                .map(it => (it.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40))
+                .join(' | ');
+        })()
+        """));
+
+    /// <summary>
     /// Leest de ongelezen chats via de filterknop "Ongelezen" boven de chatlijst: even
     /// aanzetten, de (korte) gefilterde lijst lezen, weer uitzetten. Nodig sinds Teams de
     /// rijen zelf geen badge of "ongelezen"-label meer geeft. Retourneert null als de knop
@@ -732,6 +747,7 @@ public sealed class TeamsClient : IDisposable
     {
         var vooraf = int.TryParse(
             await JsAsync($"document.querySelectorAll({RijSelector}).length"), out var v) ? v : 0;
+        var voorafBeeld = await RijBeeldAsync();
         var chip = await ZetOngelezenFilterAsync(aan: true);
         if (chip.StartsWith("geen-chip"))
         {
@@ -739,13 +755,14 @@ public sealed class TeamsClient : IDisposable
         }
         var diagnose = new List<string> { $"chip={chip}", $"vooraf={vooraf}" };
         var herstelNodig = true;
-        try
+
+        // Wachten tot de lijst echt hergefilterd is (het aantal rijen verandert); een
+        // gelijk gebleven vólle lijst zou anders elke bovenste chat "ongelezen" maken.
+        // Daarna nog even doorwachten tot de telling stilstaat: de gevirtualiseerde
+        // lijst wisselt tijdens het herfilteren van aantal, en te vroeg lezen gaf een
+        // lege tussenstand (0 rijen) terwijl de ongelezen chat nog moest renderen.
+        async Task<int> WachtOpOmslagAsync()
         {
-            // Wachten tot de lijst echt hergefilterd is (het aantal rijen verandert); een
-            // gelijk gebleven vólle lijst zou anders elke bovenste chat "ongelezen" maken.
-            // Daarna nog even doorwachten tot de telling stilstaat: de gevirtualiseerde
-            // lijst wisselt tijdens het herfilteren van aantal, en te vroeg lezen gaf een
-            // lege tussenstand (0 rijen) terwijl de ongelezen chat nog moest renderen.
             var na = vooraf;
             var stabiel = 0;
             for (var i = 0; i < 25; i++)
@@ -767,10 +784,40 @@ public sealed class TeamsClient : IDisposable
                 }
                 na = n;
             }
+            return na;
+        }
+
+        try
+        {
+            var na = await WachtOpOmslagAsync();
+            // Exact dezelfde lijst ná een klik = de klik is verloren gegaan (trusted klikken
+            // missen af en toe, zie OpenChatAsync). Vroeger gold dat pas vanaf 25 rijen; toen
+            // Teams nog maar 20 rijen renderde, kwam de volle ongefilterde lijst erdoor en
+            // werden álle 20 chats als ongelezen gemeld (15 september 2026: "gevonden=20/20",
+            // cockpit vol oude Teams-chats die bovendien allemaal geopend werden).
+            if (chip.StartsWith("geklikt") && na == vooraf && await RijBeeldAsync() == voorafBeeld)
+            {
+                diagnose.Add("klik-verloren");
+                chip = await ZetOngelezenFilterAsync(aan: true);
+                diagnose.Add($"chip2={chip}");
+                na = await WachtOpOmslagAsync();
+                if (na == vooraf && await RijBeeldAsync() == voorafBeeld)
+                {
+                    diagnose.Add($"na={na}");
+                    diagnose.Add("uitslag=filter-niet-toegepast");
+                    // De lijst staat nog ongefilterd: "terugzetten" zou de filter juist
+                    // áánzetten (de chip meldt zijn stand niet) en zo blijven hangen.
+                    herstelNodig = chip.StartsWith("al-goed");
+                    return null;
+                }
+            }
             diagnose.Add($"na={na}");
-            if (na == vooraf && na > 25)
+            // Een filter die evenveel rijen overlaat als de volle lijst is ook met een
+            // (door een re-render) iets ander beeld niet geloofwaardig.
+            if (na == vooraf && na >= 10)
             {
                 diagnose.Add("uitslag=filter-niet-toegepast");
+                herstelNodig = false;
                 return null; // filter lijkt niet toegepast: niet op gokken
             }
             if (na > vooraf)
@@ -1537,7 +1584,10 @@ public sealed class TeamsClient : IDisposable
             // Alleen een geloofwaardige uitslag als vertrekpunt onthouden: bij een half
             // gerenderde lijst zou de volgende beurt anders een verkeerde stand hergebruiken.
             fasen.Add($"gevonden={uitslag.Ongelezen.Count}/{uitslag.Totaal}");
-            if (uitslag.Totaal >= 10)
+            // Een beurt waarin de filter mislukte, is geen vertrekpunt: anders hergebruikt de
+            // vingerafdruk-snelweg die (onvolledige) uitslag tot tien beurten lang, en een
+            // ongelezen chat uit precies die beurt blijft zo tot twintig minuten onzichtbaar.
+            if (uitslag.Totaal >= 10 && gefilterd is not null)
             {
                 _laatsteUitslag = uitslag;
                 _laatsteVingerafdruk = await VingerafdrukAsync();

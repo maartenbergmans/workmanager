@@ -317,6 +317,55 @@ public sealed class OutlookClient : IDisposable
     private const string VerzondenPatroon = "verzonden items|sent items|envoy[eé]s";
 
     /// <summary>
+    /// Staat het (normaal verborgen) venster op dit moment op het scherm? Verbergen gebeurt
+    /// door het ver buiten beeld te parkeren (zie <see cref="Verberg"/>), dus daar toetsen we op.
+    /// </summary>
+    private bool VensterInBeeld =>
+        _venster is { IsDisposed: false } v && v.Location.X > -3000;
+
+    /// <summary>
+    /// Welke map staat er nu open: "inbox", "anders" of "onbekend"? OWA markeert de actieve
+    /// map in de mappenboom met aria-selected. Herkennen we de DOM niet (OWA verbouwt die
+    /// geregeld), dan luidt het antwoord "onbekend" en gedraagt de aanroeper zich als vroeger —
+    /// een gewijzigde DOM mag nooit de hele mailpoll stilleggen.
+    /// </summary>
+    private async Task<string> HuidigeMapAsync()
+    {
+        try
+        {
+            return await JsAsync(
+                $$"""
+                (function () {
+                    // Zelfde telsuffix-stripper als KlikMapAsync: OWA plakt " - 1.234 items"
+                    // achter de mapnaam.
+                    const schoon = s => (s + '')
+                        .replace(/\s*[-–]\s*[\d., ]+\s*items?.*$/i, '')
+                        .replace(/\s+/g, ' ').trim();
+                    const gekozen = [...document.querySelectorAll('[role="treeitem"]')]
+                        .filter(x => x.getAttribute('aria-selected') === 'true');
+                    // Precies één gemarkeerde map, anders weten we het niet zeker.
+                    if (gekozen.length !== 1) return 'onbekend';
+                    const naam = schoon(gekozen[0].getAttribute('title') ||
+                        gekozen[0].querySelector('span[title]')?.getAttribute('title') ||
+                        gekozen[0].textContent);
+                    if (!naam) return 'onbekend';
+                    return new RegExp({{JsonSerializer.Serialize(InboxPatroon)}}, 'i').test(naam)
+                        ? 'inbox' : 'anders';
+                })()
+                """) switch
+            {
+                var s when s.Contains("inbox") => "inbox",
+                var s when s.Contains("anders") => "anders",
+                _ => "onbekend",
+            };
+        }
+        catch
+        {
+            return "onbekend"; // sessie (nog) niet gestart
+        }
+    }
+
+    /// <summary>
     /// Klikt een map in de linker mappenbalk aan (op naam, hoofdletterongevoelig). Staat
     /// het navigatiedeelvenster ingeklapt (geen mappen in de pagina), dan wordt het eerst
     /// geopend via de hamburgerknop.
@@ -530,7 +579,12 @@ public sealed class OutlookClient : IDisposable
     private int _leegNaHerladen;
     private DateTimeOffset _laatsteLegeHerlaadPoging;
 
-    public async Task<List<OutlookBericht>> InboxAsync(CancellationToken ct)
+    /// <summary>
+    /// De rijen van Postvak IN. Geeft <c>null</c> als er een ándere map open staat en die niet
+    /// veilig te sluiten is: de aanroeper houdt dan zijn cache, want scrapen zou de verkeerde
+    /// map als inbox opleveren.
+    /// </summary>
+    public async Task<List<OutlookBericht>?> InboxAsync(CancellationToken ct)
     {
         await _slot.WaitAsync(ct);
         try
@@ -539,6 +593,31 @@ public sealed class OutlookClient : IDisposable
             {
                 throw new InvalidOperationException(
                     "Outlook is niet aangemeld — klik op 'Outlook aanmelden…' (dagelijkse MFA).");
+            }
+            // We scrapen "de map die nú open staat", en dat hoeft Postvak IN niet te zijn: de
+            // 🗂 Archief-knop, een afgebroken archiveeractie of Maarten die zelf in het venster
+            // bladert zetten de sessie in een andere map. Gebeurde dat, dan las de poll het
+            // archief als inbox — op 18 september 2026 belandden zo 89 mails uit juli en
+            // augustus in de cockpit, die daarna ook nog stuk voor stuk (traag) uitgelezen
+            // werden. Dus eerst vaststellen waar we staan.
+            var map = await HuidigeMapAsync();
+            if (map == "anders")
+            {
+                // Staat het venster in beeld, dan is Maarten er zelf in aan het werk: niets
+                // wegklikken onder zijn handen vandaan. Deze ronde overslaan; Verberg() zet
+                // de sessie bij het sluiten vanzelf terug op Postvak IN.
+                if (VensterInBeeld)
+                {
+                    return null;
+                }
+                // Verborgen venster in de verkeerde map = restant van een eerdere actie:
+                // terugklikken. Lukt dat niet, dan liever geen scrape dan een foute.
+                await KlikMapAsync(InboxPatroon, ct);
+                if (await HuidigeMapAsync() == "anders")
+                {
+                    return null;
+                }
+                ForceerHerlaad(); // verse lijst: de vorige map mag niet blijven hangen
             }
             // De verborgen pagina veroudert ondanks de anti-throttling-vlaggen (OWA gaat
             // zelf in een slaapstand): periodiek volledig herladen, net als bij Teams.
@@ -887,6 +966,12 @@ public sealed class OutlookClient : IDisposable
             var waar = await JsAsync(
                 "JSON.stringify({url: location.href, titel: document.title})");
             log("Pagina: " + Ontdubbel(waar));
+            // Welke map staat open? Alleen Postvak IN mag gescrapet worden; staat er iets
+            // anders, dan slaat de poll de ronde over (zie InboxAsync). "onbekend" betekent
+            // dat OWA zijn aria-selected-markering verlegd heeft — dan valt de poll terug op
+            // het oude gedrag en is dít de regel die dat verraadt.
+            log($"Open map: {await HuidigeMapAsync()}" +
+                (VensterInBeeld ? " (venster staat in beeld)" : ""));
 
             async Task TelAsync(string omschrijving, string selector)
             {
@@ -1242,6 +1327,17 @@ public sealed class OutlookClient : IDisposable
                 .find(x => patroon.test(((x.getAttribute('aria-label') || '') + ' ' +
                     (x.getAttribute('title') || '') + ' ' + (x.textContent || '')).trim()));
         }
+        // Zelfde, maar nooit een knop ín de maillijst: elke rij heeft (onzichtbare)
+        // zweefknoppen — Verwijderen, Als gelezen markeren, Vlag — en een fysieke klik
+        // daarop raakt een wíllekeurige mail. Zo belandde op 14 september 2026 de enige mail
+        // in het postvak (Laurent Marie) in Verwijderde items tijdens het archiveren van
+        // een mail van iemand anders.
+        function zoekLintKnop(wortel, patroon) {
+            return [...wortel.querySelectorAll('button, [role="button"], [role="menuitem"]')]
+                .filter(x => !x.closest('[data-convid], [role="option"], [role="listbox"], #MailList'))
+                .find(x => patroon.test(((x.getAttribute('aria-label') || '') + ' ' +
+                    (x.getAttribute('title') || '') + ' ' + (x.textContent || '')).trim()));
+        }
         """;
 
     /// <summary>
@@ -1257,7 +1353,10 @@ public sealed class OutlookClient : IDisposable
             // tekst en moet er expliciet uitgefilterd worden.
             const tekst = x => ((x.getAttribute('aria-label') || '') + ' ' +
                 (x.getAttribute('title') || '') + ' ' + (x.textContent || '')).trim();
+            // En nooit de zweefknop van een rij in de maillijst (zie zoekLintKnop): die hoort
+            // bij een willekeurige mail, en ernaast zit de prullenbak.
             const b = [...document.querySelectorAll('button, [role="button"], [role="menuitem"]')]
+                .filter(x => !x.closest('[data-convid], [role="option"], [role="listbox"], #MailList'))
                 .find(x => /als gelezen markeren|mark as read|marquer comme lu/i.test(tekst(x)) &&
                     !/alles|\ball\b|tout/i.test(tekst(x)));
             if (!b || b.getAttribute('aria-disabled') === 'true' || b.disabled) return null;
@@ -1363,8 +1462,8 @@ public sealed class OutlookClient : IDisposable
             const string KnopExpr =
                 """
                 (function () {
-                    const b = zoekKnop(document, /\bverwerkt\b/i) ||
-                        zoekKnop(document, /\barchiv(eren|e|er)\b/i);
+                    const b = zoekLintKnop(document, /\bverwerkt\b/i) ||
+                        zoekLintKnop(document, /\barchiv(eren|e|er)\b/i);
                     if (!b || b.getAttribute('aria-disabled') === 'true' || b.disabled) return null;
                     return b.matches('button') ? b : (b.querySelector('button') || b);
                 })()
@@ -1419,15 +1518,22 @@ public sealed class OutlookClient : IDisposable
                 }
                 vorigeTel = tel;
                 // Rij selecteren (JS-klik werkt prima op rijen) zodat de werkbalk actief is.
-                await JsAsync(
+                // Geen rij = niets aanklikken: de lintknoppen werken op wat er toevallig
+                // geselecteerd staat, en dat is dan een andere mail.
+                var rijGeselecteerd = await JsAsync(
                     $$"""
                     (function () {
                         {{KlikHelpers}}
                         const rij = {{vindRijExpr}};
-                        if (rij) klik(rij);
+                        if (!rij) return false;
+                        klik(rij);
                         return true;
                     })()
-                    """);
+                    """) == "true";
+                if (!rijGeselecteerd)
+                {
+                    break;
+                }
                 await Task.Delay(900, ct);
                 // Elk exemplaar van de reeks ook echt als gelezen markeren vóór het naar
                 // Verwerkt gaat — anders bleef alles behalve de eerst geopende mail
@@ -1708,6 +1814,48 @@ public sealed class OutlookClient : IDisposable
             }
         }
         await Task.Delay(1500, ct); // lint laten renderen
+        // Staat de juiste mail echt open? Is hij intussen al verplaatst, dan is de link dood
+        // en toont OWA gewoon het postvak — en dan werken de lintknoppen hieronder op een
+        // andere mail. Toets: het onderwerp (of bij gebrek de afzender) staat buiten de
+        // maillijst op de pagina, dus in het leesvenster.
+        var sleutelJs = JsonSerializer.Serialize(
+            onderwerp.Equals("ongelezen bericht", StringComparison.OrdinalIgnoreCase) ||
+            onderwerp.Trim().Length == 0 ? van : onderwerp);
+        var juisteMailOpen = await JsAsync(
+            $$"""
+            (function () {
+                const norm = s => (s + '').replace(/\s+/g, ' ').toLowerCase();
+                const sleutel = norm({{sleutelJs}}).trim().slice(0, 25);
+                if (!sleutel) return false;
+                const tel = t => norm(t).split(sleutel).length - 1;
+                const lijst = document.querySelector('#MailList');
+                return tel(document.body.innerText) > (lijst ? tel(lijst.innerText) : 0);
+            })()
+            """) == "true";
+        if (!juisteMailOpen)
+        {
+            _web.CoreWebView2.Navigate("https://outlook.office.com/mail/");
+            for (var i = 0; i < 30; i++)
+            {
+                await Task.Delay(500, ct);
+                if (await IsIngelogdAsync())
+                {
+                    break;
+                }
+            }
+            await Task.Delay(2000, ct);
+            _laatstHerladen = DateTimeOffset.Now;
+            try
+            {
+                File.WriteAllText(Path.Combine(DataDir, "outlook-archief-debug.json"),
+                    "{\"stap\":\"via-url\",\"resultaat\":\"mail-niet-geopend\"}");
+            }
+            catch
+            {
+                // Alleen diagnose.
+            }
+            return "mail-niet-geopend";
+        }
         // Eerst als gelezen markeren (fysieke klik) als die knop in het lint staat: het
         // openen alleen zet de mail hier niet betrouwbaar op gelezen, en anders belandt
         // hij ongelezen in Verwerkt.
@@ -1720,8 +1868,8 @@ public sealed class OutlookClient : IDisposable
         const string KnopExpr =
             """
             (function () {
-                const b = zoekKnop(document, /\bverwerkt\b/i) ||
-                    zoekKnop(document, /\barchiv(eren|e|er)\b/i);
+                const b = zoekLintKnop(document, /\bverwerkt\b/i) ||
+                    zoekLintKnop(document, /\barchiv(eren|e|er)\b/i);
                 if (!b || b.getAttribute('aria-disabled') === 'true' || b.disabled) return null;
                 return b.matches('button') ? b : (b.querySelector('button') || b);
             })()
@@ -2698,6 +2846,13 @@ public sealed class OutlookClient : IDisposable
     {
         var store = LaadMails();
         var inbox = await InboxAsync(ct);
+        if (inbox is null)
+        {
+            // Er stond een andere map open (archief, zoekresultaat, of Maarten die zelf in het
+            // venster bladert). De bestaande cache is dan beter dan een lijst uit de verkeerde
+            // map: die zou als "inbox" in de cockpit belanden.
+            return store;
+        }
         var gewijzigd = false;
         var resultaat = new List<OutlookMailVol>();
         // Elke onbekende mail moet in OWA geopend worden om zijn tekst te krijgen, en dat

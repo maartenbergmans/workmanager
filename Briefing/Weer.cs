@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WorkManager;
 
@@ -13,6 +14,7 @@ public static class Weer
 {
     public sealed record Verwachting(double Min, double Max, double Neerslag, int Code)
     {
+        [JsonIgnore]
         public string Omschrijving => Code switch
         {
             0 => "onbewolkt",
@@ -28,14 +30,17 @@ public static class Weer
             _ => "wisselvallig",
         };
 
+        [JsonIgnore]
         public bool ParapluNodig => Neerslag >= 1.0 || Code is 65 or 82 or 95 or 96 or 99;
 
+        [JsonIgnore]
         public string Regel =>
             $"{Omschrijving}, {Min:0}° tot {Max:0}°" +
             (Neerslag >= 0.2 ? $", {Neerslag:0.#} mm neerslag" : "") +
             (ParapluNodig ? " — paraplu mee" : "");
 
         /// <summary>Weericoon (emoji) voor zon/wolk/regen/sneeuw, passend bij de weather-code.</summary>
+        [JsonIgnore]
         public string Emoji => Code switch
         {
             0 => "☀️",
@@ -50,6 +55,7 @@ public static class Weer
         };
 
         /// <summary>Korte weergave voor onderaan de kalender: icoon + min–max in graden.</summary>
+        [JsonIgnore]
         public string Kort => $"{Emoji} {Min:0}–{Max:0}°";
     }
 
@@ -95,6 +101,59 @@ public static class Weer
             return null;
         }
     }
+
+    /// <summary>
+    /// Alle dagen tussen twee datums in één verzoek. Open-Meteo rekent een reeks even zwaar
+    /// als één dag, dus zo staat een hele week klaar voor de prijs van één call — waar
+    /// <see cref="WeerCache"/> op steunt.
+    /// </summary>
+    public static async Task<Dictionary<DateOnly, Verwachting>> ReeksAsync(
+        double lat, double lon, DateOnly van, DateOnly tot, CancellationToken ct)
+    {
+        var dagen = new Dictionary<DateOnly, Verwachting>();
+        if (lat == 0 && lon == 0)
+        {
+            return dagen;
+        }
+        try
+        {
+            var url = "https://api.open-meteo.com/v1/forecast" +
+                      $"?latitude={Inv(lat)}&longitude={Inv(lon)}" +
+                      "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum" +
+                      "&timezone=Europe%2FBrussels" +
+                      $"&start_date={van.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}" +
+                      $"&end_date={tot.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+            using var doc = JsonDocument.Parse(await Http.GetStringAsync(url, ct));
+            var daily = doc.RootElement.GetProperty("daily");
+            if (!daily.TryGetProperty("time", out var tijd) || tijd.ValueKind != JsonValueKind.Array)
+            {
+                return dagen;
+            }
+            for (var i = 0; i < tijd.GetArrayLength(); i++)
+            {
+                if (!DateOnly.TryParse(tijd[i].GetString(), CultureInfo.InvariantCulture, out var dag))
+                {
+                    continue;
+                }
+                dagen[dag] = new Verwachting(
+                    Op(daily, "temperature_2m_min", i),
+                    Op(daily, "temperature_2m_max", i),
+                    Op(daily, "precipitation_sum", i),
+                    (int)Op(daily, "weather_code", i));
+            }
+        }
+        catch
+        {
+            // Weer is bijzaak: zonder verwachting gaat alles gewoon door.
+        }
+        return dagen;
+    }
+
+    private static double Op(JsonElement daily, string naam, int index) =>
+        daily.TryGetProperty(naam, out var reeks) && reeks.ValueKind == JsonValueKind.Array &&
+        index < reeks.GetArrayLength() && reeks[index].ValueKind == JsonValueKind.Number
+            ? reeks[index].GetDouble()
+            : 0;
 
     private static double Eerste(JsonElement daily, string naam) =>
         daily.TryGetProperty(naam, out var reeks) && reeks.ValueKind == JsonValueKind.Array &&

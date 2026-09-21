@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 
 namespace WorkManager;
 
@@ -80,6 +80,25 @@ public sealed class Toast : Control
         Maak(eigenaar, tekst, glyph, null, UndoTekst, blijvend: false);
 
     /// <summary>
+    /// Toont de laatste melding nog eens (het 🔔-knopje rechtsonder). Je vraagt er zelf om,
+    /// dus dit mag ook tijdens "niet storen"; de herhaling komt zelf niet in het log — anders
+    /// zou ze de echte melding erboven wegduwen.
+    /// </summary>
+    public static void Herhaal(Form eigenaar)
+    {
+        var recent = Recent;
+        if (recent.Count == 0)
+        {
+            Maak(eigenaar, "Nog geen meldingen deze sessie", Fluent.Klok, null, UndoTekst,
+                blijvend: false, herhaling: true);
+            return;
+        }
+        var (moment, tekst) = recent[0];
+        Maak(eigenaar, $"{moment:HH:mm}  {tekst}", Fluent.Klok, null, UndoTekst,
+            blijvend: false, herhaling: true);
+    }
+
+    /// <summary>
     /// Niet-blokkerende foutmelding: een toast met de korte boodschap en een klikbare
     /// "details…" die pas dan de volledige fout toont. Vervangt blokkerende MessageBoxen
     /// voor fouten waar je niet per se meteen iets mee moet.
@@ -110,7 +129,8 @@ public sealed class Toast : Control
         Maak(eigenaar, tekst, glyph, actie, actieTekst, blijvend: true);
 
     private static void Maak(
-        Form eigenaar, string tekst, string glyph, Action? onUndo, string actieTekst, bool blijvend)
+        Form eigenaar, string tekst, string glyph, Action? onUndo, string actieTekst,
+        bool blijvend, bool herhaling = false)
     {
         if (eigenaar.IsDisposed)
         {
@@ -118,7 +138,7 @@ public sealed class Toast : Control
         }
         // Niet storen: in een venster waar je nu niet mee bezig bent verschijnt niets
         // (wel in het 🔔-log). Werk je zelf in dat venster, dan zie je gewoon je feedback.
-        if (NietStoren.Actief && Form.ActiveForm != eigenaar)
+        if (NietStoren.Actief && !herhaling && Form.ActiveForm != eigenaar)
         {
             Registreer($"🔕 {tekst}");
             return;
@@ -133,7 +153,10 @@ public sealed class Toast : Control
                 oud.Verwijder();
             }
         }
-        Registreer(tekst);
+        if (!herhaling)
+        {
+            Registreer(tekst);
+        }
         var toast = new Toast(tekst, glyph, onUndo, actieTekst, blijvend)
         {
             _stapelOffset = eigenaar.Controls.OfType<Toast>().Sum(t => t.Height + 8),

@@ -47,6 +47,19 @@ static class Program
             return;
         }
 
+        // Weerreeks (twee weken) ophalen en in de cache zetten; toont wat er nu in staat.
+        if (args.Length == 1 && args[0] == "--weercache")
+        {
+            WeerCache.VerversAsync(CancellationToken.None).GetAwaiter().GetResult();
+            var vandaag = DateOnly.FromDateTime(DateTime.Now);
+            for (var i = 0; i < 8; i++)
+            {
+                var dag = vandaag.AddDays(i);
+                Console.WriteLine($"{dag:ddd d MMM}  {WeerCache.Uit(dag)?.Regel ?? "(niets)"}");
+            }
+            return;
+        }
+
         // Headless regressietests voor de kwetsbaarste tekstparsers (OWA-labels wijzigen
         // geregeld): resultaat in %APPDATA%\WorkManager\parser-tests.txt, exitcode = aantal fouten.
         if (args.Length == 1 && args[0] == "--parsertests")
@@ -816,6 +829,8 @@ static class Program
                 "verlof" => new SdWorxPortaalForm(),
                 "verlofdump" => new SdWorxPortaalForm(alleenInspecteren: true),
                 "ebox" => new EboxForm(),
+                "portefeuille" => new PortefeuilleForm(),
+                "posities" => new PositiesForm(PortefeuilleStore.Laad()),
                 "teambewerk" => new TeamTaakBewerkForm(
                     new List<string> { "Wim", "Kris", "Christophe", "Laurent" },
                     new TeamTaak { Lid = "Kris", Tekst = "Facturatie-run van juli nakijken" }),

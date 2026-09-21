@@ -95,6 +95,22 @@ Via het tray-menu **"Mail beantwoorden (Gmail)…"** opent een venster dat de in
 - **Instructies beheren…** opent de vrije tekst die Claude bij elke mail meekrijgt (toon, ondertekening, wat wel/niet beantwoorden) — persistent in `%APPDATA%\WorkManager\mail-reply-instructions.txt`.
 - **Instellingen…**: e-mailadres, Gmail-**app-wachtwoord** (aanmaken op myaccount.google.com/apppasswords, vereist tweestapsverificatie), max. aantal mails en wel/niet alleen ongelezen. Het wachtwoord staat DPAPI-versleuteld in `%APPDATA%\WorkManager\mail-reply-settings.json`.
 
+## Portefeuille
+
+Via het tray-menu **"Portefeuille…"** (of het ⋯-menu van de cockpit) opent een venster met de totale waarde van je beleggingen, opgesplitst per potje (privé en de vennootschap):
+
+- **Koersen** komen van de publieke chart-API van Yahoo Finance — geen sleutel, geen account. Tickers zijn die van Yahoo, **mét beurssuffix**: `IWDA.AS` (Euronext Amsterdam), `IS3Q.DE` (Xetra). Zolang het venster openstaat ververst het zichzelf: elke minuut terwijl de beurs open is, daarbuiten om de vijf minuten.
+- **Bovenaan** de totale waarde, de beweging van vandaag (in euro én procent) en een staaf met de verdeling over de potjes. Daaronder het waardeverloop over 1 maand, 3 maanden, 1 jaar of 5 jaar — beweeg met de muis over de grafiek voor de stand op een bepaalde dag. Het verloop rekent met je *huidige* aantallen tegen de koersen van toen; bijkopen verschijnt er dus niet als winst.
+- **Per positie** staan aantal, koers, dagbeweging, waarde en aandeel in het geheel; klik een regel aan voor dagbereik en 52-wekenbereik in de statusregel, dubbelklik opent de fondspagina. Vul je in **Posities…** een gemiddelde aankoopkoers in, dan verschijnt er een rendementkolom.
+- **Discreet**: in de cockpitwerkbalk staat alleen een klein **€**-knopje — geen cijfer, geen kleur; de stand van vandaag verschijnt pas in de tooltip als je eroverheen gaat. En met **👁 Bedragen verbergen** gaan in het venster zelf alle bedragen achter bolletjes; percentages en de vorm van de grafiek blijven staan. Die keuze wordt onthouden.
+- Posities staan in `%APPDATA%\WorkManager\portefeuille.json`, de laatst opgehaalde koersen en koershistoriek in `koersen-cache.json` (zodat het venster meteen gevuld is en ook zonder internet iets toont), de dagelijkse slotstanden in `portefeuille-historiek.json`.
+
+Los testen: `WorkManager.exe --venster portefeuille` (of `--venster posities`).
+
+## Weer
+
+De weersverwachting (Open-Meteo, geen sleutel) wordt in één verzoek voor twee weken opgehaald en bewaard in `%APPDATA%\WorkManager\weer-cache.json`, met een verversing om de twee uur. Zo staat het weer onder de kalender er meteen als je naar de volgende dag bladert, en klopt het na een herstart al voor er iets opgehaald is. Testen: `WorkManager.exe --weercache`.
+
 ## Bouwen en starten
 
 ```powershell

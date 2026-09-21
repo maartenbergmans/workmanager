@@ -465,6 +465,10 @@ public class TrayAppContext : ApplicationContext
         };
         menu.Items.Add(ah);
 
+        var portefeuille = new ToolStripMenuItem("Portefeuille…");
+        portefeuille.Click += (_, _) => OpenPortefeuille();
+        menu.Items.Add(portefeuille);
+
         var verjaardagen = new ToolStripMenuItem("Verjaardagen & cadeaus…");
         verjaardagen.Click += (_, _) => OpenVerjaardagen();
         menu.Items.Add(verjaardagen);
@@ -739,6 +743,9 @@ public class TrayAppContext : ApplicationContext
             case "azurevm":
                 OpenAzureVm();
                 break;
+            case "portefeuille":
+                OpenPortefeuille();
+                break;
         }
     }
 
@@ -756,6 +763,22 @@ public class TrayAppContext : ApplicationContext
         _eboxForm = new EboxForm();
         _eboxForm.FormClosed += (_, _) => _eboxForm = null;
         _eboxForm.Show();
+    }
+
+    private PortefeuilleForm? _portefeuilleForm;
+
+    /// <summary>Het portefeuillevenster; één exemplaar, want het ververst zichzelf.</summary>
+    private void OpenPortefeuille()
+    {
+        if (_portefeuilleForm is { IsDisposed: false })
+        {
+            _portefeuilleForm.Activate();
+            return;
+        }
+
+        _portefeuilleForm = new PortefeuilleForm();
+        _portefeuilleForm.FormClosed += (_, _) => _portefeuilleForm = null;
+        _portefeuilleForm.Show();
     }
 
     private AzureVmForm? _azureVmForm;

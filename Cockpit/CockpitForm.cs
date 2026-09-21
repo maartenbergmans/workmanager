@@ -111,6 +111,7 @@ public class CockpitForm : Form
     private readonly ModernButton _cadeauButton;
     private readonly ModernButton _outlookLeesButton;
     private ModernButton _vertaalButton = null!;
+    private ModernButton _duimButton = null!;
     private readonly ModernButton _teamsKoppelButton;
     private readonly ModernButton _outlookKoppelButton;
     private readonly ModernButton _waKoppelButton;
@@ -330,7 +331,7 @@ public class CockpitForm : Form
                 ("PhpStorm — aqurat", () => ClientLauncher.StartPhpStorm(wsl + "aqurat"), null),
                 // De draaiende dev-omgeving: eerst de app opstarten (start.sh = npm start in
                 // webapp/), dan de app zelf en de mailvanger ernaast, in Firefox.
-                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "aqurat", "start.sh"), null),
+                ("App starten — start.sh", () => StartDevApp(wsl + "aqurat", "./start.sh"), null),
                 ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("Mailpit — localhost:8025", () => ClientLauncher.StartFirefox("http://localhost:8025/"), null),
                 ("DataGrip — Aqurat", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Aqurat")), null),
@@ -356,6 +357,9 @@ public class CockpitForm : Form
                 ("Claude — movaware-frontend", () => ClientLauncher.StartClaude(wsl + "movaware-frontend"), wsl + "movaware-frontend"),
                 ("PhpStorm — movaware-backend", () => ClientLauncher.StartPhpStorm(wsl + "movaware-backend"), null),
                 ("PhpStorm — movaware-frontend", () => ClientLauncher.StartPhpStorm(wsl + "movaware-frontend"), null),
+                // Geen start.sh: npm start = ng serve (serve-path /app/) met /api-proxy naar :4303.
+                ("App starten — npm start", () => StartDevApp(wsl + "movaware-frontend", "npm start"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("DataGrip — Movaware", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Movaware")), null),
                 ("Productie-DB → localhost…", () => new ProdDbKopieForm(ProdDbKopie.Movaware).Show(this), null),
                 ("Deploytool — movaware-backend (default)", () => ClientLauncher.StartDeploytool(wsl + "movaware-backend", "default"), null),
@@ -366,6 +370,9 @@ public class CockpitForm : Form
                 ("Claude — cellaware-frontend", () => ClientLauncher.StartClaude(wsl + "cellaware-frontend"), wsl + "cellaware-frontend"),
                 ("PhpStorm — cellaware-backend", () => ClientLauncher.StartPhpStorm(wsl + "cellaware-backend"), null),
                 ("PhpStorm — cellaware-frontend", () => ClientLauncher.StartPhpStorm(wsl + "cellaware-frontend"), null),
+                // Geen start.sh: npm start = ng serve (baseHref /app/) met /api-proxy naar :4301.
+                ("App starten — npm start", () => StartDevApp(wsl + "cellaware-frontend", "npm start"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("DataGrip — Cellaware", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Cellaware")), null),
                 ("Productie-DB → localhost (nemijtek)…", () => new ProdDbKopieForm(ProdDbKopie.CellawareNemijtek).Show(this), null),
                 ("Productie-DB → localhost (vriesveem)…", () => new ProdDbKopieForm(ProdDbKopie.CellawareVriesveem).Show(this), null),
@@ -378,6 +385,10 @@ public class CockpitForm : Form
                 ("Claude — herstel-calculator", () => ClientLauncher.StartClaude(wsl + "lauryssens-herstel-calculator"), wsl + "lauryssens-herstel-calculator"),
                 ("PhpStorm — laurapp", () => ClientLauncher.StartPhpStorm(wsl + "laurapp"), null),
                 ("PhpStorm — herstel-calculator", () => ClientLauncher.StartPhpStorm(wsl + "lauryssens-herstel-calculator"), null),
+                // start.sh = ng serve met /api-proxy naar de backend-container (:4302).
+                ("App starten — laurapp (start.sh)", () => StartDevApp(wsl + "laurapp", "./start.sh"), null),
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
+                ("DataGrip — Lauryssens", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Lauryssens")), null),
                 ("Claude — glascalculator (Drive)", () => ClientLauncher.StartClaude(
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
                     @"G:\Gedeelde drives\UrbanIT\Lauryssens\glascalculator"),
@@ -394,7 +405,7 @@ public class CockpitForm : Form
                 ("PhpStorm — totalloss-cednl-backend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-backend"), null),
                 ("PhpStorm — totalloss-cednl-frontend", () => ClientLauncher.StartPhpStorm(wsl + "totalloss-cednl-frontend"), null),
                 // start.sh = ng serve met /api-proxy naar de backend-container (:4407).
-                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "totalloss-cednl-frontend", "start.sh"), null),
+                ("App starten — start.sh", () => StartDevApp(wsl + "totalloss-cednl-frontend", "./start.sh"), null),
                 ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("DataGrip — Totalloss", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Totalloss")), null),
                 ("Azure-portal…", () => OpenExtern("https://portal.azure.com/"), null),
@@ -409,7 +420,7 @@ public class CockpitForm : Form
                 ("Claude — urbanadmin", () => ClientLauncher.StartClaude(wsl + "urbanadmin"), wsl + "urbanadmin"),
                 ("PhpStorm — urbanadmin", () => ClientLauncher.StartPhpStorm(wsl + "urbanadmin"), null),
                 // start.sh = ng serve met /api-proxy naar de backend-container (:4408).
-                ("App starten — start.sh", () => ClientLauncher.StartWslScript(wsl + "urbanadmin", "start.sh"), null),
+                ("App starten — start.sh", () => StartDevApp(wsl + "urbanadmin", "./start.sh"), null),
                 ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
                 ("Timesheets (productie)", () => OpenExtern("https://timesheets.urbanit.be/app/"), null),
                 ("DataGrip — UrbanIT", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "UrbanIT")), null),
@@ -448,6 +459,10 @@ public class CockpitForm : Form
                         {
                             doe();
                             Toast.Toon(this, ThemaStem.Gestart(item), Fluent.Globe);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Bewust niets gestart (bv. dev-app draait al of afsluiten geweigerd).
                         }
                         catch (Exception ex)
                         {
@@ -1168,6 +1183,7 @@ public class CockpitForm : Form
             new ToolStripSeparator(),
 
             Kop("Privé & huishouden"),
+            Venster("Portefeuille…", "portefeuille"),
             Venster("AH-bestelling…", "ah"),
             Venster("Bureaublad opruimen…", "bureaublad"),
             Venster("Verjaardagen & cadeaus…", "verjaardagen"),
@@ -1227,38 +1243,13 @@ public class CockpitForm : Form
         var meerKnop = new ModernButton { Text = "⋯", Width = 44 };
         meerKnop.Click += (_, _) => meerMenu.Show(meerKnop, new Point(0, meerKnop.Height + 4));
         toolbar.Controls.Add(meerKnop);
-        // Meldingenlog: toasts zijn vluchtig — hier staan de laatste ~30 nog eens op een rij.
-        var meldingenKnop = new ModernButton { Text = "🔔", Width = 44 };
-        meldingenKnop.Click += (_, _) =>
-        {
-            var log = new ContextMenuStrip();
-            Theme.Style(log);
-            foreach (var (moment, tekst) in Toast.Recent.Take(20))
-            {
-                log.Items.Add(new ToolStripMenuItem($"{moment:HH:mm}  {Kort(tekst, 80)}")
-                {
-                    Enabled = false,
-                });
-            }
-            if (log.Items.Count == 0)
-            {
-                log.Items.Add(new ToolStripMenuItem("Nog geen meldingen deze sessie") { Enabled = false });
-            }
-            log.Show(meldingenKnop, new Point(0, meldingenKnop.Height + 4));
-        };
-        toolbar.Controls.Add(meldingenKnop);
-        // Kerntemperatuur: hoe bevroren (= onder controle) je werk is; klik = de opbouw.
-        _thermometer = new ModernButton { Text = "🧊" };
-        _thermometer.Click += (_, _) =>
-        {
-            var meting = KernTemperatuur.Meet(_laatsteBerichten.Count);
-            var opbouw = meting.Opbouw.Count == 0
-                ? "niets dat opwarmt"
-                : string.Join(", ", meting.Opbouw.Select(o => $"{o.Oorzaak} ({o.Bijdrage:+0.#} °C)"));
-            Toast.Toon(this, $"Kerntemperatuur {meting.Graden:+0;-0} °C — {meting.Toestand}.\nOpbouw: {opbouw}. " +
-                "Onder −18 °C ligt alles diepgevroren.", Fluent.Ster);
-        };
-        toolbar.Controls.Add(_thermometer);
+        // Portefeuille: enkel een euroteken, zonder cijfer en zonder kleur — in de werkbalk
+        // kijkt iedereen die langsloopt mee, en een groen of rood percentage trekt de blik.
+        // De stand van vandaag staat in de tooltip; klikken opent het venster.
+        _portefeuilleKnop = new ModernButton { Text = "€", Width = 44, Visible = false };
+        _portefeuilleKnop.Click += (_, _) => _openVenster("portefeuille");
+        _portefeuilleTip.SetToolTip(_portefeuilleKnop, "Portefeuille");
+        toolbar.Controls.Add(_portefeuilleKnop);
         // Niet storen (bv. in een meeting): WorkManager zwijgt tot de gekozen tijd; de knop
         // toont zolang hoe lang nog, in accentkleur.
         var nietStorenKnop = new ModernButton { Text = "🔕", Width = 44 };
@@ -1384,7 +1375,7 @@ public class CockpitForm : Form
         duimItem.Click += async (_, _) => await DuimOpBerichtAsync();
         berichtenMenu.Items.Add(duimItem);
         var reactieItem = new ToolStripMenuItem("Andere reactie");
-        foreach (var emoji in new[] { "❤️", "😀", "🎉", "🙏", "✅", "👀" })
+        foreach (var emoji in ReactieEmojis)
         {
             var mi = new ToolStripMenuItem(emoji);
             mi.Click += async (_, _) => await DuimOpBerichtAsync(emoji);
@@ -1694,6 +1685,25 @@ public class CockpitForm : Form
             Text = "🌐 Vertaling", Width = 130, Dock = DockStyle.Left, Visible = false,
         };
         _vertaalButton.Click += async (_, _) => await ToggleVertalingAsync();
+        // Google Chat: een duim is vaak antwoord genoeg. Stond alleen in het rechtermuismenu
+        // en op sneltoets D — als zichtbare knop is hij ook zonder die kennis vindbaar.
+        // Rechtsklikken op de knop geeft de andere emoji's.
+        _duimButton = new ModernButton
+        {
+            Text = "👍 Duim", Width = 110, Dock = DockStyle.Left, Visible = false,
+        };
+        new ToolTip().SetToolTip(_duimButton,
+            "Reageert met 👍 op het laatste bericht van deze chat en handelt de rij af " +
+            "(sneltoets D in de lijst). Rechtsklik voor een andere reactie.");
+        _duimButton.Click += async (_, _) => await DuimOpBerichtAsync();
+        var duimMenu = new ContextMenuStrip();
+        foreach (var emoji in ReactieEmojis)
+        {
+            var mi = new ToolStripMenuItem(emoji);
+            mi.Click += async (_, _) => await DuimOpBerichtAsync(emoji);
+            duimMenu.Items.Add(mi);
+        }
+        _duimButton.ContextMenuStrip = duimMenu;
 
         // Bijsturen: feedback voor Claude om het concept aan te passen (Enter = toepassen).
         _detailFeedback = new TextBox
@@ -1730,8 +1740,9 @@ public class CockpitForm : Form
         };
         foreach (var knop in new Control[]
         {
-            _claudeButton, _openButton, _cadeauButton, _outlookLeesButton, _vertaalButton,
-            _uitschrijfButton, archiefKnop, kopieerKnop, archiveerKnop, _verstuurButton,
+            _claudeButton, _duimButton, _openButton, _cadeauButton, _outlookLeesButton,
+            _vertaalButton, _uitschrijfButton, archiefKnop, kopieerKnop, archiveerKnop,
+            _verstuurButton,
         })
         {
             knop.Dock = DockStyle.None;
@@ -1959,6 +1970,14 @@ public class CockpitForm : Form
                 ispRij.Tekst.StartsWith(VasteTaken.FacturenTaak, StringComparison.OrdinalIgnoreCase))
             {
                 _openInvoices();
+                return;
+            }
+            // De vrijdagtaak "Weekmail team klaarzetten" opent het Taken team-venster, waar de
+            // weekmail zelf ook vandaan vertrekt.
+            if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij weekmailRij &&
+                weekmailRij.Tekst.StartsWith(VasteTaken.WeekmailTaak, StringComparison.OrdinalIgnoreCase))
+            {
+                _openTeamTasks();
                 return;
             }
             // De maandelijkse Bermacon-factuurtaak opent Billit; afvinken via rechtsklik.
@@ -2498,6 +2517,10 @@ public class CockpitForm : Form
         morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 8 });
         morgenPanel.Controls.Add(hilkeKnop);
         morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 4 });
+        // 🔔 pal rechts van "Lisa & Emilia": klik = de laatste melding nog eens, rechtsklik
+        // = het hele logje. Toasts zijn vluchtig, dit is het vangnet.
+        morgenPanel.Controls.Add(ToastKnop.Maak(this));
+        morgenPanel.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 4 });
         morgenPanel.Controls.Add(kidsKnop);
         morgenPanel.Controls.Add(volgendeDag);
         morgenPanel.Controls.Add(vorigeDag);
@@ -2664,6 +2687,7 @@ public class CockpitForm : Form
         Shown += async (_, _) =>
         {
             await InitWebViewAsync();
+            _ = WeerCache.VerversAsync(_cts.Token); // twee weken weer klaarzetten voor het bladeren
             VulBerichtenLijst(CockpitCache.Load(), fouten: null); // meteen de laatst bekende lijst
             await ToonMeetingsUitCacheAsync(); // en meteen de laatst bekende meetings
             UpdateContextKnoppen();
@@ -3133,7 +3157,7 @@ public class CockpitForm : Form
                     m.ConceptKlaar = bewaard.ConceptKlaar;
                     m.Concept = bewaard.Concept;
                     m.Reden = bewaard.Reden;
-                    m.Genegeerd = bewaard.Genegeerd && m.TeamsChat.Length == 0;
+                    m.Genegeerd = bewaard.Genegeerd;
                     m.Urgent = bewaard.Urgent;
                 }
             }
@@ -3477,6 +3501,9 @@ public class CockpitForm : Form
                     berichten.AddRange(vorigeCache.Where(m => m.TeamsChat.Length > 0));
                     ongelezen = new List<TeamsClient.TeamsBericht>();
                 }
+                var teamsHistorie = LaadTeamsHistorie();
+                string TeamsPreview(TeamsClient.TeamsBericht t) =>
+                    teamsPreviews.TryGetValue(t.Naam, out var p) ? p : t.Preview;
                 if (totaal >= 10)
                 {
                     // Zelf al geantwoord: de zijbalkpreview wordt live bijgewerkt, maar de
@@ -3484,8 +3511,8 @@ public class CockpitForm : Form
                     // pas na de volgende herlaadbeurt (tot ±5-8 min later). Een chat waarvan
                     // het laatste bericht van Maarten zelf is, is afgehandeld en hoeft die
                     // herlaadbeurt niet af te wachten.
-                    ongelezen.RemoveAll(t => BeantwoordInTeams(
-                        teamsPreviews.TryGetValue(t.Naam, out var p) ? p : t.Preview));
+                    ongelezen.RemoveAll(t => BeantwoordInTeams(TeamsPreview(t)) ||
+                        AfgehandeldMetReactie(teamsHistorie, t.Naam, TeamsPreview(t)));
                 }
                 var teamsRijen = ongelezen.Select(t => new MailBericht
                 {
@@ -3508,7 +3535,6 @@ public class CockpitForm : Form
                 // pas daarna getoond — het TeamsVers-register houdt ze vast tot ze
                 // gearchiveerd zijn (het laden opent de chat, dus Teams zet hem op gelezen
                 // en de zijbalk noemt hem daarna niet meer).
-                var teamsHistorie = LaadTeamsHistorie();
                 var teamsVers = VersRegister.TeamsVers.Load();
                 var teamsVersGewijzigd = false;
                 // Afgehandeld in Teams zelf: heeft Maarten intussen in de chat geantwoord,
@@ -3525,7 +3551,8 @@ public class CockpitForm : Form
                 {
                     foreach (var beantwoord in teamsVers.Values
                         .Where(v => teamsPreviews.TryGetValue(v.Chat, out var p) &&
-                            BeantwoordInTeams(p))
+                            (BeantwoordInTeams(p) ||
+                             AfgehandeldMetReactie(teamsHistorie, v.Chat, p)))
                         .Select(v => v.MessageId).ToList())
                     {
                         teamsVers.Remove(beantwoord);
@@ -3872,13 +3899,15 @@ public class CockpitForm : Form
                 m.ConceptKlaar = bewaard.ConceptKlaar;
                 m.Concept = bewaard.Concept;
                 m.Reden = bewaard.Reden;
-                // Teams is signaal-only: "ongelezen in Teams" is dé bron van waarheid. Neem
-                // de screening-vlag (mailvenster: "geen actie nodig") daarom NIET over voor
-                // Teams — anders verdwijnt een chat die in Teams nog ongelezen staat uit de
-                // cockpit. Archiveren zet de chat echt op gelezen in Teams, waardoor hij bij
-                // de volgende poll niet meer als ongelezen gedetecteerd wordt en zo vanzelf
-                // uit de lijst valt.
-                m.Genegeerd = bewaard.Genegeerd && m.TeamsChat.Length == 0;
+                // Ook voor Teams geldt de archiveringsvlag. Vroeger niet: "ongelezen in
+                // Teams" was dé bron van waarheid en archiveren zette de chat echt op
+                // gelezen, dus zou hij vanzelf wegvallen. Maar dat gelezen zetten mislukt
+                // geregeld (de controle erop keek naar een "unread"-badge die de nieuwe
+                // Teams-DOM niet meer zet, dus het meldde altijd succes), en dan kwam
+                // dezelfde chat bij élke poll terug — dagenlang. De sleutel bevat de laatste
+                // preview ("teams:naam|bericht"), dus zodra er écht een nieuw bericht komt,
+                // is het een andere sleutel en staat de chat gewoon weer in de lijst.
+                m.Genegeerd = bewaard.Genegeerd;
                 m.Urgent = bewaard.Urgent;
             }
         }
@@ -4202,29 +4231,78 @@ public class CockpitForm : Form
         WerkDagPlanBij(berichten);
     }
 
+    private ModernButton? _portefeuilleKnop;
+
+    private readonly ToolTip _portefeuilleTip = new();
+
+    private DateTimeOffset _koersenGehaald = DateTimeOffset.MinValue;
+
+    private bool _beursOpen;
+
+    /// <summary>
+    /// Het portefeuilleknopje in de werkbalk. Op de knop staat enkel een euroteken: geen
+    /// cijfer en geen kleur, zodat het naast de andere knoppen niet om aandacht vraagt (en
+    /// een meekijker er niets uit afleidt). De stand van vandaag komt pas tevoorschijn als je
+    /// eroverheen gaat, en volgt daar de privacystand van het venster.
+    ///
+    /// Terwijl de beurs open is worden de koersen om de twee minuten vernieuwd, daarbuiten
+    /// elk kwartier; tussendoor komt de stand uit de koerscache, zonder extra verkeer.
+    /// </summary>
+    private async Task WerkPortefeuilleKnopBijAsync()
+    {
+        if (_portefeuilleKnop is null || _portefeuilleKnop.IsDisposed)
+        {
+            return;
+        }
+        var portefeuille = PortefeuilleStore.Laad();
+        if (portefeuille.Posities.Count == 0)
+        {
+            _portefeuilleKnop.Visible = false;
+            return;
+        }
+
+        PortefeuilleStand stand;
+        var wachttijd = TimeSpan.FromMinutes(_beursOpen ? 2 : 15);
+        if (DateTimeOffset.Now - _koersenGehaald > wachttijd)
+        {
+            _koersenGehaald = DateTimeOffset.Now;
+            stand = await PortefeuilleMeting.MeetAsync(portefeuille, _cts.Token);
+            if (_cts.IsCancellationRequested || IsDisposed)
+            {
+                return;
+            }
+            _beursOpen = stand.BeursOpen;
+            if (!stand.UitCache && !stand.Onvolledig)
+            {
+                PortefeuilleHistoriek.Noteer(stand.Totaal);
+            }
+        }
+        else
+        {
+            stand = PortefeuilleMeting.UitCache(portefeuille);
+        }
+        if (stand.Regels.All(r => r.Koers is null))
+        {
+            _portefeuilleKnop.Visible = false;
+            return;
+        }
+
+        _portefeuilleKnop.Visible = true;
+        var verbergen = portefeuille.BedragenVerborgen;
+        _portefeuilleTip.SetToolTip(_portefeuilleKnop,
+            $"Portefeuille · {Bedrag.Euro(stand.Totaal, verbergen)}\n" +
+            $"Vandaag {Bedrag.EuroDelta(stand.DagVerschil, verbergen)} ({Bedrag.Procent(stand.DagProcent)})");
+    }
+
     /// <summary>
     /// Venstertitel én berichtenpaneel met het inbox-zero-plantje: hoe langer de reeks
     /// werkdagen met een lege inbox, hoe groter de plant. De venstertitel alleen bleek te
     /// onopvallend (zeker gemaximaliseerd), dus de plant staat ook groot in de cockpit zelf.
     /// Geen reeks = gewoon de kale titels.
     /// </summary>
-    private ModernButton? _thermometer;
-
-    /// <summary>De kerntemperatuur in de werkbalk bijwerken (na elke verversing).</summary>
-    private void WerkThermometerBij()
-    {
-        if (_thermometer is null)
-        {
-            return;
-        }
-        var meting = KernTemperatuur.Meet(_laatsteBerichten.Count);
-        _thermometer.Text = meting.Label;
-        _thermometer.KrimpNaarInhoud();
-    }
-
     private void WerkVensterTitelBij()
     {
-        WerkThermometerBij();
+        _ = WerkPortefeuilleKnopBijAsync();
         var reeks = InboxZeroReeks.Huidig();
         Text = reeks > 0
             ? $"{ThemaStem.CockpitTitel()}   {InboxZeroReeks.Plant(reeks)} {reeks}"
@@ -4586,6 +4664,9 @@ public class CockpitForm : Form
         _cadeauButton.Visible = false; // alleen bij een taak van de cadeauradar
         _outlookLeesButton.Visible = _getoond is { OutlookMail.Length: > 0 };
         _vertaalButton.Visible = _getoond is { Tekst.Length: > 3 };
+        // Reageren kan alleen op een chat die in de lijst staat: de duim gaat naar het laatste
+        // bericht en de rij wordt daarna afgehandeld.
+        _duimButton.Visible = IsChatBericht(_getoond);
         _vertaalButton.Text = _getoond is { Vertaling.Length: > 0, VertaalVerborgen: false }
             ? "🌐 Origineel" : "🌐 Vertaling";
         // Teams en CED-mails worden nooit vanuit WorkManager verstuurd (alleen concept-tekst
@@ -4838,7 +4919,12 @@ public class CockpitForm : Form
     /// </summary>
     private static bool TeamsHistorieActueel(TeamsHistorie h, string preview)
     {
-        var kern = preview.Trim().TrimEnd('…');
+        // De zijbalkpreview perst witruimte samen ("Hey,  ik" wordt "Hey, ik"), de bubbel
+        // bewaart ze; zonder normaliseren mist de vergelijking en blijft een chat die in
+        // Teams zelf al afgehandeld is (duim op het laatste bericht) toch terugkomen.
+        static string Norm(string s) => System.Text.RegularExpressions
+            .Regex.Replace(s, @"\s+", " ").Trim(); // \s dekt ook de harde spatie
+        var kern = Norm(preview).TrimEnd('…').Trim();
         // Zijbalkvorm "Naam: bericht" (of "Jij: bericht") → alleen het bericht zelf.
         var dp = kern.IndexOf(": ", StringComparison.Ordinal);
         if (dp > 0 && dp <= 30)
@@ -4858,8 +4944,22 @@ public class CockpitForm : Form
             return false; // cache van vóór de Teams-weergave (geen opmaak, avatar, citaat…): vers laden
         }
         return h.Berichten.TakeLast(3).Any(b =>
-            b.Tekst.Contains(kern, StringComparison.OrdinalIgnoreCase));
+            Norm(b.Tekst).Contains(kern, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// Met een emoji op het laatste bericht gereageerd (of er zelf nog onder geschreven) =
+    /// afgehandeld. Een reactie is in Teams géén bericht: de zijbalkpreview blijft gewoon de
+    /// tekst van de ander tonen, dus de "U:"-herkenning ziet dit niet en zo'n chat bleef
+    /// terugkomen. De gecachte historiek moet het bericht uit de preview wél al kennen,
+    /// anders zou een oude reactie een vers bericht wegfilteren.
+    /// </summary>
+    private static bool AfgehandeldMetReactie(
+        Dictionary<string, TeamsHistorie> historie, string chat, string preview) =>
+        historie.TryGetValue(chat, out var h) && h.Berichten.Count > 0 &&
+        TeamsHistorieActueel(h, preview) &&
+        h.Berichten.LastOrDefault(b => b.Soort.Length == 0) is { } laatste &&
+        (laatste.Uitgaand || laatste.EigenReactie);
 
     /// <summary>Transcript voor Claude en de berichttekst: datumscheidingen, systeem, media.</summary>
     private static string TeamsTranscript(IEnumerable<TeamsClient.TeamsChatBericht> berichten) =>
@@ -6585,6 +6685,7 @@ public class CockpitForm : Form
         _cadeauButton.Visible = Verjaardagen.IsRadarTaak(lokaal.Tekst);
         _uitschrijfButton.Visible = false;
         _outlookLeesButton.Visible = false;
+        _duimButton.Visible = false; // reageren hoort bij de chat in de lijst, niet bij de taak
         WerkAntwoordblokBij();
         var html = MailWeergave.BouwWeergave(bericht);
         if (_detail.CoreWebView2 is { } core)
@@ -6665,6 +6766,7 @@ public class CockpitForm : Form
             _cadeauButton.Visible = false;
             _uitschrijfButton.Visible = false;
             _outlookLeesButton.Visible = false;
+            _duimButton.Visible = false; // transcriptweergave: geen losse rij om af te handelen
             WerkAntwoordblokBij();
             Toast.Toon(this, "Chat met Jan geladen — typ je bericht en klik Versturen", Fluent.Send);
         }
@@ -7221,6 +7323,65 @@ public class CockpitForm : Form
         {
             _projectenHoofdknop.Visible = !breed;
         }
+    }
+
+    /// <summary>
+    /// Start een dev-app (<c>ng serve</c> op localhost:4200) in een WSL-console, maar kijkt
+    /// eerst wat er al draait: dezelfde app → niets doen; een andere → pas na bevestiging
+    /// afsluiten, anders niet starten. Alle dev-apps delen poort 4200, dus naast elkaar kan
+    /// niet. Gooit <see cref="OperationCanceledException"/> als er niets gestart wordt, zodat
+    /// het klantmenu dan geen "gestart"-melding toont.
+    /// </summary>
+    private void StartDevApp(string werkmap, string commando)
+    {
+        if (!ClientLauncher.TryWslPad(werkmap, out var distro, out var linux))
+        {
+            throw new ArgumentException($"Geen WSL-pad: {werkmap}");
+        }
+        List<(string Map, List<int> Pids)> draaiend;
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            draaiend = ClientLauncher.DraaiendeDevApps(distro);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+
+        // Projectnaam = eerste map onder ~/projecten ("aqurat/webapp" → "aqurat").
+        var projecten = linux[..(linux.LastIndexOf('/') + 1)];
+        string Naam(string map) =>
+            map.StartsWith(projecten, StringComparison.Ordinal) ? map[projecten.Length..].Split('/')[0] : map;
+        var naam = Naam(linux);
+
+        if (draaiend.Any(d => d.Map == linux || d.Map.StartsWith(linux + "/", StringComparison.Ordinal)))
+        {
+            Toast.Toon(this, $"{naam} draait al — localhost:4200", Fluent.Globe);
+            throw new OperationCanceledException();
+        }
+        if (draaiend.Count > 0)
+        {
+            var anderen = string.Join(", ", draaiend.Select(d => Naam(d.Map)).Distinct());
+            if (MessageBox.Show(this,
+                    $"Op localhost:4200 draait al een andere app: {anderen}.\n\n" +
+                    $"{anderen} afsluiten en {naam} starten?",
+                    "App starten", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            {
+                throw new OperationCanceledException();
+            }
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                ClientLauncher.StopDevApp(distro, draaiend.SelectMany(d => d.Pids));
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+            Toast.Toon(this, $"{anderen} afgesloten", Fluent.Check);
+        }
+        ClientLauncher.StartWslCommando(werkmap, commando);
     }
 
     /// <summary>
@@ -8609,6 +8770,38 @@ public class CockpitForm : Form
             Toast.Toon(this, "In Outlook verwerkt (bevestigd)", Fluent.Archive);
             return;
         }
+        if (resultaat == "rij-niet-gevonden")
+        {
+            // Maarten archiveert geregeld rechtstreeks in Outlook zelf. De cockpitlijst loopt
+            // dan achter, en "rij niet gevonden" betekent niet "mislukt" maar "stond er al niet
+            // meer". Hem dan terugzetten én in de wachtrij stoppen laat de mail eindeloos
+            // terugkomen (18 september 2026). Dus eerst een verse lijst halen en die laten
+            // beslissen: staat de mail er echt niet meer, dan is er niets te doen.
+            OutlookClient.Instance.ForceerHerlaad();
+            try
+            {
+                var vers = await OutlookClient.Instance.InboxAsync(_cts.Token);
+                if (vers is not null &&
+                    !vers.Any(m => m.Van == bericht.Van && m.Onderwerp == bericht.Onderwerp))
+                {
+                    Toast.Toon(this, "Stond al verwerkt in Outlook — uit de lijst gehaald",
+                        Fluent.Archive);
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return; // venster gesloten
+            }
+            catch
+            {
+                // Sessie niet bereikbaar: gewoon door naar het gewone foutpad hieronder.
+            }
+            if (IsDisposed)
+            {
+                return;
+            }
+        }
         bericht.Genegeerd = false;
         SchrijfConceptCache(bericht);
         if (!_laatsteBerichten.Any(m => m.MessageId == bericht.MessageId))
@@ -8716,6 +8909,12 @@ public class CockpitForm : Form
             : $"{volgende.Minuten} min";
         return $"      ▶ NU: {Kort(volgende.Tekst, 50)} (~{duur})";
     }
+
+    /// <summary>
+    /// De andere reacties naast 👍, zowel in het rechtermuismenu van de lijst als achter de
+    /// duimknop bij het antwoordvak.
+    /// </summary>
+    private static readonly string[] ReactieEmojis = { "❤️", "😀", "🎉", "🙏", "✅", "👀" };
 
     /// <summary>Een bericht waarop je kunt reageren: een Google Chat met een berichtnaam.</summary>
     private static bool IsChatBericht(MailBericht? m) =>
@@ -9330,15 +9529,14 @@ public class CockpitForm : Form
         _taken.BeginUpdate();
         _taken.Items.Clear();
         foreach (var rij in _taakRijen
-            // Vooruitblik-rijen ("Start vr 7 aug", "Mail terug…") horen bij de gekozen
-            // dag onder Meetings en vallen buiten het deadline-horizonfilter — anders
-            // verdwijnen ze meteen weer (deadline te ver weg of geen deadline).
-            // Dossierpunten (📁 Openstaand …) hebben bewust geen deadline maar horen wél
-            // altijd zichtbaar te zijn: zo kloppen "Open taken" en de "▶ NU"-aanwijzer met
-            // wat je in de lijst ziet (ze staan als een blok onderaan).
+            // De horizon ("Deadline ≤ 2 dagen") filtert déadlines, niet taken: wie geen
+            // deadline heeft valt er per definitie niet buiten en blijft dus altijd staan.
+            // Anders verdwijnen open taken zonder datum volledig uit beeld terwijl ze wél
+            // in de dagplanning zitten — en wees de "▶ NU"-aanwijzer naar een taak die
+            // nergens in de lijst te bekennen was. Hetzelfde geldt voor vooruitblik-rijen
+            // ("Start vr 7 aug", "Mail terug…") en dossierpunten (📁 Openstaand …).
             .Where(r => r.Bron is "Later" or "Snooze" ||
-                r.Tekst.StartsWith(DossierPunten.TaakPrefix, StringComparison.Ordinal) ||
-                grens is null || (r.Deadline is { } dl && dl <= grens))
+                grens is null || r.Deadline is not { } dl || dl <= grens)
             // Een lopende storing gaat vóór alles — ongeacht de gekozen sortering.
             .OrderBy(r => r.Tekst.StartsWith(AlarmMails.TaakPrefix, StringComparison.Ordinal) ? 0 : 1)
             .ThenBy(r => planVolgorde is not null && r.Lokaal is { } l &&
@@ -9745,21 +9943,15 @@ public class CockpitForm : Form
         try
         {
             var reis = ReisSettings.Load();
-            var weer = reis.HeeftThuis
-                ? await Weer.VoorDagAsync(reis.ThuisLat, reis.ThuisLon, dag, _cts.Token)
-                : null;
-            if (IsDisposed || dag != DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset))
-            {
-                return; // ondertussen naar een andere dag gebladerd
-            }
-            if (weer is null)
+            if (!reis.HeeftThuis)
             {
                 _weerLabel.Visible = false;
                 return;
             }
-            _weerLabel.Text = $"{weer.Kort}   ·   {weer.Omschrijving}" +
-                (weer.ParapluNodig ? "  —  paraplu mee" : "");
-            _weerLabel.Visible = true;
+            // Eerst uit de cache: die dekt twee weken vooruit, dus bij het bladeren naar de
+            // volgende dag staat het weer er meteen in plaats van na een netwerkverzoek.
+            ToonWeer(WeerCache.Uit(dag), dag);
+            ToonWeer(await WeerCache.VoorDagAsync(reis.ThuisLat, reis.ThuisLon, dag, _cts.Token), dag);
         }
         catch (OperationCanceledException)
         {
@@ -9769,6 +9961,23 @@ public class CockpitForm : Form
         {
             // Weer is bijzaak.
         }
+    }
+
+    /// <summary>Zet de weerregel onder de kalender, tenzij er ondertussen gebladerd is.</summary>
+    private void ToonWeer(Weer.Verwachting? weer, DateOnly dag)
+    {
+        if (IsDisposed || dag != DateOnly.FromDateTime(DateTime.Now).AddDays(_meetingsOffset))
+        {
+            return;
+        }
+        if (weer is null)
+        {
+            _weerLabel.Visible = false;
+            return;
+        }
+        _weerLabel.Text = $"{weer.Kort}   ·   {weer.Omschrijving}" +
+            (weer.ParapluNodig ? "  —  paraplu mee" : "");
+        _weerLabel.Visible = true;
     }
 
     /// <summary>

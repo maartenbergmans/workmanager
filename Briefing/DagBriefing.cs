@@ -107,7 +107,8 @@ public static class DagBriefing
             var reis = ReisSettings.Load();
             if (reis.Aan && reis.HeeftThuis)
             {
-                briefing.Weer = await Weer.VandaagAsync(reis.ThuisLat, reis.ThuisLon, ct) is { } weer
+                briefing.Weer = await WeerCache.VoorDagAsync(
+                    reis.ThuisLat, reis.ThuisLon, DateOnly.FromDateTime(DateTime.Now), ct) is { } weer
                     ? weer.Regel
                     : "";
                 briefing.Reis = await EersteVerplaatsingAsync(agenda, reis, ct);
