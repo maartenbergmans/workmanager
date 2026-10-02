@@ -16,11 +16,14 @@ public static class ClientLauncher
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WorkManager", "launcher.log");
 
     /// <summary>
-    /// Commando voor een interactieve Claude Code-sessie. Altijd in automodus
-    /// (auto-accept edits): bewerkingen lopen door zonder toestemmingsvragen
-    /// (Maarten wil automodus, 2026-09-01 — draait het besluit van 2026-08-07 om).
+    /// Commando voor een interactieve Claude Code-sessie. Altijd in de échte automodus
+    /// ("auto", de ⏵⏵⏵-stand): niet alleen bewerkingen maar ook commando's lopen door
+    /// zonder toestemmingsvragen. Stond tot 2026-09-25 op "acceptEdits" — dat is maar de
+    /// halve automodus (alleen edits), waardoor Maarten in élke sessie zelf shift+tab
+    /// moest drukken. Geldige waarden van de CLI: acceptEdits, auto, bypassPermissions,
+    /// manual, dontAsk, plan.
     /// </summary>
-    private const string ClaudeCommando = "claude --permission-mode acceptEdits";
+    private const string ClaudeCommando = "claude --permission-mode auto";
 
     /// <summary>
     /// Omgevingsvariabelen die Claude Code in zijn subprocessen zet. Wordt WorkManager of
@@ -61,6 +64,9 @@ public static class ClientLauncher
         // op "urbanit" alleen: de glascalculator staat onder G:\…\UrbanIT\Lauryssens.
         ("urbanadmin", "pink", "UrbanIT"),
         ("urbanit-website", "pink", "UrbanIT"),
+        // Repalink (repalink-backend/-frontend, repalink-website, de AS400-koppeling): hoort
+        // in het Projecten-menu onder UrbanIT, dus ook dezelfde roze promptkleur.
+        ("repalink", "pink", "UrbanIT"),
         // RadiologyPartners: cyan sluit aan bij de teal klantkleur in de cockpit.
         ("bloom", "cyan", "RadiologyPartners"),
         // Vriesveemlogistiek (Movaware) en Vriesveem (Cellaware) elk hun eigen kleur.

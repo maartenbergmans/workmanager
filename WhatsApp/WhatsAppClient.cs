@@ -69,7 +69,7 @@ public sealed class WhatsAppClient : IDisposable
         }
         if (_web?.CoreWebView2 is null)
         {
-            _venster = new Form
+            _venster = new StilVenster
             {
                 Text = "WhatsApp koppelen – scan de QR-code met je telefoon",
                 // Bewust hoog (buiten beeld): meer gerenderde chatrijen in de lijst.
@@ -383,8 +383,10 @@ public sealed class WhatsAppClient : IDisposable
                 // de verborgen pagina om de echte weergave te kunnen beoordelen.
                 File.WriteAllText(Path.Combine(DataDir, "wa-debug.json"), json);
                 using var beeld = new MemoryStream();
-                await _web!.CoreWebView2!.CapturePreviewAsync(
-                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                await WebLimiet.MetLimietAsync(
+                    _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                    WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 File.WriteAllBytes(Path.Combine(DataDir, "wa-screen.png"), beeld.ToArray());
             }
             catch
@@ -955,6 +957,35 @@ public sealed class WhatsAppClient : IDisposable
                   try {
                     const wacht = ms => new Promise(r => setTimeout(r, ms));
                     const T = el => el ? window.__wmWaTekst(el) : '';
+                    // Het scrollende berichtenpaneel (de lijst is gevirtualiseerd: alleen wat
+                    // in of net buiten beeld staat, staat in de DOM).
+                    const paneel = () => {
+                        const rij = document.querySelector('#main [role="row"]');
+                        for (let e = rij; e && e !== document.body; e = e.parentElement) {
+                            const st = getComputedStyle(e);
+                            if (/(auto|scroll)/.test(st.overflowY) &&
+                                e.scrollHeight > e.clientHeight + 40) return e;
+                        }
+                        return null;
+                    };
+                    // WhatsApp bewaart de scrollstand per chat, en onze eigen fotolezer
+                    // (scrollIntoView hieronder) laat het paneel bij het oudste beeld achter.
+                    // Een klik op een chat die al openstaat zet die stand niet terug, dus
+                    // lazen we bij elke ronde weer hetzelfde oude stuk gesprek — nieuwe
+                    // berichten kwamen nooit in beeld. Daarom eerst helemaal naar beneden;
+                    // dat laadt de nieuwste bubbels bij (vandaar de herhaling).
+                    const naarOnder = async () => {
+                        const p = paneel();
+                        if (!p) return;
+                        for (let i = 0; i < 15; i++) {
+                            const hoogte = p.scrollHeight;
+                            p.scrollTop = hoogte;
+                            await wacht(220);
+                            if (p.scrollHeight === hoogte &&
+                                p.scrollHeight - p.scrollTop - p.clientHeight < 8) return;
+                        }
+                    };
+                    await naarOnder();
                     const zoekRijen = () => {
                         // Elke rij met een bubbel (ook foto's, albums, polls en oproepen zonder
                         // data-pre-plain-text) plus systeemmeldingen (rij met tekst, zonder bubbel).
@@ -1372,6 +1403,11 @@ public sealed class WhatsAppClient : IDisposable
                             media, mediaInfo, poll, systeem: false,
                         });
                     }
+                    // Het fotolezen heeft het paneel omhoog gescrold: weer onderaan
+                    // achterlaten, zodat een volgende ronde (en WhatsApp zelf) bij de
+                    // nieuwste berichten begint.
+                    const pEind = paneel();
+                    if (pEind) pEind.scrollTop = pEind.scrollHeight;
                     msgs.reverse();
                     const gevuld = msgs.filter(m => m.txt || m.beeld || m.media || m.link);
                     window.__wmWaMsgs = gevuld.length > 0 ? gevuld : { leeg: true, diag: {
@@ -1879,8 +1915,10 @@ public sealed class WhatsAppClient : IDisposable
                 await Task.Delay(1500, ct);
             }
             using var beeld = new MemoryStream();
-            await _web!.CoreWebView2!.CapturePreviewAsync(
-                CoreWebView2CapturePreviewImageFormat.Png, beeld);
+            await WebLimiet.MetLimietAsync(
+                _web!.CoreWebView2!.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
             File.WriteAllBytes(pad, beeld.ToArray());
         }
         finally
@@ -1933,9 +1971,17 @@ public sealed class WhatsAppClient : IDisposable
     }
 
     /// <summary>
-    /// Voert een script uit in de pagina. Met tijdslimiet: een vastgelopen renderer liet de
-    /// hele poll anders eeuwig hangen (ExecuteScriptAsync keert dan nooit terug). Bij een
-    /// time-out wordt de sessie gemarkeerd voor een verse start.
+    /// Wat er bij een vastloper moet gebeuren: de sessie markeren voor een verse start.
+    /// </summary>
+    private Action? Herstel(bool aan) => aan ? MarkeerVoorVerseStart : null;
+
+    private const string CrashLog = "wa-crash-log.txt";
+
+    /// <summary>
+    /// Voert een script uit in de pagina. Met tijdslimiet (zie <see cref="WebLimiet"/>): een
+    /// vastgelopen renderer liet de hele poll anders eeuwig hangen — ExecuteScriptAsync
+    /// keert dan nooit terug. Bij een time-out wordt de sessie gemarkeerd voor een verse
+    /// start en komt de vastloper in het crashlogboek.
     /// </summary>
     private async Task<string> JsAsync(string script, int tijdslimietSeconden = 20)
     {
@@ -1945,16 +1991,9 @@ public sealed class WhatsAppClient : IDisposable
         }
         try
         {
-            var taak = core.ExecuteScriptAsync(script);
-            if (await Task.WhenAny(taak, Task.Delay(TimeSpan.FromSeconds(tijdslimietSeconden)))
-                != taak)
-            {
-                _gecrasht = true;
-                throw new TimeoutException(
-                    $"WhatsApp Web reageerde niet binnen {tijdslimietSeconden} s; " +
-                    "de sessie wordt bij de volgende synchronisatie opnieuw gestart.");
-            }
-            return await taak;
+            return await WebLimiet.MetLimietAsync(
+                core.ExecuteScriptAsync(script), TimeSpan.FromSeconds(tijdslimietSeconden),
+                "JavaScript", CrashLog, Herstel(true));
         }
         catch (Exception ex) when (ex.Message.Contains("no longer valid",
             StringComparison.OrdinalIgnoreCase))

@@ -75,7 +75,7 @@ public sealed class OutlookClient : IDisposable
             {
                 if (_venster is null)
                 {
-                    _venster = new Form
+                    _venster = new StilVenster
                     {
                         Text = "Outlook (CED) aanmelden – maarten.bergmans@ced.be",
                         // Bewust groot: het venster staat buiten beeld en hoe hoger het is,
@@ -162,22 +162,35 @@ public sealed class OutlookClient : IDisposable
         for (var i = 0; i < wachtSeconden * 2; i++)
         {
             ct.ThrowIfCancellationRequested();
-            if (await IsIngelogdAsync())
+            try
             {
-                File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
-                Aangemeld = true;
-                return true;
+                if (await IsIngelogdAsync(herstel: false))
+                {
+                    File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                    Aangemeld = true;
+                    return true;
+                }
+                // Verlopen sessie ("uw organisatiebeleid vereist dat u zich opnieuw
+                // aanmeldt"): niet blijven wachten op handwerk, maar het Microsoft-scherm
+                // stil invullen — wachtwoord én (met TOTP-seed) de MFA-code. Alleen op
+                // échte aanmeldpagina's, nooit in OWA zelf: de "Ja"-fallback van het
+                // KmsI-scherm zou daar op een knop in een mail kunnen klikken.
+                if (i % 2 == 1 && await JsAsync(
+                        "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
+                        ".test(location.hostname)", herstel: false) == "true")
+                {
+                    MicrosoftLogin.NaLoginStap(
+                        await JsAsync(MicrosoftLogin.VulScript(), herstel: false), null);
+                }
             }
-            // Verlopen sessie ("uw organisatiebeleid vereist dat u zich opnieuw aanmeldt"):
-            // niet blijven wachten op handwerk, maar het Microsoft-scherm stil invullen —
-            // wachtwoord én (met TOTP-seed) de MFA-code. Alleen op échte aanmeldpagina's,
-            // nooit in OWA zelf: de "Ja"-fallback van het KmsI-scherm zou daar op een
-            // knop in een mail kunnen klikken.
-            if (i % 2 == 1 && await JsAsync(
-                    "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
-                    ".test(location.hostname)") == "true")
+            catch (TimeoutException)
             {
-                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), null);
+                // De pagina antwoordt helemaal niet meer. Doorwachten kost alleen tijd:
+                // deze beurt opgeven en de sessie bij de volgende poll vers opbouwen —
+                // dezelfde route als het crashherstel, dus de aanmelding blijft staan.
+                _gecrasht = true;
+                Aangemeld = false;
+                return false;
             }
             await Task.Delay(500, ct);
         }
@@ -435,7 +448,7 @@ public sealed class OutlookClient : IDisposable
         return false;
     }
 
-    private async Task<bool> IsIngelogdAsync() =>
+    private async Task<bool> IsIngelogdAsync(bool herstel = true) =>
         // Alleen "ingelogd" bij een echt mailonderdeel. Let op: toetsen op berichtenrijen
         // ([data-convid] / [role=option]) is fout — bij een leeggewerkte Postvak IN zijn die
         // er niet, en dan concludeert StartAsync na dertig seconden "niet aangemeld". Dat
@@ -451,7 +464,7 @@ public sealed class OutlookClient : IDisposable
                document.getElementById('MailList') ||
                document.querySelector('[data-convid]') ||
                document.querySelector('[role="option"][aria-label]'))
-            """) == "true";
+            """, herstel) == "true";
 
     public sealed record OutlookBericht(
         string Van, string Onderwerp, string Preview, bool Ongelezen, DateTimeOffset? Datum);
@@ -1014,8 +1027,10 @@ public sealed class OutlookClient : IDisposable
             try
             {
                 using var beeld = new MemoryStream();
-                await _web!.CoreWebView2!.CapturePreviewAsync(
-                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                await WebLimiet.MetLimietAsync(
+                    _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                    WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 File.WriteAllBytes(pad, beeld.ToArray());
                 log($"Schermafdruk: {pad}");
                 return new OutlookDiagnose(pad);
@@ -1126,8 +1141,10 @@ public sealed class OutlookClient : IDisposable
                 try
                 {
                     using var beeld = new MemoryStream();
-                    await _web!.CoreWebView2!.CapturePreviewAsync(
-                        CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                    await WebLimiet.MetLimietAsync(
+                        _web!.CoreWebView2!.CapturePreviewAsync(
+                            CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                        WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                     File.WriteAllBytes(Path.Combine(DataDir, "outlook-screen.png"), beeld.ToArray());
                 }
                 catch
@@ -1753,8 +1770,10 @@ public sealed class OutlookClient : IDisposable
                 $"{{\"van\":{vanJs},\"onderwerp\":{onderwerpJs},\"boxKlaar\":{boxKlaar}," +
                 $"\"rijen\":{rijen}}}");
             using var beeld = new MemoryStream();
-            await _web!.CoreWebView2!.CapturePreviewAsync(
-                CoreWebView2CapturePreviewImageFormat.Png, beeld);
+            await WebLimiet.MetLimietAsync(
+                _web!.CoreWebView2!.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
             File.WriteAllBytes(Path.Combine(DataDir, "outlook-screen.png"), beeld.ToArray());
         }
         catch
@@ -2270,8 +2289,10 @@ public sealed class OutlookClient : IDisposable
                 try
                 {
                     using var beeld = new MemoryStream();
-                    await _web!.CoreWebView2!.CapturePreviewAsync(
-                        CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                    await WebLimiet.MetLimietAsync(
+                        _web!.CoreWebView2!.CapturePreviewAsync(
+                            CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                        WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                     File.WriteAllBytes(
                         Path.Combine(DataDir, "outlook-snooze-screen.png"), beeld.ToArray());
                 }
@@ -2399,12 +2420,14 @@ public sealed class OutlookClient : IDisposable
 
     /// <summary>
     /// Zet een nieuwe mail klaar als concept in Outlook (CED): opent OWA's compose-deeplink
-    /// met ontvangers, onderwerp en tekst, laat OWA hem als concept bewaren (na een echte
-    /// toetsaanslag — pas dan start de autosave) en toont het venster zodat Maarten kan
-    /// nalezen en versturen vanuit Outlook zelf. Sluiten van het venster = verbergen; het
-    /// concept staat dan in de map Concepten. True als OWA "Concept opgeslagen" toonde.
+    /// met ontvangers, onderwerp en tekst en laat OWA hem als concept bewaren (na een echte
+    /// toetsaanslag — pas dan start de autosave). Lukt dat, dan blijft het venster verborgen
+    /// en staat de mail gewoon in de map Concepten van de eigen Outlook; lukt het niet, dan
+    /// komt het venster toch in beeld zodat de tekst niet verloren gaat (of altijd, met
+    /// <paramref name="toonVenster"/>). True als OWA "Concept opgeslagen" toonde.
     /// </summary>
-    public async Task<bool> MaakConceptAsync(string aan, string onderwerp, string tekst, CancellationToken ct)
+    public async Task<bool> MaakConceptAsync(string aan, string onderwerp, string tekst, CancellationToken ct,
+        bool toonVenster = false)
     {
         await _slot.WaitAsync(ct);
         try
@@ -2481,10 +2504,30 @@ public sealed class OutlookClient : IDisposable
             {
                 // Alleen diagnose.
             }
-            // Venster tonen (zoals bij het Archief): nalezen, aanpassen, versturen in Outlook.
+            if (opgeslagen && !toonVenster)
+            {
+                // Het concept staat in de map Concepten: niets meer te tonen. Terug naar het
+                // gewone postvak (anders leest de volgende poll het compose-scherm uit) en
+                // het venster weer buiten beeld parkeren — geen scherm dat blijft blokkeren.
+                _web!.CoreWebView2!.Navigate("https://outlook.office.com/mail/");
+                for (var i = 0; i < 30; i++)
+                {
+                    await Task.Delay(500, ct);
+                    if (await IsIngelogdAsync())
+                    {
+                        break;
+                    }
+                }
+                Verberg();
+                return true;
+            }
+            // Niet bevestigd (of uitdrukkelijk gevraagd): venster tonen zodat de tekst niet
+            // verloren gaat en Maarten hem daar kan bewaren of versturen.
             LogVensterOnScreen("MaakConceptAsync (concept weekmail)");
             var scherm = Screen.FromPoint(Cursor.Position).WorkingArea;
-            _venster!.Text = "Outlook (CED) — concept klaargezet · versturen doe je hier; sluiten = venster verbergen";
+            _venster!.Text = opgeslagen
+                ? "Outlook (CED) — concept klaargezet · versturen doe je hier; sluiten = venster verbergen"
+                : "Outlook (CED) — concept nog NIET bewaard · bewaar of verstuur hem hier; sluiten = venster verbergen";
             _venster.Size = new Size(Math.Min(1400, scherm.Width - 80), Math.Min(1000, scherm.Height - 80));
             _venster.Location = new Point(
                 scherm.X + (scherm.Width - _venster.Width) / 2,
@@ -2504,10 +2547,14 @@ public sealed class OutlookClient : IDisposable
     public async Task<string> DiagnoseConceptAsync(string aan, string onderwerp, string tekst, string png,
         CancellationToken ct)
     {
-        var ok = await MaakConceptAsync(aan, onderwerp, tekst, ct);
+        // Bij diagnose willen we het compose-scherm zelf op de foto, dus venster tonen.
+        var ok = await MaakConceptAsync(aan, onderwerp, tekst, ct, toonVenster: true);
         await Task.Delay(1500, ct);
         using var beeld = new MemoryStream();
-        await _web!.CoreWebView2!.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, beeld);
+        await WebLimiet.MetLimietAsync(
+            _web!.CoreWebView2!.CapturePreviewAsync(
+                CoreWebView2CapturePreviewImageFormat.Png, beeld),
+            WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
         File.WriteAllBytes(png, beeld.ToArray());
         Verberg();
         return ok ? "concept opgeslagen" : "concept NIET bevestigd (zie outlook-concept-debug.txt)";
@@ -3819,7 +3866,18 @@ public sealed class OutlookClient : IDisposable
         return web;
     }
 
-    private async Task<string> JsAsync(string script)
+    /// <summary>
+    /// Alle WebView2-aanroepen lopen via <see cref="WebLimiet"/>: zonder tijdslimiet kan een
+    /// beurt oneindig blijven hangen op een renderer die niet meer antwoordt (zie de
+    /// vastgelopen Teams-beurten van 23-09-2026). Herstel = de sessie markeren voor een
+    /// verse opbouw bij de volgende poll; null tijdens het opstarten en aanmelden, waar
+    /// traagheid normaal is en een verse opbouw zichzelf zou blijven herhalen.
+    /// </summary>
+    private Action? Herstel(bool aan) => aan ? MarkeerVoorVerseStart : null;
+
+    private const string CrashLog = "outlook-crash-log.txt";
+
+    private async Task<string> JsAsync(string script, bool herstel = true)
     {
         // Binnen agenda-operaties wijst _jsDoel naar het agenda-tabblad; daarbuiten
         // werkt alles op de hoofdpagina (Postvak IN).
@@ -3829,7 +3887,9 @@ public sealed class OutlookClient : IDisposable
         }
         try
         {
-            return await core.ExecuteScriptAsync(script);
+            return await WebLimiet.MetLimietAsync(
+                core.ExecuteScriptAsync(script), WebLimiet.Script, "JavaScript",
+                CrashLog, Herstel(herstel));
         }
         catch (Exception ex) when (ex.Message.Contains("no longer valid",
             StringComparison.OrdinalIgnoreCase))

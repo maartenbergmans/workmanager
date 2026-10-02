@@ -472,6 +472,9 @@ public class AhIngredientenForm : Form
     /// <summary>
     /// Laat Claude ('claude -p' op het abonnement) een recept voorstellen op basis van de
     /// gerechtnaam en de ingrediënten van de groep, en vult tekst + bereidingstijd + personen in.
+    /// Claude doet er een tiental seconden over; wisselt er intussen links een ander gerecht
+    /// onder de cursor, dan gaat het antwoord rechtstreeks naar het gerecht waarvoor het
+    /// gevraagd is — anders krijgt het verkeerde gerecht dit recept.
     /// </summary>
     private async Task StelReceptVoor()
     {
@@ -514,15 +517,28 @@ public class AhIngredientenForm : Form
                 Toast.Toon(this, "Claude gaf geen bruikbaar recept terug", Fluent.Ster);
                 return;
             }
-            _recept.Text = recepttekst.Replace("\\n", "\n").Trim();
-            if (wortel.TryGetProperty("minuten", out var m) && m.TryGetInt32(out var minuten))
+            var tekst = recepttekst.Replace("\\n", "\n").Trim();
+            var minutenWaarde = wortel.TryGetProperty("minuten", out var m) && m.TryGetInt32(out var mv)
+                ? Math.Clamp(mv, 0, 480)
+                : Recepten.GetValueOrDefault(groep.Naam)?.Minuten ?? 0;
+            var personenWaarde = wortel.TryGetProperty("personen", out var p) && p.TryGetInt32(out var pv)
+                ? Math.Clamp(pv, 1, 20)
+                : Recepten.GetValueOrDefault(groep.Naam)?.Personen ?? 4;
+
+            // Staat er nu een ander gerecht geselecteerd, dan hoort dit recept niet in het
+            // paneel: rechtstreeks wegschrijven bij het gerecht dat het gevraagd heeft.
+            if (!ReferenceEquals(HuidigeGroep, groep))
             {
-                _minuten.Value = Math.Clamp(minuten, 0, 480);
+                Recepten[groep.Naam] = new Recept
+                {
+                    Tekst = tekst, Minuten = minutenWaarde, Personen = personenWaarde,
+                };
+                Toast.Toon(this, $"Recept voor \"{groep.Naam}\" bewaard", Fluent.Ster);
+                return;
             }
-            if (wortel.TryGetProperty("personen", out var p) && p.TryGetInt32(out var personen))
-            {
-                _personen.Value = Math.Clamp(personen, 1, 20);
-            }
+            _recept.Text = tekst;
+            _minuten.Value = minutenWaarde;
+            _personen.Value = personenWaarde;
             // De TextChanged/ValueChanged-handlers schrijven het recept al naar Recepten.
             Toast.Toon(this, "Recept voorgesteld door Claude — pas gerust aan", Fluent.Ster);
         }

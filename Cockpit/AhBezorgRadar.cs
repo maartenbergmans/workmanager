@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -93,12 +94,16 @@ public static class AhBezorgRadar
                 {
                     state.LaatsteCheck = DateTimeOffset.Now - Interval + TimeSpan.FromMinutes(30);
                     // Een toast is hier te vluchtig (weg voor je hem ziet): het loginvenster
-                    // gaat gewoon meteen open — hooguit één keer per dag, en alleen op een
-                    // leverdag wanneer de login echt ontbreekt. Inloggen + venster sluiten
-                    // volstaat; de radar pakt daarna vanzelf door.
-                    if (state.LoginMelding != vandaag.ToString("O") && !eigenaar.IsDisposed)
+                    // gaat gewoon meteen open, en alleen op een leverdag wanneer de login echt
+                    // ontbreekt. Inloggen + venster sluiten volstaat; de radar pakt daarna
+                    // vanzelf door. Tot 2026-09-25 kwam dat venster hooguit één keer per dag:
+                    // wie het miste of wegklikte (of wie een captcha kreeg die niet laadde),
+                    // kreeg die dag geen bezorgmoment meer. Nu blijft het elk uur terugkomen
+                    // zolang de levering nog moet komen — dat is precies de dag waarop het telt.
+                    if (DateTimeOffset.Now - LaatsteLoginMelding(state) >= TimeSpan.FromHours(1) &&
+                        !eigenaar.IsDisposed)
                     {
-                        state.LoginMelding = vandaag.ToString("O");
+                        state.LoginMelding = DateTimeOffset.Now.ToString("O");
                         BewaarState(state);
                         await AhSessie.Instance.ToonLoginAsync(ct);
                         Toast.Toon(eigenaar,
@@ -212,8 +217,20 @@ public static class AhBezorgRadar
         public string SlotStart { get; set; } = "";
         public string SlotEinde { get; set; } = "";
         public string LaatsteVenster { get; set; } = "";
+
+        /// <summary>
+        /// Wanneer het loginvenster het laatst uit zichzelf openging. Sinds 2026-09-25 een
+        /// volledig tijdstip; oudere bestanden hebben hier alleen een datum staan — die telt
+        /// als middernacht, dus het venster mag meteen weer komen.
+        /// </summary>
         public string LoginMelding { get; set; } = "";
     }
+
+    private static DateTimeOffset LaatsteLoginMelding(State state) =>
+        DateTimeOffset.TryParse(state.LoginMelding, CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind, out var moment)
+            ? moment
+            : DateTimeOffset.MinValue;
 
     private static State LaadState()
     {

@@ -184,9 +184,10 @@ public class TeamMailForm : Form
     }
 
     /// <summary>
-    /// Zet de mail als concept klaar in de CED-Outlook (verborgen OWA-sessie) en toont dat
-    /// venster. Het klaarzetten telt als "verstuurd" voor de takenlijst (📧-tellers,
-    /// weektaak): de laatste stap gebeurt in Outlook.
+    /// Zet de mail als concept klaar in de CED-Outlook (verborgen OWA-sessie) en laat dat
+    /// venster verborgen: het concept staat in de map Concepten, versturen gebeurt gewoon in
+    /// Maartens eigen Outlook. Alleen als OWA het bewaren niet bevestigt komt het venster in
+    /// beeld. Het klaarzetten telt als "verstuurd" voor de takenlijst (📧-tellers, weektaak).
     /// </summary>
     private async Task ConceptInOutlookAsync()
     {
@@ -213,8 +214,8 @@ public class TeamMailForm : Form
             TeamMailBuilder.MarkeerVerzonden(_data);
             TeamTaskStore.Save(_data);
             _status.Text = opgeslagen
-                ? "Concept staat in Outlook — versturen doe je daar."
-                : "Compose-venster staat open in Outlook; bewaar of verstuur hem daar.";
+                ? "Concept staat in je Outlook (map Concepten) — versturen doe je daar zelf."
+                : "Niet bevestigd: het compose-venster staat open; bewaar of verstuur hem daar.";
             Toast.Toon(this, _status.Text, Fluent.Mail);
         }
         catch (OperationCanceledException)

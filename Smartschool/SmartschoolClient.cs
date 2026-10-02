@@ -764,7 +764,7 @@ public sealed class SmartschoolClient : IDisposable
             }
             if (_web?.CoreWebView2 is null)
             {
-                _venster = new Form
+                _venster = new StilVenster
                 {
                     Text = "Smartschool (GIBO Mariaburg)",
                     Size = new Size(1280, 1400),

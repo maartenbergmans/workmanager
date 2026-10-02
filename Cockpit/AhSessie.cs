@@ -68,6 +68,16 @@ public sealed class AhSessie
                 // Loginscherm ("Even controleren")? Eén keer zelf inloggen met de bewaarde
                 // gegevens; alleen een captcha-challenge houdt dat tegen (dan blijft de
                 // pagina staan en volgt de gewone venster-route).
+                // Meldt de pagina zélf dat de captcha niet geladen kon worden — wat in dit
+                // onzichtbare venster geregeld gebeurt — dan is klikken kansloos: ah.be
+                // weigert de poging en telt hem wel mee. Dan meteen door naar de
+                // venster-route, waar Maarten de captcha wél kan zetten.
+                if (CaptchaKapot(tekst))
+                {
+                    LaatsteLoginDiagnose = $"{DateTime.Now:HH:mm:ss} captcha laadt niet — " +
+                        "stille login overgeslagen, handmatig inloggen nodig";
+                    break;
+                }
                 if (!loginGeprobeerd && LijktLoginPagina(tekst) &&
                     AhLoginSettings.Load() is { Compleet: true } login)
                 {
@@ -238,6 +248,13 @@ public sealed class AhSessie
     /// <summary>Wat de laatste auto-loginpoging deed en opleverde — voor de debugdump.</summary>
     public static string LaatsteLoginDiagnose { get; private set; } = "";
 
+    /// <summary>
+    /// De hCaptcha op het AH-loginscherm laadt niet (komt voor in het offscreen venster).
+    /// Inloggen kán dan niet — ook niet handmatig — tot de pagina opnieuw geladen wordt.
+    /// </summary>
+    private static bool CaptchaKapot(string tekst) =>
+        tekst.Contains("captcha controle niet laden", StringComparison.OrdinalIgnoreCase);
+
     private static bool LijktLoginPagina(string tekst) =>
         tekst.Contains("opnieuw te laten weten wie je bent", StringComparison.OrdinalIgnoreCase) ||
         tekst.Contains("Log in met een Passkey", StringComparison.OrdinalIgnoreCase);
@@ -358,7 +375,7 @@ public sealed class AhSessie
         }
         try
         {
-            _venster = new Form
+            _venster = new StilVenster
             {
                 Text = "Albert Heijn – inloggen",
                 Size = new Size(1100, 850),

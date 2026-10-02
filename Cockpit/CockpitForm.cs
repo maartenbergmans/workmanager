@@ -420,12 +420,24 @@ public class CockpitForm : Form
                 ("Claude — urbanadmin", () => ClientLauncher.StartClaude(wsl + "urbanadmin"), wsl + "urbanadmin"),
                 ("PhpStorm — urbanadmin", () => ClientLauncher.StartPhpStorm(wsl + "urbanadmin"), null),
                 // start.sh = ng serve met /api-proxy naar de backend-container (:4408).
-                ("App starten — start.sh", () => StartDevApp(wsl + "urbanadmin", "./start.sh"), null),
-                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
+                ("App starten — urbanadmin (start.sh)", () => StartDevApp(wsl + "urbanadmin", "./start.sh"), null),
                 ("Timesheets (productie)", () => OpenExtern("https://timesheets.urbanit.be/app/"), null),
                 ("DataGrip — UrbanIT", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "UrbanIT")), null),
                 ("Deploytool — urbanadmin/backend (default)", () => ClientLauncher.StartDeploytool(wsl + @"urbanadmin\backend", "default"), null),
                 ("Claude — urbanit-website", () => ClientLauncher.StartClaude(@"C:\Data\Projecten\urbanit-website"), @"C:\Data\Projecten\urbanit-website"),
+                // Repalink-support (CED Nederland-werk, maar op Maartens vraag hier onder
+                // UrbanIT): Laravel-backend + Angular-frontend in WSL. start.sh = ng serve
+                // met /api-proxy naar de backend-container (:4405).
+                ("Claude — repalink-backend", () => ClientLauncher.StartClaude(wsl + "repalink-backend"), wsl + "repalink-backend"),
+                ("Claude — repalink-frontend", () => ClientLauncher.StartClaude(wsl + "repalink-frontend"), wsl + "repalink-frontend"),
+                ("PhpStorm — repalink-backend", () => ClientLauncher.StartPhpStorm(wsl + "repalink-backend"), null),
+                ("PhpStorm — repalink-frontend", () => ClientLauncher.StartPhpStorm(wsl + "repalink-frontend"), null),
+                ("App starten — repalink (start.sh)", () => StartDevApp(wsl + "repalink-frontend", "./start.sh"), null),
+                ("DataGrip — Repalink", () => ClientLauncher.StartDataGrip(Path.Combine(dg, "Repalink")), null),
+                ("Deploytool — repalink-backend (default)", () => ClientLauncher.StartDeploytool(wsl + "repalink-backend", "default"), null),
+                // Er kan er maar één dev-app tegelijk op :4200 staan (StartDevApp waakt
+                // daarover), dus deze link geldt voor urbanadmin én repalink.
+                ("App — localhost:4200", () => ClientLauncher.StartFirefox("http://localhost:4200/app/"), null),
             }),
             // WorkManager zelf als "klant": zo krijgt hij dezelfde eigen knop in de brede
             // werkbalk als de echte klanten, mét 🟢-lampje, git-status en sluiten-item.
@@ -1191,6 +1203,13 @@ public class CockpitForm : Form
 
             Kop("Instellingen & extra"),
             Actie("Archiveerregels…", () => regelsKnop.PerformClick()),
+            // Tegenhanger van de archiveerregels: wat is een factuur, en welke bijlage
+            // gaat daarvan naar Billit. Geen knop in de balk — dit beheer je zelden.
+            Actie("Billit-regels (facturen)…", () =>
+            {
+                using var form = new BillitRegelsForm();
+                form.ShowDialog(this);
+            }),
             Actie("Claude-usage…", () => usageKnop.PerformClick()),
             // Instellingen die vroeger alleen via het mailvenster en de Dagstart bereikbaar waren.
             Actie("Gmail-instellingen (mailassistent)…", () =>
@@ -1400,6 +1419,28 @@ public class CockpitForm : Form
             }
         };
         berichtenMenu.Items.Add(regelItem);
+        // Van een factuurmail meteen een Billit-regel maken: afzender, onderwerp en de
+        // bijlagenaam staan er al in. Alleen zinvol bij een Gmail-mail mét bijlage.
+        var billitRegelItem = new ToolStripMenuItem("Billit-regel van dit bericht…");
+        billitRegelItem.Click += (_, _) =>
+        {
+            if (GeselecteerdBericht() is not { IsChat: false, Uid: > 0 } b)
+            {
+                return;
+            }
+            // De bijlagenaam bevat meestal een factuurnummer: het variabele deel wordt een
+            // jokerteken, zodat de regel ook volgende maand matcht ("Invoice-*.pdf").
+            var bijlage = b.Bijlagen.FirstOrDefault(n =>
+                n.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (bijlage.Split('-', 2) is [var kop, _] && kop.Length > 0)
+            {
+                bijlage = $"{kop}-*{Path.GetExtension(bijlage)}";
+            }
+            using var form = new BillitRegelsForm(
+                b.VanAdres.Length > 0 ? b.VanAdres : b.Van, "", bijlage);
+            form.ShowDialog(this);
+        };
+        berichtenMenu.Items.Add(billitRegelItem);
         var teamTaakItem = new ToolStripMenuItem("Teamtaak maken…");
         teamTaakItem.Click += (_, _) => MaakTeamTaakVanBericht();
         berichtenMenu.Items.Add(teamTaakItem);
@@ -1436,7 +1477,7 @@ public class CockpitForm : Form
             // alleen via de chips in de berichtkop (verborgen schoolsessie).
             driveItem.Visible = b is { SmartschoolBericht.Length: 0 } &&
                 BijlagenNaarDrive.HeeftBijlagen(b);
-            billitItem.Visible = b is
+            billitItem.Visible = billitRegelItem.Visible = b is
                 { IsChat: false, OutlookMail.Length: 0, SmartschoolBericht.Length: 0 } &&
                 BijlagenNaarDrive.HeeftBijlagen(b);
         };
@@ -1980,6 +2021,13 @@ public class CockpitForm : Form
                 _openTeamTasks();
                 return;
             }
+            // De automatische factuurtaak stuurt de factuurbijlage met één klik door.
+            if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij billitRij &&
+                billitRij.Tekst.StartsWith(BillitTaken.TaakPrefix, StringComparison.Ordinal))
+            {
+                await BillitTaakUitvoerenAsync(billitRij);
+                return;
+            }
             // De maandelijkse Bermacon-factuurtaak opent Billit; afvinken via rechtsklik.
             if (_taken.SelectedItems.Count > 0 && _taken.SelectedItems[0].Tag is TaakRij bermaconRij &&
                 bermaconRij.Tekst.Contains(VasteTaken.BermaconTaak, StringComparison.OrdinalIgnoreCase))
@@ -2083,6 +2131,10 @@ public class CockpitForm : Form
         var overmorgenItem = new ToolStripMenuItem("Verzet naar overmorgen");
         overmorgenItem.Click += async (_, _) => await VerzetTaakSnelAsync(2);
         takenMenu.Items.Add(overmorgenItem);
+        // Daaronder komen bij het openen de dagen die vandaag écht van pas komen: op donderdag
+        // en vrijdag de maandag erna (morgen/overmorgen zijn dan weekend), bij een CED-taak de
+        // eerstvolgende dinsdag en donderdag. Zie VerzetDagen.
+        var slimmeVerzetItems = new List<ToolStripMenuItem>();
         // Vervolg op de uitstel-por: bij een 🙈-taak (3+ keer uitgesteld) drie uitwegen —
         // kleiner maken, weggeven of gewoon toegeven dat hij nooit gaat gebeuren.
         var uitstelMenu = new ToolStripMenuItem("🙈 Vaak uitgesteld");
@@ -2133,6 +2185,24 @@ public class CockpitForm : Form
                 _taken.SelectedItems[0].Tag is TaakRij { Lokaal: { } l } ? l : null;
             taakSnoozeItem.Enabled = lokaal is not null;
             uitstelMenu.Visible = lokaal is { UitstelTeller: >= 3 };
+            // De slimme verzet-dagen hangen af van de dag van vandaag én van de taak, dus
+            // bouwen we ze bij elke rechterklik opnieuw op.
+            foreach (var oud in slimmeVerzetItems)
+            {
+                takenMenu.Items.Remove(oud);
+                oud.Dispose();
+            }
+            slimmeVerzetItems.Clear();
+            var verzetIndex = takenMenu.Items.IndexOf(overmorgenItem) + 1;
+            foreach (var (label, doel) in VerzetDagen.Voorstellen(
+                         DateOnly.FromDateTime(DateTime.Today), lokaal?.Categorie))
+            {
+                var dag = doel;
+                var verzetNaar = new ToolStripMenuItem(label);
+                verzetNaar.Click += async (_, _) => await VerzetTaakNaarAsync(dag);
+                takenMenu.Items.Insert(verzetIndex++, verzetNaar);
+                slimmeVerzetItems.Add(verzetNaar);
+            }
             taakSnoozeItem.DropDownItems.Clear();
             foreach (var (label, moment) in SnoozePresets())
             {
@@ -3095,6 +3165,47 @@ public class CockpitForm : Form
          m.Van.Contains("smartschool", StringComparison.OrdinalIgnoreCase)) &&
         m.Onderwerp.Contains("nieuw bericht", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Hoe lang één bron maximaal over zijn ophaalbeurt mag doen. De bronnen lopen wel
+    /// parallel, maar de verwerking eronder wacht ze één voor één af: blijft er één
+    /// hangen, dan staat de hele ronde stil — geen nieuwe mails, geen schoolberichten,
+    /// geen taken. (Op 23-09-2026 bleef Teams bijna drie uur steken; de Gmail-mails van
+    /// die ochtend, waaronder een Smartschool-meldingsmail, kwamen daardoor pas om 11u
+    /// in de lijst.) Na deze limiet telt de bron als mislukt en loopt de ronde door.
+    /// </summary>
+    private static readonly TimeSpan BronTijdslimiet = TimeSpan.FromMinutes(3);
+
+    /// <summary>
+    /// Smartschool mag langer doen: die haalt niet alleen de lijst op, maar leest per kind
+    /// ook elk nieuw bericht uit en downloadt de bijlagen meteen mee. Een drukke schooldag
+    /// mag daar niet op stuklopen.
+    /// </summary>
+    private static readonly TimeSpan SmartschoolTijdslimiet = TimeSpan.FromMinutes(8);
+
+    /// <summary>
+    /// Wacht op de ophaaltaak van één bron, maar nooit langer dan
+    /// <see cref="BronTijdslimiet"/>. De taak zelf loopt op de achtergrond door (werk in
+    /// een WebView2 valt niet halverwege af te breken) en zijn fout wordt al opgevangen
+    /// door de ContinueWith in de ophaalronde; de volgende poll probeert het opnieuw.
+    /// De time-out komt als gewone fout in het catch-blok van de bron terecht: de rijen
+    /// uit de vorige cache blijven staan en het foutbudget pauzeert een bron die blijft
+    /// hangen.
+    /// </summary>
+    private async Task<T> MetLimietAsync<T>(Task<T> taak, TimeSpan? limiet = null)
+    {
+        var grens = limiet ?? BronTijdslimiet;
+        using var klok = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        if (await Task.WhenAny(taak, Task.Delay(grens, klok.Token)) != taak)
+        {
+            // Zonder bronnaam: de aanroeper zet die er zelf al voor ("🟪 Teams: …").
+            throw new TimeoutException(
+                $"reageerde niet binnen {grens.TotalMinutes:0} minuten — " +
+                "deze ronde overgeslagen");
+        }
+        klok.Cancel(); // wachtklok opruimen
+        return await taak;
+    }
+
     private async Task VerversBerichtenKernAsync()
     {
         var berichten = new List<MailBericht>();
@@ -3247,7 +3358,7 @@ public class CockpitForm : Form
                 }
                 else if (gmailTaak is not null)
                 {
-                    berichten.AddRange(await gmailTaak);
+                    berichten.AddRange(await MetLimietAsync(gmailTaak));
                     BronGezondheid.Succes("Gmail");
                 }
             }
@@ -3264,8 +3375,9 @@ public class CockpitForm : Form
         // Vaste regels: routinemails in Gmail meteen archiveren én als gelezen zetten —
         // Netflix-bevestigingen, de JAAN bv "SMS credits bijgeschreven"-meldingen
         // (het aantal in het onderwerp varieert, dus op de vaste kern matchen), de
-        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari) en de
-        // Seety-bon van gratis parkeersessies (€ 0,00).
+        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari), de
+        // Seety-bon van gratis parkeersessies (€ 0,00) en de AH-bestel- en bezorgmails
+        // (hieronder eerst verwerkt: besteltaak en levermoment).
         var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
         // e-Box Enterprise: de meldingsmail "Nieuw e-Box bericht" zet eerst de cockpitknop
         // aan en wordt daarna meteen mee gearchiveerd — het e-Box-venster logt automatisch
@@ -3273,6 +3385,21 @@ public class CockpitForm : Form
         if (berichten.Any(m => !m.IsChat && EboxForm.IsMeldingsmail(m)))
         {
             WerkSignaal.Zet("ebox", true);
+        }
+        // AH-leveringsbevestigingen automatisch verwerken (taak opschuiven + agenda-event).
+        // Dit staat vóór het archiveren én vóór de eerste tussenstand: de mail zelf hoort
+        // nooit in de lijst te verschijnen om er even later weer uit te verdwijnen.
+        try
+        {
+            var ahMelding = await AhLevering.VerwerkAsync(berichten, _cts.Token);
+            if (ahMelding.Length > 0 && !IsDisposed)
+            {
+                Toast.Toon(this, ahMelding, Fluent.Kalender);
+            }
+        }
+        catch
+        {
+            // Best effort; de berichtenlijst mag hier nooit op stranden.
         }
         var netflix = berichten.Where(m => !m.IsChat && m.Uid > 0 &&
             (m.VanAdres.Contains("account.netflix.com", StringComparison.OrdinalIgnoreCase) ||
@@ -3283,6 +3410,7 @@ public class CockpitForm : Form
              AlarmMails.Matcht(m) ||
              AppleFactuur.MoetArchiveren(m) ||
              SeetyBon.IsGratisBon(m) ||
+             AhLevering.Matcht(m) ||
              ArchiveerRegels.Matcht(m, eigenRegels))).ToList();
         // Storingsmails (MailMobility/MailProperty van IT-support) éérst registreren: dat zet
         // de rode taak en houdt de laatste-mailtijd bij, ook als het archiveren zo mislukt.
@@ -3318,7 +3446,7 @@ public class CockpitForm : Form
                 }
                 else if (chatTaak is not null)
                 {
-                    berichten.AddRange(await chatTaak);
+                    berichten.AddRange(await MetLimietAsync(chatTaak));
                     BronGezondheid.Succes("Google Chat");
                 }
             }
@@ -3345,9 +3473,8 @@ public class CockpitForm : Form
             else if (WhatsAppClient.OoitGekoppeld)
             {
                 // Alleen de zijbalk lezen: chats worden niet geopend, dus niets wordt gelezen gemarkeerd.
-                var (waTotaal, waChats) = waTaak is not null
-                    ? await waTaak
-                    : await WhatsAppClient.Instance.OngelezenChatsAsync(_cts.Token);
+                var (waTotaal, waChats) = await MetLimietAsync(
+                    waTaak ?? WhatsAppClient.Instance.OngelezenChatsAsync(_cts.Token));
                 if (waTotaal == 0)
                 {
                     // Lege zijbalk = (nog) niet gerenderd; cache aanhouden.
@@ -3469,6 +3596,10 @@ public class CockpitForm : Form
             berichten.AddRange(vorigeCache.Where(m => m.WhatsAppChat.Length > 0));
             if (BronGezondheid.Fout("WhatsApp", ex.Message) && !IsDisposed)
             {
+                // Zelfde zelfherstel als bij Teams en Outlook: vijf keer mis op rij betekent
+                // meestal een vastgelopen pagina, dus de beurt ná de pauze start vers (de
+                // QR-koppeling zit in het profiel en blijft dus gewoon staan).
+                WhatsAppClient.Instance.MarkeerVoorVerseStart();
                 Toast.Toon(this, "WhatsApp tijdelijk gepauzeerd na 5 fouten op rij", Fluent.Mail);
             }
         }
@@ -3489,9 +3620,8 @@ public class CockpitForm : Form
             else if (TeamsClient.OoitGekoppeld)
             {
                 // Alleen signaleren (uitlezen); antwoorden gebeurt in Teams zelf.
-                var (totaal, ongelezen, teamsPreviews) = teamsTaak is not null
-                    ? await teamsTaak
-                    : await TeamsClient.Instance.OngelezenAsync(_cts.Token);
+                var (totaal, ongelezen, teamsPreviews) = await MetLimietAsync(
+                    teamsTaak ?? TeamsClient.Instance.OngelezenAsync(_cts.Token));
                 if (totaal < 10)
                 {
                     // Nauwelijks chats in de lijst (normaal 100+) = de UI is nog aan het
@@ -3653,6 +3783,16 @@ public class CockpitForm : Form
             berichten.AddRange(vorigeCache.Where(m => m.TeamsChat.Length > 0));
             if (BronGezondheid.Fout("Teams", ex.Message) && !IsDisposed)
             {
+                // Vijf mislukkingen op rij: aan de pagina zelf valt meestal niets meer te
+                // redden (een vastgelopen renderer, een weergave die blijft hangen). De
+                // eerste beurt ná de pauze begint daarom met een verse sessie in plaats van
+                // opnieuw tegen dezelfde kapotte pagina aan te praten. Cookies blijven, dus
+                // er is geen nieuwe aanmelding nodig. Bij een aanmeldprobleem juist niet:
+                // dan wacht de sessie terecht op de MFA-knop.
+                if (!BronGezondheid.IsAanmeldFout(ex.Message))
+                {
+                    TeamsClient.Instance.MarkeerVoorVerseStart();
+                }
                 Toast.Toon(this, BronGezondheid.IsAanmeldFout(ex.Message)
                     ? "Teams wacht op aanmelding — klik 'Teams aanmelden…'"
                     : "Teams tijdelijk gepauzeerd na 5 fouten op rij", Fluent.Mail);
@@ -3673,9 +3813,8 @@ public class CockpitForm : Form
             else if (OutlookClient.OoitGekoppeld)
             {
                 // Alle inboxmails, met volledige tekst uit de cache; antwoorden in Outlook zelf.
-                var outlookMails = outlookTaak is not null
-                    ? await outlookTaak
-                    : await OutlookClient.Instance.VolledigeMailsAsync(_cts.Token);
+                var outlookMails = await MetLimietAsync(
+                    outlookTaak ?? OutlookClient.Instance.VolledigeMailsAsync(_cts.Token));
                 if (outlookMails.Count > 0)
                 {
                     _outlookLeegOpeenvolgend = 0; // er stáán mails: geen twijfel meer
@@ -3736,6 +3875,13 @@ public class CockpitForm : Form
             berichten.AddRange(vorigeCache.Where(m => m.OutlookMail.Length > 0));
             if (BronGezondheid.Fout("Outlook", ex.Message) && !IsDisposed)
             {
+                // Zie Teams hierboven: na vijf mislukkingen op rij begint de eerste beurt
+                // ná de pauze met een verse sessie in plaats van opnieuw tegen dezelfde
+                // vastgelopen pagina aan te praten. Bij een aanmeldprobleem juist niet.
+                if (!BronGezondheid.IsAanmeldFout(ex.Message))
+                {
+                    OutlookClient.Instance.MarkeerVoorVerseStart();
+                }
                 Toast.Toon(this, BronGezondheid.IsAanmeldFout(ex.Message)
                     ? "Outlook wacht op aanmelding — klik 'Outlook aanmelden…'"
                     : "Outlook tijdelijk gepauzeerd na 5 fouten op rij", Fluent.Mail);
@@ -3753,8 +3899,9 @@ public class CockpitForm : Form
                 // bericht" van smartschoolmail.be) in de inbox staat of het uur om is;
                 // anders komt alles meteen uit de lokale cache.
                 var meldingsMail = berichten.Any(m => !m.Genegeerd && IsSmartschoolMelding(m));
-                var smartschoolBerichten =
-                    await SmartschoolClient.Instance.BerichtenAsync(meldingsMail, _cts.Token);
+                var smartschoolBerichten = await MetLimietAsync(
+                    SmartschoolClient.Instance.BerichtenAsync(meldingsMail, _cts.Token),
+                    SmartschoolTijdslimiet);
                 if (SmartschoolClient.Instance.LaatsteAutoGearchiveerd is { Count: > 0 } dubbels &&
                     !IsDisposed)
                 {
@@ -3873,20 +4020,6 @@ public class CockpitForm : Form
         catch (Exception ex)
         {
             fouten.Add($"📋 CC-overzicht: {ex.Message}");
-        }
-
-        // AH-leveringsbevestigingen automatisch verwerken (taak opschuiven + agenda-event).
-        try
-        {
-            var ahMelding = await AhLevering.VerwerkAsync(berichten, _cts.Token);
-            if (ahMelding.Length > 0 && !IsDisposed)
-            {
-                Toast.Toon(this, ahMelding, Fluent.Kalender);
-            }
-        }
-        catch
-        {
-            // Best effort; de berichtenlijst mag hier nooit op stranden.
         }
 
         // Concepten en oordelen uit de gedeelde conceptcache overnemen; weggescreende
@@ -4018,6 +4151,17 @@ public class CockpitForm : Form
         catch
         {
             // Best effort; de berichtenlijst mag hier nooit op stranden.
+        }
+
+        // Leveranciersfacturen (billit-regels.json): één taak per mail, doorsturen pas op
+        // dubbelklik — zo zie je eerst welke bijlage er naar Billit vertrekt.
+        try
+        {
+            BillitTaken.Verwerk(berichten);
+        }
+        catch
+        {
+            // Best effort; idem.
         }
 
         // Altijd bewaren: falende bronnen zijn hierboven al aangevuld vanuit de vorige cache,
@@ -4827,7 +4971,7 @@ public class CockpitForm : Form
     /// </summary>
     private static async Task RenderNaarPngAsync(string html, string pad, string scrollNaarJsArray)
     {
-        using var venster = new Form
+        using var venster = new StilVenster
         {
             Size = new Size(760, 2600), StartPosition = FormStartPosition.Manual,
             Location = new Point(-4000, -4000), ShowInTaskbar = false,
@@ -6577,7 +6721,11 @@ public class CockpitForm : Form
     }
 
     /// <summary>Zet de deadline van de geselecteerde taak in één klik op morgen of overmorgen.</summary>
-    private async Task VerzetTaakSnelAsync(int dagen)
+    private Task VerzetTaakSnelAsync(int dagen) =>
+        VerzetTaakNaarAsync(DateOnly.FromDateTime(DateTime.Today).AddDays(dagen));
+
+    /// <summary>Verzet de geselecteerde taak naar een concrete dag (zie ook <see cref="VerzetDagen"/>).</summary>
+    private async Task VerzetTaakNaarAsync(DateOnly doel)
     {
         if (_taken.SelectedItems.Count == 0 || _taken.SelectedItems[0].Tag is not TaakRij rij)
         {
@@ -6588,7 +6736,6 @@ public class CockpitForm : Form
             await VerzetAsanaDeadlineAsync(rij);
             return;
         }
-        var doel = DateOnly.FromDateTime(DateTime.Today).AddDays(dagen);
         var data = MijnTaakStore.Load();
         if (data.Taken.FirstOrDefault(t => t.Id == taak.Id) is { } opgeslagen)
         {
@@ -8284,6 +8431,80 @@ public class CockpitForm : Form
         if (resultaat.Count > 0)
         {
             Toast.Toon(this, $"{resultaat.Count} bijlage(n) in Drive gezet", Fluent.Document);
+        }
+    }
+
+    /// <summary>
+    /// Voert de automatische factuurtaak uit: de bijlage die op de Billit-regel past gaat
+    /// naar het Billit-inboxadres, de mail wordt daarna in Gmail gearchiveerd en de taak
+    /// afgevinkt. Eén klik dus, maar wél nadat je de taak (en dus de bijlagenaam) gezien
+    /// hebt — vandaar geen automatisch doorsturen bij het ophalen.
+    /// </summary>
+    private async Task BillitTaakUitvoerenAsync(TaakRij rij)
+    {
+        if (rij.Lokaal is not { Mail.MessageId.Length: > 0 } taak)
+        {
+            Toast.Toon(this, "Deze taak heeft geen bronmail meer", Fluent.Globe);
+            return;
+        }
+        // De mail moet nog in de opgehaalde lijst staan: het doorsturen leest hem via IMAP
+        // op Uid, en dat werkt alleen zolang hij in het Postvak IN zit.
+        var bericht = HuidigeBerichten()
+            .FirstOrDefault(m => m.MessageId == taak.Mail!.MessageId);
+        if (bericht is null)
+        {
+            Toast.Toon(this, "De factuurmail staat niet meer in de inbox — " +
+                "stuur hem via rechtsklik door", Fluent.Globe);
+            return;
+        }
+        var settings = MailReplySettings.Load();
+        var adres = settings.BillitAdres.Trim();
+        if (adres.Length == 0)
+        {
+            Toast.Toon(this, "Geen Billit-adres ingesteld — vul dat in via ⋯ → Gmail-instellingen",
+                Fluent.Globe);
+            return;
+        }
+        if (BillitRegels.Match(bericht, BillitRegels.Load()) is not { } treffer)
+        {
+            Toast.Toon(this, "De bijlage uit de regel zit niet (meer) in deze mail", Fluent.Globe);
+            return;
+        }
+        var naam = bericht.Bijlagen[treffer.Index];
+        try
+        {
+            Toast.Toon(this, $"{naam} naar Billit sturen…", Fluent.Send);
+            await GmailClient.DoorsturenAsync(settings, bericht, adres,
+                new[] { (treffer.Index, naam) },
+                Array.Empty<(string, string)>(), _cts.Token);
+            // Verstuurd: de mail heeft zijn werk gedaan, net als bij de routinemails.
+            // Mislukt het archiveren, dan blijft de mail gewoon staan — de factuur is weg.
+            try
+            {
+                await GmailClient.ArchiveerAsync(settings, new[] { bericht }, _cts.Token);
+            }
+            catch
+            {
+                // Archiveren is comfort; het doorsturen is wat telt.
+            }
+            var data = MijnTaakStore.Load();
+            if (data.Taken.FirstOrDefault(x => x.Id == taak.Id) is { } eigen)
+            {
+                eigen.Klaar = true;
+                eigen.KlaarOp = DateTimeOffset.Now;
+                MijnTaakStore.Save(data);
+            }
+            Toast.Toon(this, $"{naam} naar Billit gestuurd — mail gearchiveerd, taak afgevinkt",
+                Fluent.Send);
+            await VerversTakenAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Cockpit gesloten tijdens het doorsturen.
+        }
+        catch (Exception ex)
+        {
+            Toast.Toon(this, $"Doorsturen naar Billit mislukt: {ex.Message}", Fluent.Globe);
         }
     }
 

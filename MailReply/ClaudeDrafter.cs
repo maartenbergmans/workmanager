@@ -210,7 +210,14 @@ public static class ClaudeDrafter
               """;
     }
 
-    internal static async Task<string> RunClaudeAsync(string prompt, CancellationToken ct)
+    /// <param name="denken">
+    /// Extended thinking aanzetten. Standaard uit: de headless runs zijn stuk voor stuk
+    /// omzettingen met een vast JSON-antwoord, en daar dacht het model tot 9.000 tokens over
+    /// na vóór het één regel antwoordde — goed voor anderhalve minuut wachten per run, tegen
+    /// ±12 seconden zonder. Zet dit alleen aan voor een run waar het echt redeneerwerk is.
+    /// </param>
+    internal static async Task<string> RunClaudeAsync(
+        string prompt, CancellationToken ct, bool denken = false)
     {
         // Via cmd zodat ook een npm-installatie (claude.cmd) gevonden wordt; de prompt gaat
         // via stdin zodat er geen quoting-problemen zijn. Werkmap is de WorkManager-datamap
@@ -230,6 +237,10 @@ public static class ClaudeDrafter
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        if (!denken)
+        {
+            psi.Environment["MAX_THINKING_TOKENS"] = "0";
+        }
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Kon de Claude CLI niet starten.");

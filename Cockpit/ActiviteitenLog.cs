@@ -169,6 +169,7 @@ public static class ActiviteitenLog
     public static async Task<(List<TimesheetRegel> Regels, string Toelichting)> VoorstelAsync(
         DateOnly dag, List<AgendaClient.AgendaItem> meetings, CancellationToken ct)
     {
+        var klokTotaal = System.Diagnostics.Stopwatch.StartNew();
         var bestaand = TimesheetStore.Load().Where(r => r.Datum == dag && r.Minuten > 0).ToList();
 
         // De drie externe ophalers (Gmail-IMAP, OWA-scrape, Teams-scrape) kunnen elk
@@ -177,13 +178,46 @@ public static class ActiviteitenLog
         // WebView2-clients zijn thread-gebonden en interleaven prima via async op de
         // UI-thread). Elke ophaler vangt zijn eigen fouten: het voorstel moet ook zonder
         // die bron blijven werken.
-        async Task<List<string>> GmailVerzondenAsync()
+        //
+        // Elke ophaler heeft bovendien een eigen deadline: een hangende OWA- of Teams-scrape
+        // (niet aangemeld, gewijzigde DOM, traag ladende pagina) mocht vroeger het hele
+        // voorstel minutenlang ophouden. Na de deadline gaat het voorstel gewoon door zonder
+        // dat signaal — dat kost hooguit een regel in het voorstel, geen kwartier wachten.
+        // Teams krijgt de kortste: daar moet bij een koud gestarte app eerst een WebView2
+        // met de hele Teams-webapp opgebouwd worden (ruim een minuut), terwijl het signaal
+        // zelf klein is — "in die chat heb ik vandaag nog gereageerd". Is de sessie warm,
+        // dan is hij ruim op tijd; is hij dat niet, dan wachten we er niet op.
+        var duren = new List<string>();
+        async Task<List<string>> BinnenDeadlineAsync(
+            string naam, Func<CancellationToken, Task<List<string>>> ophalen, int seconden)
+        {
+            var start = DateTimeOffset.Now;
+            using var klok = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            klok.CancelAfter(TimeSpan.FromSeconds(seconden));
+            List<string> uit;
+            try
+            {
+                uit = await ophalen(klok.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                uit = new List<string>(); // te traag: zonder dit signaal verder
+            }
+            catch
+            {
+                uit = new List<string>();
+            }
+            duren.Add($"{naam} {(DateTimeOffset.Now - start).TotalSeconds:0.0}s ({uit.Count})");
+            return uit;
+        }
+
+        async Task<List<string>> GmailVerzondenAsync(CancellationToken bronCt)
         {
             try
             {
                 var mailSettings = MailReplySettings.Load();
                 return mailSettings.AppWachtwoord.Length > 0
-                    ? (await GmailClient.VerzondenVanDagAsync(mailSettings, dag, ct))
+                    ? (await GmailClient.VerzondenVanDagAsync(mailSettings, dag, bronCt))
                         .Select(r => $"{r} [Gmail]").ToList()
                     : new List<string>();
             }
@@ -193,12 +227,12 @@ public static class ActiviteitenLog
             }
         }
         // CED-Outlook: mails die dáár verstuurd zijn, ziet Gmail niet.
-        async Task<List<string>> OutlookVerzondenAsync()
+        async Task<List<string>> OutlookVerzondenAsync(CancellationToken bronCt)
         {
             try
             {
                 return OutlookClient.OoitGekoppeld
-                    ? (await OutlookClient.Instance.VerzondenVanDagAsync(dag, ct))
+                    ? (await OutlookClient.Instance.VerzondenVanDagAsync(dag, bronCt))
                         .Select(r => $"{r} [CED-Outlook]").ToList()
                     : new List<string>();
             }
@@ -209,12 +243,12 @@ public static class ActiviteitenLog
         }
         // Teams toont alleen het laatste bericht per chat, en alleen vandaag is uit de
         // chatlijst af te lezen — voor een eerdere dag valt dit signaal gewoon weg.
-        async Task<List<string>> TeamsChatsAsync()
+        async Task<List<string>> TeamsChatsAsync(CancellationToken bronCt)
         {
             try
             {
                 return TeamsClient.OoitGekoppeld && dag == DateOnly.FromDateTime(DateTime.Now)
-                    ? await TeamsClient.Instance.MijnChatsVanVandaagAsync(ct)
+                    ? await TeamsClient.Instance.MijnChatsVanVandaagAsync(bronCt)
                     : new List<string>();
             }
             catch
@@ -222,9 +256,9 @@ public static class ActiviteitenLog
                 return new List<string>(); // niet ingelogd of DOM gewijzigd
             }
         }
-        var gmailTaak = GmailVerzondenAsync();
-        var outlookTaak = OutlookVerzondenAsync();
-        var teamsTaak = TeamsChatsAsync();
+        var gmailTaak = BinnenDeadlineAsync("gmail", GmailVerzondenAsync, 45);
+        var outlookTaak = BinnenDeadlineAsync("owa", OutlookVerzondenAsync, 45);
+        var teamsTaak = BinnenDeadlineAsync("teams", TeamsChatsAsync, 25);
         // De projectenlijst (met gebruik en omschrijvingen van de laatste 60 dagen) meteen
         // mee verversen: daarop kiest Claude het project per regel.
         var catalogusTaak = ProjectCatalogus.VernieuwAlsNodigAsync(ct);
@@ -346,7 +380,10 @@ public static class ActiviteitenLog
             {"regels": [{"van": "HH:mm", "minuten": 60, "project_id": 1, "omschrijving": "…"}], "toelichting": "…"}
             """;
 
+        var klokClaude = System.Diagnostics.Stopwatch.StartNew();
         var output = await ClaudeDrafter.RunClaudeAsync(prompt, ct);
+        klokClaude.Stop();
+        NoteerDuur(dag, duren, klokClaude.Elapsed, klokTotaal.Elapsed);
         using var doc = ClaudeDrafter.ParseJson(output);
         var voorstel = new List<TimesheetRegel>();
         var toelichting = doc.RootElement.TryGetProperty("toelichting", out var uitleg) &&
@@ -387,6 +424,27 @@ public static class ActiviteitenLog
             }
         }
         return (voorstel.OrderBy(r => r.Van ?? TimeOnly.MaxValue).ToList(), toelichting);
+    }
+
+    /// <summary>
+    /// Eén regel per dagvoorstel-run in dagvoorstel-timing.log: hoe lang elke bron deed en
+    /// hoe lang de Claude-run zelf. Bij "het duurt weer lang" is daarmee in één oogopslag te
+    /// zien of het aan een scrape ligt of aan de run.
+    /// </summary>
+    private static void NoteerDuur(
+        DateOnly dag, List<string> bronnen, TimeSpan claude, TimeSpan totaal)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(DataDir, "dagvoorstel-timing.log"),
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} {dag:yyyy-MM-dd} " +
+                $"bronnen[{string.Join(", ", bronnen)}] claude {claude.TotalSeconds:0.0}s " +
+                $"totaal {totaal.TotalSeconds:0.0}s" + Environment.NewLine);
+        }
+        catch
+        {
+            // Meten mag het voorstel nooit in de weg zitten.
+        }
     }
 
     /// <summary>De interactieve Claude Code-opdrachten van één dag, als "HH:mm projectmap".</summary>

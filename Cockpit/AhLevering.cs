@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace WorkManager;
@@ -9,6 +9,9 @@ namespace WorkManager;
 /// vervolgmails over de levering verschuiven alleen de deadline. Het levermoment (als
 /// het uit de mail te lezen valt) gaat als afspraak in de Google-agenda. Elke mail wordt
 /// maar één keer verwerkt (Message-ID's in ah-levering-status.json).
+/// Het archiveren van de mail zelf doet de cockpit, in dezelfde ronde als de andere
+/// routinemails (<see cref="Matcht"/>) — nog vóór de berichtenlijst in beeld komt, zodat
+/// een AH-mail er niet eerst in opflitst om er even later weer uit te verdwijnen.
 /// </summary>
 public static class AhLevering
 {
@@ -22,15 +25,23 @@ public static class AhLevering
         "juli", "augustus", "september", "oktober", "november", "december",
     };
 
-    /// <summary>Retourneert een korte melding als er iets verwerkt is, anders een lege string.</summary>
+    /// <summary>Is dit een AH-mail over een bestelling of levering (en dus: verwerken + archiveren)?</summary>
+    public static bool Matcht(MailBericht m) =>
+        !m.IsChat && m.MessageId.Length > 0 &&
+        (m.VanAdres.Contains("ah.nl", StringComparison.OrdinalIgnoreCase) ||
+         m.VanAdres.Contains("ah.be", StringComparison.OrdinalIgnoreCase) ||
+         m.Van.Contains("albert heijn", StringComparison.OrdinalIgnoreCase)) &&
+        Regex.IsMatch(m.Onderwerp, "bezorg|lever|bestell", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Retourneert een korte melding als er iets verwerkt is, anders een lege string.
+    /// Aanroepen vóór het archiveren: dan staat de taak goed en het levermoment in de agenda,
+    /// ook als het archiveren zo mislukt (de volgende poll probeert dat gewoon opnieuw).
+    /// </summary>
     public static async Task<string> VerwerkAsync(
         IEnumerable<MailBericht> mails, CancellationToken ct)
     {
-        var kandidaten = mails.Where(m => !m.IsChat && m.MessageId.Length > 0 &&
-            (m.VanAdres.Contains("ah.nl", StringComparison.OrdinalIgnoreCase) ||
-             m.VanAdres.Contains("ah.be", StringComparison.OrdinalIgnoreCase) ||
-             m.Van.Contains("albert heijn", StringComparison.OrdinalIgnoreCase)) &&
-            Regex.IsMatch(m.Onderwerp, "bezorg|lever|bestell", RegexOptions.IgnoreCase)).ToList();
+        var kandidaten = mails.Where(Matcht).ToList();
         if (kandidaten.Count == 0)
         {
             return "";
@@ -38,10 +49,8 @@ public static class AhLevering
 
         var verwerkt = LaadVerwerkt();
         var melding = "";
-        var teArchiveren = new List<MailBericht>();
         foreach (var mail in kandidaten.Where(m => !verwerkt.Contains(m.MessageId)))
         {
-            teArchiveren.Add(mail);
             // 1. AH-taak bijwerken. Een échte bestelbevestiging betekent dat de bestelling
             //    geplaatst is: de openstaande taak wordt dan afgevinkt (staat als "gedaan"
             //    in de lijst) en er komt een verse taak voor de volgende bestelling.
@@ -151,25 +160,6 @@ public static class AhLevering
             verwerkt.Add(mail.MessageId);
         }
         BewaarVerwerkt(verwerkt);
-
-        // De bevestiging is nu verwerkt (taak verschoven, levermoment in de agenda): de mail
-        // zelf mag uit de inbox — archiveren, zodat hij niet blijft slingeren.
-        if (teArchiveren.Count > 0)
-        {
-            try
-            {
-                var s = MailReplySettings.Load();
-                if (s.Email.Length > 0 && s.AppWachtwoord.Length > 0)
-                {
-                    await GmailClient.ArchiveerAsync(s, teArchiveren, ct);
-                    melding += "; mail gearchiveerd";
-                }
-            }
-            catch
-            {
-                // Archiveren is een extraatje; de verwerking zelf is al gelukt.
-            }
-        }
         return melding;
     }
 

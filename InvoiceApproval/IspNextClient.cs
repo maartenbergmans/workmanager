@@ -67,7 +67,7 @@ public sealed class IspNextClient
         WebView2? web = null;
         try
         {
-            venster = new Form
+            venster = new StilVenster
             {
                 Size = new Size(1400, 1000), StartPosition = FormStartPosition.Manual,
                 Location = new Point(-4000, -4000), ShowInTaskbar = false,

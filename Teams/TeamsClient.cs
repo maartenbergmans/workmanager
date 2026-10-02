@@ -75,7 +75,7 @@ public sealed class TeamsClient : IDisposable
             {
                 if (_venster is null)
                 {
-                    _venster = new Form
+                    _venster = new StilVenster
                     {
                         Text = "Teams koppelen – meld je aan met je Microsoft-account",
                         // Bewust groot (buiten beeld): meer gerenderde chatrijen in de
@@ -150,10 +150,12 @@ public sealed class TeamsClient : IDisposable
                 // beginnen = de lijst toont de serverstand.
                 try
                 {
-                    await _web.CoreWebView2!.Profile.ClearBrowsingDataAsync(
-                        CoreWebView2BrowsingDataKinds.AllDomStorage |
-                        CoreWebView2BrowsingDataKinds.IndexedDb |
-                        CoreWebView2BrowsingDataKinds.DiskCache);
+                    await WebLimiet.MetLimietAsync(
+                        _web.CoreWebView2!.Profile.ClearBrowsingDataAsync(
+                            CoreWebView2BrowsingDataKinds.AllDomStorage |
+                            CoreWebView2BrowsingDataKinds.IndexedDb |
+                            CoreWebView2BrowsingDataKinds.DiskCache),
+                        WebLimiet.Script, "sitedata wissen", CrashLog, Herstel(false));
                 }
                 catch
                 {
@@ -197,20 +199,34 @@ public sealed class TeamsClient : IDisposable
         for (var i = 0; i < wachtSeconden * 2; i++)
         {
             ct.ThrowIfCancellationRequested();
-            if (await IsIngelogdAsync())
+            try
             {
-                File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
-                Aangemeld = true;
-                return true;
+                if (await IsIngelogdAsync(herstel: false))
+                {
+                    File.WriteAllText(MarkerFile, DateTimeOffset.Now.ToString("O"));
+                    Aangemeld = true;
+                    return true;
+                }
+                // Verlopen sessie: het Microsoft-aanmeldscherm stil invullen (wachtwoord +
+                // TOTP-code), net als bij Outlook. Alleen op échte aanmeldpagina's, nooit in
+                // Teams zelf — daar zou de "Ja"-fallback van het KmsI-scherm mis kunnen klikken.
+                if (i % 2 == 1 && await JsAsync(
+                        "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
+                        ".test(location.hostname)", herstel: false) == "true")
+                {
+                    MicrosoftLogin.NaLoginStap(
+                        await JsAsync(MicrosoftLogin.VulScript(), herstel: false), null);
+                }
             }
-            // Verlopen sessie: het Microsoft-aanmeldscherm stil invullen (wachtwoord +
-            // TOTP-code), net als bij Outlook. Alleen op échte aanmeldpagina's, nooit in
-            // Teams zelf — daar zou de "Ja"-fallback van het KmsI-scherm mis kunnen klikken.
-            if (i % 2 == 1 && await JsAsync(
-                    "/(^|\\.)login\\.microsoftonline\\.com$|(^|\\.)login\\.live\\.com$|adfs|(^|\\.)sts\\./" +
-                    ".test(location.hostname)") == "true")
+            catch (TimeoutException)
             {
-                MicrosoftLogin.NaLoginStap(await JsAsync(MicrosoftLogin.VulScript()), null);
+                // De pagina antwoordt helemaal niet meer. Doorwachten kost alleen tijd (bij
+                // dertig ronden van 45 s een halve dag): deze beurt opgeven en de sessie bij
+                // de volgende poll vers opbouwen. Dat is dezelfde route als het crashherstel,
+                // dus de aanmelding (cookies) blijft gewoon staan.
+                _gecrasht = true;
+                Aangemeld = false;
+                return false;
             }
             await Task.Delay(500, ct);
         }
@@ -365,12 +381,16 @@ public sealed class TeamsClient : IDisposable
             ("mouseReleased", "left", 0, 1, 0),
         })
         {
-            var resultaat = await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent",
-                JsonSerializer.Serialize(new
-                {
-                    type, x, y, button = knop, buttons = knoppen,
-                    clickCount = telling, pointerType = "mouse",
-                }));
+            // Met tijdslimiet: een muisaanroep wacht op de renderer, en een Teams-pagina
+            // die haar hoofdthread blokkeert liet de hele ophaalbeurt hangen (zie WebLimiet).
+            var resultaat = await WebLimiet.MetLimietAsync(
+                core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent",
+                    JsonSerializer.Serialize(new
+                    {
+                        type, x, y, button = knop, buttons = knoppen,
+                        clickCount = telling, pointerType = "mouse",
+                    })),
+                WebLimiet.Invoer, $"muis {type}", CrashLog, Herstel(true));
             if (resultaat is not ("{}" or ""))
             {
                 LogKlik($"cdp {type} ({x},{y}) → {resultaat}");
@@ -398,12 +418,14 @@ public sealed class TeamsClient : IDisposable
         var core = _web!.CoreWebView2!;
         foreach (var type in new[] { "rawKeyDown", "keyUp" })
         {
-            await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent",
-                JsonSerializer.Serialize(new
-                {
-                    type, key = "Enter", code = "Enter",
-                    windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13,
-                }));
+            await WebLimiet.MetLimietAsync(
+                core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent",
+                    JsonSerializer.Serialize(new
+                    {
+                        type, key = "Enter", code = "Enter",
+                        windowsVirtualKeyCode = 13, nativeVirtualKeyCode = 13,
+                    })),
+                WebLimiet.Invoer, $"toets {type}", CrashLog, Herstel(true));
             await Task.Delay(60);
         }
     }
@@ -668,7 +690,7 @@ public sealed class TeamsClient : IDisposable
     /// </summary>
     private async Task<string> ZetOngelezenFilterAsync(bool aan)
     {
-        var ruw = await JsAsync(
+        var ruw = await FilterJsAsync(
             $$"""
             (function () {
                 // Taalonafhankelijk id-patroon eerst ("…-toggle-button-UNREAD"), daarna de
@@ -721,7 +743,7 @@ public sealed class TeamsClient : IDisposable
     /// Momentopname van de gerenderde chatlijst (aantal + begin van elke rijtekst), om te
     /// zien of een klik op de filterknop de lijst überhaupt veranderd heeft.
     /// </summary>
-    private Task<string> RijBeeldAsync() => JsAsync(MetSelector(
+    private Task<string> RijBeeldAsync() => FilterJsAsync(MetSelector(
         """
         (function () {
             let items = [...document.querySelectorAll(__SELECTOR__)];
@@ -731,6 +753,26 @@ public sealed class TeamsClient : IDisposable
                 .join(' | ');
         })()
         """));
+
+    /// <summary>
+    /// De filterknop is een extraatje bóvenop de badge-heuristiek, dus krijgt hij een
+    /// korter lijntje dan de gewone scripts: antwoordt de pagina hier niet binnen vijftien
+    /// seconden, dan is de beurt beter af met de heuristiek dan met drie kwartier wachten.
+    /// </summary>
+    private static readonly TimeSpan FilterLimiet = WebLimiet.Invoer;
+
+    /// <summary>
+    /// JavaScript binnen de filterstap: kort lijntje én — anders dan bij de gewone
+    /// scripts — géén verse sessie als dat lijntje afloopt. Een extraatje dat niet
+    /// antwoordt mag de sessie niet weggooien: zo'n herbouw kost een minuut, wist de
+    /// pagina en laat het (buiten beeld staande) venster opnieuw openen. Bleef de filter
+    /// hangen — zoals vanaf 23 september 2026, elke poll opnieuw — dan draaide de app
+    /// de hele dag rond in verse sessies. De beurt valt nu gewoon terug op de
+    /// badge-heuristiek; een échte vastloper wordt nog altijd opgemerkt door de gewone
+    /// scripts, die wél op verse opbouw staan.
+    /// </summary>
+    private Task<string> FilterJsAsync(string script) =>
+        JsAsync(script, herstel: false, limiet: FilterLimiet);
 
     /// <summary>
     /// Leest de ongelezen chats via de filterknop "Ongelezen" boven de chatlijst: even
@@ -745,16 +787,15 @@ public sealed class TeamsClient : IDisposable
     private async Task<List<TeamsBericht>?> FilterOngelezenAsync(
         Dictionary<string, string> scrapePreviews, CancellationToken ct)
     {
-        var vooraf = int.TryParse(
-            await JsAsync($"document.querySelectorAll({RijSelector}).length"), out var v) ? v : 0;
-        var voorafBeeld = await RijBeeldAsync();
-        var chip = await ZetOngelezenFilterAsync(aan: true);
-        if (chip.StartsWith("geen-chip"))
-        {
-            return null;
-        }
-        var diagnose = new List<string> { $"chip={chip}", $"vooraf={vooraf}" };
-        var herstelNodig = true;
+        // Alles binnen de try: ook het aanzetten van de filter kan blijven hangen, en dan
+        // moet teams-filter-debug.txt juist wél geschreven worden. Stond dit stuk buiten de
+        // try, dan hield het logboek op bij de laatste geslaagde beurt en was achteraf niet
+        // te zien wáár een vastgelopen beurt bleef steken (23 september 2026).
+        var diagnose = new List<string>();
+        var herstelNodig = false;
+        var vooraf = 0;
+        var voorafBeeld = "";
+        var chip = "";
 
         // Wachten tot de lijst echt hergefilterd is (het aantal rijen verandert); een
         // gelijk gebleven vólle lijst zou anders elke bovenste chat "ongelezen" maken.
@@ -769,7 +810,7 @@ public sealed class TeamsClient : IDisposable
             {
                 await Task.Delay(200, ct);
                 var n = int.TryParse(
-                    await JsAsync($"document.querySelectorAll({RijSelector}).length"),
+                    await FilterJsAsync($"document.querySelectorAll({RijSelector}).length"),
                     out var t) ? t : 0;
                 if (n != vooraf && n == na)
                 {
@@ -789,6 +830,23 @@ public sealed class TeamsClient : IDisposable
 
         try
         {
+            // Per stap noteren wáár we zijn: loopt de eerste aanroep al vast, dan bleef het
+            // logboek anders bij de tijdstempel steken en was niet te zien welke stap hing.
+            diagnose.Add("stap=tellen");
+            vooraf = int.TryParse(
+                await FilterJsAsync($"document.querySelectorAll({RijSelector}).length"), out var v)
+                ? v : 0;
+            diagnose.Add("stap=rijbeeld");
+            voorafBeeld = await RijBeeldAsync();
+            diagnose.Add("stap=chip-aan");
+            chip = await ZetOngelezenFilterAsync(aan: true);
+            diagnose.Add($"chip={chip}");
+            diagnose.Add($"vooraf={vooraf}");
+            if (chip.StartsWith("geen-chip"))
+            {
+                return null; // geen filterknop: de heuristiek hierboven geldt
+            }
+            herstelNodig = true;
             var na = await WachtOpOmslagAsync();
             // Exact dezelfde lijst ná een klik = de klik is verloren gegaan (trusted klikken
             // missen af en toe, zie OpenChatAsync). Vroeger gold dat pas vanaf 25 rijen; toen
@@ -831,7 +889,7 @@ public sealed class TeamsClient : IDisposable
                 herstelNodig = false;
                 return null;
             }
-            var json = await JsAsync(MetSelector(
+            var json = await FilterJsAsync(MetSelector(
                 """
                 (function () {
                     let items = [...document.querySelectorAll(__SELECTOR__)];
@@ -861,8 +919,10 @@ public sealed class TeamsClient : IDisposable
                 // Schermafdruk mét actieve filter: zonder deze is niet te zien of de
                 // gefilterde lijst leeg was of dat de uitlezer ernaast keek.
                 using var beeld = new MemoryStream();
-                await _web!.CoreWebView2!.CapturePreviewAsync(
-                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                await WebLimiet.MetLimietAsync(
+                    _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                    WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 File.WriteAllBytes(Path.Combine(DataDir, "teams-filter-screen.png"),
                     beeld.ToArray());
             }
@@ -1139,8 +1199,10 @@ public sealed class TeamsClient : IDisposable
             {
                 await Task.Delay(800, ct);
                 using var beeld = new MemoryStream();
-                await _web!.CoreWebView2!.CapturePreviewAsync(
-                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                await WebLimiet.MetLimietAsync(
+                    _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                    WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 File.WriteAllBytes(screenshotPad, beeld.ToArray());
             }
             await ParkeerOpConceptenAsync();
@@ -1257,7 +1319,7 @@ public sealed class TeamsClient : IDisposable
         }
     }
 
-    private async Task<bool> IsIngelogdAsync() =>
+    private async Task<bool> IsIngelogdAsync(bool herstel = true) =>
         // Strikt: het uitgelogde Teams-shell bevat ook al app-layout-elementen, maar dan mét
         // een aanmeldknop (me-control-signin-…). Alleen ingelogd als die knop er níét is.
         await JsAsync(
@@ -1278,7 +1340,7 @@ public sealed class TeamsClient : IDisposable
                document.querySelector('[data-testid="list-item"]') ||
                document.querySelector('[data-testid^="simple-collab-left-rail"]') ||
                document.querySelectorAll('[role="treeitem"]').length > 5)
-            """) == "true";
+            """, herstel) == "true";
 
     public sealed record TeamsBericht(string Naam, string Preview);
 
@@ -1297,7 +1359,15 @@ public sealed class TeamsClient : IDisposable
         var fasen = new List<string>();
         void Fase(string naam) => fasen.Add($"{naam}={klok.ElapsedMilliseconds / 1000.0:0.0}s");
 
-        await _slot.WaitAsync(ct);
+        // Nooit eindeloos in de rij gaan staan: blijft een vorige beurt toch ergens hangen,
+        // dan geeft deze het snel op in plaats van er achteraan te schuiven. De cockpit
+        // wacht per bron maar drie minuten, dus een beurt die daarna pas begint is toch
+        // verloren werk — en hij zou de volgende ronden net zo goed blijven ophouden.
+        if (!await _slot.WaitAsync(TimeSpan.FromMinutes(2), ct))
+        {
+            throw new TimeoutException(
+                "een vorige Teams-beurt is nog bezig — deze ronde overgeslagen");
+        }
         Fase("slot");
         // Buiten de try, want de finally start de herlaadbeurt zodra deze beurt klaar is.
         var herlaadNodig = false;
@@ -1535,8 +1605,10 @@ public sealed class TeamsClient : IDisposable
                 // Plus een screenshot van de verborgen pagina: zo is te zien wat de
                 // sessie werkelijk toont (ingelogd? actuele lijst? badges?).
                 using var beeld = new MemoryStream();
-                await _web!.CoreWebView2!.CapturePreviewAsync(
-                    CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                await WebLimiet.MetLimietAsync(
+                    _web!.CoreWebView2!.CapturePreviewAsync(
+                        CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                    WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 File.WriteAllBytes(Path.Combine(DataDir, "teams-screen.png"), beeld.ToArray());
             }
             catch
@@ -1567,7 +1639,21 @@ public sealed class TeamsClient : IDisposable
             // wél een ongelezen-teller toont — de heuristiek hierboven vindt dan niets.
             // De filterknop "Ongelezen" boven de chatlijst ís er nog: die even aanzetten
             // toont uitsluitend de ongelezen chats, wat elke DOM-gok overbodig maakt.
-            var gefilterd = await FilterOngelezenAsync(previews, ct);
+            List<TeamsBericht>? gefilterd = null;
+            try
+            {
+                gefilterd = await FilterOngelezenAsync(previews, ct);
+            }
+            catch (TimeoutException)
+            {
+                // De filterknop is een extraatje bóvenop de badge-heuristiek. Antwoordt de
+                // pagina daar niet op, dan is dat geen reden om de hele beurt te laten
+                // mislukken: de scrape hierboven is wél gelukt, en zijn uitslag is beter dan
+                // niets. Zo bleef Teams op 23-09-2026 een avond lang leeg in de cockpit
+                // terwijl de chatlijst gewoon uitgelezen werd. De sessie blijft staan (zie
+                // FilterJsAsync): een hangende filter is geen reden om alles weg te gooien.
+                fasen.Add("filter-time-out");
+            }
             if (gefilterd is not null)
             {
                 uitslag.Ongelezen.Clear();
@@ -1753,8 +1839,10 @@ public sealed class TeamsClient : IDisposable
                 {
                     await using var beeld = File.Create(
                         Path.Combine(DataDir, $"teams-klik-mis-{poging}.png"));
-                    await _web!.CoreWebView2!.CapturePreviewAsync(
-                        CoreWebView2CapturePreviewImageFormat.Png, beeld);
+                    await WebLimiet.MetLimietAsync(
+                        _web!.CoreWebView2!.CapturePreviewAsync(
+                            CoreWebView2CapturePreviewImageFormat.Png, beeld),
+                        WebLimiet.Invoer, "schermafdruk", CrashLog, Herstel(false));
                 }
                 catch
                 {
@@ -2467,7 +2555,22 @@ public sealed class TeamsClient : IDisposable
         }
     }
 
-    private async Task<string> JsAsync(string script)
+    /// <summary>
+    /// Alle WebView2-aanroepen lopen via <see cref="WebLimiet"/>: zonder tijdslimiet kan een
+    /// beurt oneindig blijven hangen op een renderer die niet meer antwoordt. Herstel = de
+    /// sessie markeren voor een verse opbouw bij de volgende poll.
+    /// </summary>
+    private Action? Herstel(bool aan) => aan ? MarkeerVoorVerseStart : null;
+
+    private const string CrashLog = "teams-crash-log.txt";
+
+    /// <summary>
+    /// Eén stuk JavaScript in de sessie draaien, met tijdslimiet. <paramref name="herstel"/>
+    /// staat op false voor de aanroepen tijdens het opstarten en aanmelden: daar is
+    /// traagheid normaal, en een verse opbouw zou het opstarten juist blokkeren.
+    /// </summary>
+    private async Task<string> JsAsync(
+        string script, bool herstel = true, TimeSpan? limiet = null)
     {
         if (_web?.CoreWebView2 is not { } core)
         {
@@ -2475,7 +2578,9 @@ public sealed class TeamsClient : IDisposable
         }
         try
         {
-            return await core.ExecuteScriptAsync(script);
+            return await WebLimiet.MetLimietAsync(
+                core.ExecuteScriptAsync(script), limiet ?? WebLimiet.Script, "JavaScript",
+                CrashLog, Herstel(herstel));
         }
         catch (Exception ex) when (ex.Message.Contains("no longer valid",
             StringComparison.OrdinalIgnoreCase))

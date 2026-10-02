@@ -33,6 +33,13 @@ public class VakantiesForm : Form
     private bool _klaar;
     private bool _mislukt;
 
+    /// <summary>
+    /// De donderdagroutine toont dit venster buiten beeld; dan mag het de focus niet
+    /// afpakken van waar er op dat moment gewerkt wordt (zie <see cref="StilVenster"/>).
+    /// Opent de gebruiker het venster zelf, dan gedraagt het zich gewoon.
+    /// </summary>
+    protected override bool ShowWithoutActivation => _achtergrond;
+
     /// <summary>De (eventueel bijgewerkte) samenvatting voor de weekmail-opmerking.</summary>
     public string VakantieTekst => _resultaat.Text.Trim();
 
