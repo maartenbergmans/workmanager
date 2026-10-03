@@ -16,6 +16,7 @@ public sealed class GitWebForm : Form
     private readonly TextBox _url;
     private readonly TextBox _token;
     private readonly CheckBox _bestandsnamen;
+    private readonly ModernListView _projecten;
     private readonly Label _status;
     private readonly PictureBox _qr;
 
@@ -109,10 +110,39 @@ public sealed class GitWebForm : Form
         velden.Controls.Add(Label("Adres van de pagina"));
         velden.Controls.Add(uitleg);
 
+        // Welke projecten de collega te zien krijgt. De radar vindt álle repo's op de pc,
+        // maar eigen gereedschap en afgesloten projecten horen daar niet bij.
+        _projecten = new ModernListView
+        {
+            Dock = DockStyle.Fill,
+            CheckBoxes = true,
+            LegeTekst = "Nog geen projecten gepeild",
+            LeegGlyph = Fluent.Lijst,
+        };
+        _projecten.Columns.Add("Project", 220);
+        _projecten.Columns.Add("Open", 70);
+        foreach (var (naam, aantal) in GitRadar.Standen()
+                     .Select(p => (Naam: GitRadar.Naam(p.Key), p.Value.Aantal))
+                     .OrderBy(p => p.Naam, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var rij = new ListViewItem(naam) { Checked = settings.MagOnline(naam), Tag = naam };
+            rij.SubItems.Add(aantal > 0 ? aantal.ToString() : "");
+            _projecten.Items.Add(rij);
+        }
+
+        var projectPaneel = new ModernGroupBox
+        {
+            Dock = DockStyle.Left,
+            Width = 330,
+            Text = "Online tonen (uitgevinkt = blijft op de pc)",
+        };
+        projectPaneel.Controls.Add(_projecten);
+
         var qrPaneel = new ModernGroupBox { Dock = DockStyle.Fill, Text = "Scan of deel de link" };
         qrPaneel.Controls.Add(_qr);
 
         Controls.Add(qrPaneel);
+        Controls.Add(projectPaneel);
         Controls.Add(velden);
         Padding = new Padding(14, 12, 14, 14);
 
@@ -146,6 +176,18 @@ public sealed class GitWebForm : Form
         settings.Url = _url.Text.Trim();
         settings.Token = _token.Text.Trim();
         settings.MetBestandsnamen = _bestandsnamen.Checked;
+        // Alleen de projecten in de lijst bijwerken: wat de radar nu niet ziet (een pc die
+        // tijdelijk een map mist) mag zijn verborgen-stand houden.
+        foreach (ListViewItem rij in _projecten.Items)
+        {
+            var naam = (string)rij.Tag!;
+            settings.VerborgenProjecten.RemoveAll(v =>
+                v.Equals(naam, StringComparison.OrdinalIgnoreCase));
+            if (!rij.Checked)
+            {
+                settings.VerborgenProjecten.Add(naam);
+            }
+        }
         settings.Save();
         _status.Text = settings.Compleet
             ? "Bewaard — de stand gaat binnen het uur online (of nu, met de knop ernaast)."

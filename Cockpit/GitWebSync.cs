@@ -36,6 +36,22 @@ public class GitWebSettings
     /// </summary>
     public bool MetBestandsnamen { get; set; } = true;
 
+    /// <summary>
+    /// Projecten die niet online horen. De radar vindt alle repo's op de pc, maar niet elke
+    /// repo gaat een collega aan: eigen gereedschap (workmanager, devenv), afgesloten of
+    /// archiefprojecten en wat bij een andere klant hoort. Deze lijst is de startwaarde
+    /// (Maarten, 3 okt 2026); aanpassen gebeurt met de vinkjes in het venster "Git online".
+    /// </summary>
+    public List<string> VerborgenProjecten { get; set; } = new()
+    {
+        "autotango", "workmanager", "devenv",
+        "repalink-nederland-as400", "repalink-frontend", "urbanadmin-old",
+    };
+
+    /// <summary>Hoort dit project online? (Naam zoals de radar hem toont.)</summary>
+    public bool MagOnline(string projectnaam) =>
+        !VerborgenProjecten.Any(v => v.Equals(projectnaam, StringComparison.OrdinalIgnoreCase));
+
     [JsonIgnore]
     public string Token
     {
@@ -160,36 +176,44 @@ public class GitWebSync
     /// hun ouderdom. Bewust zonder de volledige mappen van deze pc — de projectnaam zegt
     /// genoeg, en padnamen van de pc horen niet op een pagina die een collega opent.
     /// </summary>
-    private static object BouwSnapshot(GitWebSettings settings) => new
+    private static object BouwSnapshot(GitWebSettings settings)
     {
-        pc = Environment.MachineName,
-        moment = DateTimeOffset.Now,
-        ronde = GitRadar.Cache.LaatsteControle,
-        totaal = GitRadar.TotaalOngecommit,
-        metWerk = GitRadar.ProjectenMetWerk,
-        achter = GitRadar.ProjectenAchter,
-        projecten = GitRadar.Standen().Select(p => new
+        // Alleen de projecten die online mogen; ook de koptellers rekenen op die lijst,
+        // anders klopt "x bestanden over y projecten" niet met de tabel eronder.
+        var zichtbaar = GitRadar.Standen()
+            .Where(p => settings.MagOnline(GitRadar.Naam(p.Key)))
+            .ToList();
+        return new
         {
-            naam = GitRadar.Naam(p.Key),
-            branch = p.Value.Branch,
-            aantal = p.Value.Aantal,
-            staged = p.Value.Staged,
-            voor = p.Value.Voor,
-            achter = p.Value.Achter,
-            oudsteDagen = p.Value.OudsteDagen,
-            fout = p.Value.Fout,
-            gepeild = p.Value.Moment,
-            bestanden = settings.MetBestandsnamen
-                ? p.Value.Bestanden.Take(300).Select(b => new
-                {
-                    status = b.Omschrijving,
-                    pad = b.Pad,
-                    gestaged = b.Gestaged,
-                    dagen = b.Dagen,
-                }).ToList<object>()
-                : new List<object>(),
-        }).ToList(),
-    };
+            pc = Environment.MachineName,
+            moment = DateTimeOffset.Now,
+            ronde = GitRadar.Cache.LaatsteControle,
+            totaal = zichtbaar.Sum(p => p.Value.Aantal),
+            metWerk = zichtbaar.Count(p => p.Value.Aantal > 0),
+            achter = zichtbaar.Count(p => p.Value.Achter > 0),
+            projecten = zichtbaar.Select(p => new
+            {
+                naam = GitRadar.Naam(p.Key),
+                branch = p.Value.Branch,
+                aantal = p.Value.Aantal,
+                staged = p.Value.Staged,
+                voor = p.Value.Voor,
+                achter = p.Value.Achter,
+                oudsteDagen = p.Value.OudsteDagen,
+                fout = p.Value.Fout,
+                gepeild = p.Value.Moment,
+                bestanden = settings.MetBestandsnamen
+                    ? p.Value.Bestanden.Take(300).Select(b => new
+                    {
+                        status = b.Omschrijving,
+                        pad = b.Pad,
+                        gestaged = b.Gestaged,
+                        dagen = b.Dagen,
+                    }).ToList<object>()
+                    : new List<object>(),
+            }).ToList(),
+        };
+    }
 
     private static async Task PostAsync(
         GitWebSettings settings, string actie, object body, CancellationToken ct)
