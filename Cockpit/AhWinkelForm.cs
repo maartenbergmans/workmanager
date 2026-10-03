@@ -30,6 +30,10 @@ public class AhWinkelForm : Form
     private readonly ModernButton _vulButton;
     private readonly PulseBar _pulse = new();
     private readonly List<AhIngredient> _producten;
+
+    /// <summary>Sleutel van de bestelling in het archief, zodat de mandjecontrole daar bij hoort.</summary>
+    private readonly string _archiefSleutel;
+
     private bool _busy;
 
     /// <summary>
@@ -39,9 +43,10 @@ public class AhWinkelForm : Form
     /// </summary>
     public bool TerugGevraagd { get; private set; }
 
-    public AhWinkelForm(List<AhIngredient> producten, List<string> handmatig)
+    public AhWinkelForm(List<AhIngredient> producten, List<string> handmatig, string archiefSleutel = "")
     {
         _producten = producten;
+        _archiefSleutel = archiefSleutel;
 
         Text = "Albert Heijn – winkelmandje vullen";
         StartPosition = FormStartPosition.CenterScreen;
@@ -312,6 +317,15 @@ public class AhWinkelForm : Form
             }
         }
         SchrijfDebug(verslag, controle);
+        // Het archief bijwerken met wat er écht in het mandje lag: zo weet je later niet
+        // alleen wat je wilde bestellen, maar ook wat je effectief gekregen hebt.
+        AhBestelArchief.LegMandje(_archiefSleutel, _producten.Select(p => new AhArchiefProduct
+        {
+            Naam = p.Naam,
+            Url = p.Url,
+            Aantal = p.Aantal,
+            InMandje = AhApi.WebshopId(p.Url) is { } wi && mandje.ContainsKey(wi),
+        }));
         _status.Text = teruggevonden == _producten.Count
             ? $"Mandje gecontroleerd: alle {teruggevonden} producten teruggevonden."
             : $"Mandje gecontroleerd: {teruggevonden} van {_producten.Count} teruggevonden — " +

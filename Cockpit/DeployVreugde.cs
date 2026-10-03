@@ -52,7 +52,7 @@ public static class DeployVreugde
         {
             state.LaatsteRun = DateTimeOffset.Now;
             var jaar = DateTime.Now.Year.ToString();
-            foreach (var map in GitTaken.Projecten.Concat(ExtraRepos))
+            foreach (var map in GitRadar.Repos.Concat(ExtraRepos))
             {
                 ct.ThrowIfCancellationRequested();
                 var hash = await GitStatus.KaleUitvoerAsync(map, "rev-parse --verify @{u}", ct);

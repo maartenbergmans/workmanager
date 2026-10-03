@@ -92,11 +92,20 @@ public class CockpitForm : Form
     // de zijbalk/lijst) en een lopende ronde wordt niet overlapt (zie _bezig in de Tick).
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 60 * 1000 };
 
-    // Git-status per projectmap: het Projecten-menu toont de dagcache (1× per dag automatisch
-    // bijgewerkt via de poll; "Git controleren" onder ▾ ververst actief).
+    // Git-status per projectmap: het Projecten-menu toont de stand uit de cache van de
+    // git-radar (die elk uur een ronde doet; "Git controleren" onder ▾ peilt meteen opnieuw).
     private readonly List<(ToolStripMenuItem Item, string Map, string Naam)> _gitMenuItems = new();
-    private readonly GitStatusCache.Data _gitCache = GitStatusCache.Load();
-    private bool _gitControleBezig;
+    private static GitStatusCache.Data GitCache => GitRadar.Cache;
+
+    /// <summary>Teller in de werkbalk: het totaal ongecommit over alle repo's (weg als alles schoon is).</summary>
+    private ModernButton? _gitKnop;
+    private readonly ToolTip _gitTip = new();
+
+    /// <summary>Tooltip op het 🎲-knopje: hoe vaak je de keuze van de dobbelsteen volgde.</summary>
+    private readonly ToolTip _dobbelTip = new();
+
+    /// <summary>Loopt er een dobbelronde (de roulette over de takenlijst)?</summary>
+    private bool _dobbelBezig;
     private readonly CancellationTokenSource _cts = new();
     private readonly WebView2 _detail = new() { Dock = DockStyle.Fill };
     /// <summary>Antwoordblok onder de weergave; alleen zichtbaar als er een bericht getoond wordt.</summary>
@@ -1147,12 +1156,17 @@ public class CockpitForm : Form
             it.Click += (_, _) => doe();
             return it;
         }
-        static ToolStripMenuItem Kop(string label) =>
-            new(label) { Enabled = false }; // niet-klikbaar groepskopje
+        // Niet-klikbaar groepskopje: vet én gedempt, zodat het als kop leest en niet als een
+        // uitgeschakelde functie.
+        static ToolStripMenuItem Kop(string label) => new(label)
+        {
+            Enabled = false,
+            Font = new Font(Theme.BaseFont.FontFamily, Theme.BaseFont.Size - 0.5f, FontStyle.Bold),
+        };
 
         // Kleurenschema-submenu (naast het traymenu): meestal kies je het terwijl je in de
         // cockpit zit te kijken.
-        var themaMenuItem = new ToolStripMenuItem("Kleurenschema");
+        var themaMenuItem = new ToolStripMenuItem("🎨  Kleurenschema");
         foreach (var palet in Themas.Alle)
         {
             var keuze = new ToolStripMenuItem($"{palet.Naam} — {palet.Omschrijving}");
@@ -1171,48 +1185,24 @@ public class CockpitForm : Form
             }
         };
 
-        // De cockpit is de vaste werkplek: elke functie moet hier bereikbaar zijn. Vier
-        // duidelijke groepen in plaats van één lange, ongeordende lijst.
-        meerMenu.Items.AddRange(new ToolStripItem[]
+        // De cockpit is de vaste werkplek: elke functie moet hier bereikbaar zijn. Vijf
+        // groepen met een kopje, elk item met zijn eigen pictogram zodat je op vorm en kleur
+        // terugvindt wat je zoekt. Wat je zelden instelt staat één laag diep achter
+        // "Instellingen"; dat hield de vroegere rommellade "Instellingen & extra" van dertien
+        // regels uit het hoofdmenu.
+        var instellingenMenu = new ToolStripMenuItem("⚙️  Instellingen");
+        instellingenMenu.DropDownItems.AddRange(new ToolStripItem[]
         {
-            Kop("Taken & werk"),
-            Venster("Mijn taken…", "mijntaken"),
-            Actie("Taken team…", () => _openTeamTasks()),
-            Venster("Verlof goedkeuren (SD Worx)…", "verlof"),
-            Venster("e-Box Enterprise (BerMaCon)…", "ebox"),
-            new ToolStripSeparator(),
-
-            Kop("CED / Microsoft"),
-            Actie("Azure-portal (CED)…", () => OpenExtern("https://portal.azure.com/")),
-            Actie($"Windows App — {CedLogin.TopdeskGebruiker}…",
-                () => StartWindowsApp(CedLogin.TopdeskGebruiker)),
-            Actie($"Windows App — {CedLogin.Email}…",
-                () => StartWindowsApp(CedLogin.Email)),
-            Actie("Azure DevOps…", () => _openDevOps()),
-            Venster("Azure-VM BI starten (VMWS-BI-MB-1)…", "azurevm"),
-            Actie("Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
-            Actie("TopDesk-tickets…", () => _openTopdesk()),
-            new ToolStripSeparator(),
-
-            Kop("Privé & huishouden"),
-            Venster("Portefeuille…", "portefeuille"),
-            Venster("AH-bestelling…", "ah"),
-            Venster("Bureaublad opruimen…", "bureaublad"),
-            Venster("Verjaardagen & cadeaus…", "verjaardagen"),
-            new ToolStripSeparator(),
-
-            Kop("Instellingen & extra"),
-            Actie("Archiveerregels…", () => regelsKnop.PerformClick()),
+            Actie("📥  Archiveerregels…", () => regelsKnop.PerformClick()),
             // Tegenhanger van de archiveerregels: wat is een factuur, en welke bijlage
             // gaat daarvan naar Billit. Geen knop in de balk — dit beheer je zelden.
-            Actie("Billit-regels (facturen)…", () =>
+            Actie("🧾  Billit-regels (facturen)…", () =>
             {
                 using var form = new BillitRegelsForm();
                 form.ShowDialog(this);
             }),
-            Actie("Claude-usage…", () => usageKnop.PerformClick()),
             // Instellingen die vroeger alleen via het mailvenster en de Dagstart bereikbaar waren.
-            Actie("Gmail-instellingen (mailassistent)…", () =>
+            Actie("✉️  Gmail-instellingen (mailassistent)…", () =>
             {
                 using var form = new MailSettingsForm();
                 if (form.ShowDialog(this) == DialogResult.OK)
@@ -1220,12 +1210,12 @@ public class CockpitForm : Form
                     Toast.Toon(this, "Gmail-instellingen bewaard", Fluent.Check);
                 }
             }),
-            Actie("Instructies mailassistent…", () =>
+            Actie("📝  Instructies mailassistent…", () =>
             {
                 using var form = new InstructionsForm();
                 form.ShowDialog(this);
             }),
-            Actie("Reisassistent…", () =>
+            Actie("🚗  Reisassistent…", () =>
             {
                 using var form = new ReisSettingsForm();
                 if (form.ShowDialog(this) == DialogResult.OK)
@@ -1233,9 +1223,31 @@ public class CockpitForm : Form
                     Toast.Toon(this, "Reisinstellingen bewaard", Fluent.Check);
                 }
             }),
-            Venster("Kennisvoorstellen (CLAUDE.md)…", "kennis"),
-            Actie("🎬 Aftiteling van vandaag", () => _ = Aftiteling.SpeelAsync(this)),
-            Actie("🧾 Nog te factureren…", async () =>
+            Actie("📊  Claude-usage…", () => usageKnop.PerformClick()),
+            Venster("📚  Kennisvoorstellen (CLAUDE.md)…", "kennis"),
+        });
+        // Het seizoensmoment noemt wat er nu naar beneden komt; dat hangt van de datum én
+        // van het weer af, dus het label wordt bij elke opening van het menu bijgewerkt.
+        var seizoenItem = Actie("🍂  Seizoensmoment", () => Seizoen.Speel(this));
+        meerMenu.Opening += (_, _) =>
+        {
+            var stand = Seizoen.Nu();
+            seizoenItem.Text = $"{stand.Emoji}  Seizoensmoment — {stand.Regel.ToLowerInvariant()}";
+        };
+        var windowsAppMenu = new ToolStripMenuItem("🪟  Windows App");
+        windowsAppMenu.DropDownItems.AddRange(new ToolStripItem[]
+        {
+            Actie($"{CedLogin.TopdeskGebruiker}…", () => StartWindowsApp(CedLogin.TopdeskGebruiker)),
+            Actie($"{CedLogin.Email}…", () => StartWindowsApp(CedLogin.Email)),
+        });
+
+        meerMenu.Items.AddRange(new ToolStripItem[]
+        {
+            Kop("WERK"),
+            Venster("📋  Mijn taken…", "mijntaken"),
+            Actie("👥  Taken team…", () => _openTeamTasks()),
+            Venster("🌿  Git-overzicht (alle projecten)…", "gitoverzicht"),
+            Actie("🧾  Nog te factureren…", async () =>
             {
                 if (await FacturatieRadar.HaalOpAsync(_cts.Token) is null && !File.Exists(FacturatieRadar.Overzicht))
                 {
@@ -1244,7 +1256,43 @@ public class CockpitForm : Form
                 }
                 new LeesVenster("Nog te factureren", FacturatieRadar.Overzicht).Show(this);
             }),
-            Actie("💡 Laatste weekadvies…", () =>
+            new ToolStripSeparator(),
+
+            Kop("CED / MICROSOFT"),
+            Actie("🎫  TopDesk-tickets…", () => _openTopdesk()),
+            Actie("🧭  Azure DevOps…", () => _openDevOps()),
+            Actie("💳  Facturen goedkeuren (ISPnext)…", () => _openInvoices()),
+            Venster("🌴  Verlof goedkeuren (SD Worx)…", "verlof"),
+            Venster("📬  e-Box Enterprise (BerMaCon)…", "ebox"),
+            Venster("🖥️  Azure-VM BI starten (VMWS-BI-MB-1)…", "azurevm"),
+            Actie("☁️  Azure-portal (CED)…", () => OpenExtern("https://portal.azure.com/")),
+            windowsAppMenu,
+            new ToolStripSeparator(),
+
+            // Dubbele & : in een menu-item is één & de aanduiding van een sneltoets.
+            Kop("PRIVÉ && HUISHOUDEN"),
+            Venster("🛒  AH-bestelling…", "ah"),
+            Venster("🧺  AH-bestelgeschiedenis…", "aharchief"),
+            Venster("📈  Portefeuille…", "portefeuille"),
+            Venster("🎁  Verjaardagen && cadeaus…", "verjaardagen"),
+            Venster("🧹  Bureaublad opruimen…", "bureaublad"),
+            new ToolStripSeparator(),
+
+            Kop("ONLINE"),
+            Venster("🌐  WorkManager online…", "webversie"),
+            Venster("🔗  Git online (laten meevolgen)…", "gitonline"),
+            new ToolStripSeparator(),
+
+            Kop("PLEZIER"),
+            Actie("🎬  Aftiteling van vandaag", () => _ = Aftiteling.SpeelAsync(this)),
+            seizoenItem,
+            Actie("🎲  Dobbelsteen (kies een taak voor me)", Dobbelen),
+            Actie("🏆  Prijzenkast…", () =>
+            {
+                using var form = new PrestatiesForm();
+                form.ShowDialog(this);
+            }),
+            Actie("💡  Laatste weekadvies…", () =>
             {
                 var laatste = Directory.Exists(Path.Combine(Werkjournaal.Map, "advies"))
                     ? Directory.GetFiles(Path.Combine(Werkjournaal.Map, "advies"), "*.md").OrderByDescending(f => f).FirstOrDefault()
@@ -1256,12 +1304,22 @@ public class CockpitForm : Form
                 }
                 new LeesVenster("Weekadvies", laatste).Show(this);
             }),
+            new ToolStripSeparator(),
+
+            instellingenMenu,
             themaMenuItem,
-            Venster("WorkManager online…", "webversie"),
         });
         var meerKnop = new ModernButton { Text = "⋯", Width = 44 };
         meerKnop.Click += (_, _) => meerMenu.Show(meerKnop, new Point(0, meerKnop.Height + 4));
         toolbar.Controls.Add(meerKnop);
+        // Git: het totaal ongecommit over alle repo's. Neutraal van kleur (accent is hier
+        // voorbehouden aan knoppen die om actie vragen) en alleen in beeld als er écht iets
+        // openstaat; de tooltip noemt de drukste projecten.
+        _gitKnop = new ModernButton { Text = "◆", Width = 54, Visible = false };
+        _gitKnop.Click += (_, _) => _openVenster("gitoverzicht");
+        toolbar.Controls.Add(_gitKnop);
+        WerkGitKnopBij(); // meteen de laatst bekende stand
+
         // Portefeuille: enkel een euroteken, zonder cijfer en zonder kleur — in de werkbalk
         // kijkt iedereen die langsloopt mee, en een groen of rood percentage trekt de blik.
         // De stand van vandaag staat in de tooltip; klikken opent het venster.
@@ -1311,6 +1369,16 @@ public class CockpitForm : Form
             form.ShowDialog(this);
         };
         toolbar.Controls.Add(prestatiesKnop);
+        // De dobbelsteen: voor als je niet kunt kiezen. Eén klik laat de selectie als een
+        // roulette over de open taken lopen en stopt op één taak.
+        var dobbelKnop = new ModernButton { Text = "🎲", Width = 44 };
+        _dobbelTip.SetToolTip(dobbelKnop, Dobbel.Stand());
+        dobbelKnop.Click += (_, _) =>
+        {
+            Dobbelen();
+            _dobbelTip.SetToolTip(dobbelKnop, Dobbel.Stand());
+        };
+        toolbar.Controls.Add(dobbelKnop);
         toolbar.Controls.Add(claudeUpdateKnop);
         toolbar.Controls.Add(_status);
         toolbar.Controls.Add(_sessieStatus);
@@ -2716,9 +2784,10 @@ public class CockpitForm : Form
 
         _timer.Tick += async (_, _) =>
         {
-            // Eén automatische git-controle per dag, meeliftend op de poll (los van de
-            // typen-guard hieronder: de controle raakt het antwoordvak niet).
-            if (_gitCache.LaatsteControle.LocalDateTime.Date != DateTime.Now.Date)
+            // Eén automatische git-ronde per uur, meeliftend op de poll (los van de
+            // typen-guard hieronder: de controle raakt het antwoordvak niet). Dezelfde ronde
+            // voedt de online tabel, dus hier niets vaker dan dat.
+            if (GitRadar.Verouderd)
             {
                 _ = ControleerGitAsync(handmatig: false);
             }
@@ -2746,8 +2815,19 @@ public class CockpitForm : Form
             }
         }
         VipLijst.Gewijzigd += VipsGewijzigd;
+        // De radar kan ook buiten de cockpit om een ronde doen (de uurlijkse webupload):
+        // dan moeten de labels en de teller hier mee.
+        void GitBijgewerkt()
+        {
+            if (!IsDisposed && IsHandleCreated)
+            {
+                BeginInvoke(WerkAlleGitLabelsBij);
+            }
+        }
+        GitRadar.Bijgewerkt += GitBijgewerkt;
         FormClosed += (_, _) =>
         {
+            GitRadar.Bijgewerkt -= GitBijgewerkt;
             VipLijst.Gewijzigd -= VipsGewijzigd;
             BewaarDetailConcept();
             _timer.Stop();
@@ -2763,12 +2843,22 @@ public class CockpitForm : Form
             UpdateContextKnoppen();
             _timer.Start();
             ThemaIntro.SpeelEenmaalPerDag(this); // gun barrel, zon of scanlijn naargelang het thema
+            // Het seizoen erna, niet erdoor: de thema-intro is een effen vlak over het hele
+            // venster en zou de deeltjes de eerste seconden opslokken.
+            var seizoenStart = new System.Windows.Forms.Timer { Interval = 1600 };
+            seizoenStart.Tick += (_, _) =>
+            {
+                seizoenStart.Stop();
+                seizoenStart.Dispose();
+                Seizoen.SpeelEenmaalPerDag(this);
+            };
+            seizoenStart.Start();
             BegroetMaarten();
             await VerversAsync();
             _ = AutoPlanDagAsync(); // eerste start van de dag: meteen de dag plannen
-            if (_gitCache.LaatsteControle.LocalDateTime.Date != DateTime.Now.Date)
+            if (GitRadar.Verouderd)
             {
-                _ = ControleerGitAsync(handmatig: false); // dagelijkse git-controle
+                _ = ControleerGitAsync(handmatig: false); // uurlijkse git-ronde
             }
         };
         Theme.Apply(this, fade: false); // WebView2 rendert niet betrouwbaar in een gelaagd venster
@@ -3376,7 +3466,8 @@ public class CockpitForm : Form
         // Netflix-bevestigingen, de JAAN bv "SMS credits bijgeschreven"-meldingen
         // (het aantal in het onderwerp varieert, dus op de vaste kern matchen), de
         // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari), de
-        // Seety-bon van gratis parkeersessies (€ 0,00) en de AH-bestel- en bezorgmails
+        // Seety-bon van gratis parkeersessies (€ 0,00), de Google Cloud-factuur van € 0,00
+        // (bedrag uit de pdf-bijlage) en de AH-bestel- en bezorgmails
         // (hieronder eerst verwerkt: besteltaak en levermoment).
         var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
         // e-Box Enterprise: de meldingsmail "Nieuw e-Box bericht" zet eerst de cockpitknop
@@ -3401,6 +3492,19 @@ public class CockpitForm : Form
         {
             // Best effort; de berichtenlijst mag hier nooit op stranden.
         }
+        // Google Cloud-facturen: het bedrag staat alleen in de pdf-bijlage, dus die wordt
+        // (één keer per factuur) gelezen. Alleen facturen van € 0,00 mogen weg; staat er een
+        // bedrag op of valt de pdf niet te lezen, dan blijft de mail staan.
+        var gcpNul = new HashSet<uint>();
+        try
+        {
+            gcpNul = await GoogleCloudFactuur.NulFacturenAsync(
+                berichten, MailReplySettings.Load(), _cts.Token);
+        }
+        catch
+        {
+            // Geen oordeel = niets archiveren; de volgende poll probeert opnieuw.
+        }
         var netflix = berichten.Where(m => !m.IsChat && m.Uid > 0 &&
             (m.VanAdres.Contains("account.netflix.com", StringComparison.OrdinalIgnoreCase) ||
              EboxForm.IsMeldingsmail(m) ||
@@ -3410,6 +3514,7 @@ public class CockpitForm : Form
              AlarmMails.Matcht(m) ||
              AppleFactuur.MoetArchiveren(m) ||
              SeetyBon.IsGratisBon(m) ||
+             gcpNul.Contains(m.Uid) ||
              AhLevering.Matcht(m) ||
              ArchiveerRegels.Matcht(m, eigenRegels))).ToList();
         // Storingsmails (MailMobility/MailProperty van IT-support) éérst registreren: dat zet
@@ -9170,6 +9275,93 @@ public class CockpitForm : Form
     }
 
     /// <summary>
+    /// De dobbelsteen: laat de selectie als een roulette over de open taken lopen, steeds
+    /// langzamer, en stopt op één taak. Puur om de keuze van de tafel te halen als alles even
+    /// gelijk belangrijk lijkt — dus geen weging naar deadline: dan was het geen dobbelsteen.
+    /// Staat de lijst op dagplanning, dan schuift de gekozen taak ook vooraan in het plan.
+    /// </summary>
+    private void Dobbelen()
+    {
+        if (_dobbelBezig)
+        {
+            return;
+        }
+        // Vooruitblik-, snooze- en afgevinkte rijen zijn geen werk dat je nu kunt doen.
+        var kandidaten = _taken.Items.Cast<ListViewItem>()
+            .Where(i => i.Tag is TaakRij { Bron: not ("Later" or "Snooze" or "Klaar" or "Gepland") })
+            .ToList();
+        if (kandidaten.Count == 0)
+        {
+            Toast.Toon(this, "Geen open taken om te dobbelen 🎲", Fluent.Checkbox);
+            return;
+        }
+
+        var winnaar = kandidaten[Dobbel.Kies(kandidaten.Count)];
+        if (kandidaten.Count == 1)
+        {
+            KiesWinnaar(winnaar);
+            return;
+        }
+
+        // De roulette: 22 sprongen met een steeds langere pauze (ease-out), samen ongeveer
+        // anderhalve seconde. De laatste sprong valt op de winnaar.
+        _dobbelBezig = true;
+        var sprong = 0;
+        const int Sprongen = 22;
+        var roulette = new System.Windows.Forms.Timer { Interval = 40 };
+        roulette.Tick += (_, _) =>
+        {
+            if (IsDisposed)
+            {
+                roulette.Stop();
+                roulette.Dispose();
+                return;
+            }
+            if (++sprong >= Sprongen)
+            {
+                roulette.Stop();
+                roulette.Dispose();
+                _dobbelBezig = false;
+                KiesWinnaar(winnaar);
+                return;
+            }
+            var tussen = kandidaten[(sprong * 7 + 3) % kandidaten.Count];
+            _taken.SelectedItems.Clear();
+            tussen.Selected = true;
+            tussen.EnsureVisible();
+            // Vertragen: de laatste sprongen duren het langst, zoals een echt rad.
+            roulette.Interval = 40 + (int)(160 * Math.Pow(sprong / (double)Sprongen, 3));
+        };
+        roulette.Start();
+
+        void KiesWinnaar(ListViewItem item)
+        {
+            if (IsDisposed || item.Tag is not TaakRij rij)
+            {
+                return;
+            }
+            _taken.SelectedItems.Clear();
+            item.Selected = true;
+            item.Focused = true;
+            item.EnsureVisible();
+            _taken.Focus();
+            Dobbel.Onthoud(rij.Lokaal is { } dobbelTaak ? dobbelTaak.Id.ToString() : rij.AsanaGid);
+            // In dagplan-modus is "bovenaan" een echte plek: dan schuift de taak ook in het
+            // plan naar voren, zodat de focusbalk en "▶ NU:" meteen meekomen.
+            var vooraan = "";
+            if (_sorteerOpPlan && rij.Lokaal is not null &&
+                _taken.Items.Cast<ListViewItem>()
+                    .Select(i => i.Tag).OfType<TaakRij>()
+                    .FirstOrDefault(r => r.Lokaal is not null && r != rij) is { } eerste)
+            {
+                VerplaatsTaakInPlan(rij, eerste);
+                vooraan = " — bovenaan gezet";
+            }
+            Toast.Toon(this, $"{Dobbel.Zinnetje()} {Kort(rij.Tekst, 60)}{vooraan}", Fluent.Checkbox);
+        }
+    }
+
+    /// <summary>
     /// Verschuift een taak in het dagplan (versleept in de takenlijst, dagplan-modus): de
     /// versleepte komt vlak vóór het doel te staan; zonder doel achteraan.
     /// </summary>
@@ -9253,12 +9445,12 @@ public class CockpitForm : Form
 
     /// <summary>
     /// Zet het Projecten-menu-item van één projectmap op de laatst bekende git-stand uit de
-    /// dagcache, met het controlemoment erbij. ⬇ vooraan zodra de repo achterloopt op de
+    /// cache van de radar, met het peilmoment erbij. ⬇ vooraan zodra de repo achterloopt op de
     /// remote: het signaal om eerst te pullen voordat je verder werkt of deployt.
     /// </summary>
     private void WerkGitLabelBij(ToolStripMenuItem item, string map, string naam)
     {
-        if (!_gitCache.PerMap.TryGetValue(map, out var stand))
+        if (!GitCache.PerMap.TryGetValue(map, out var stand))
         {
             item.Text = $"◆ Git-status — {naam} (nog niet gecontroleerd)";
             return;
@@ -9270,13 +9462,13 @@ public class CockpitForm : Form
     }
 
     /// <summary>
-    /// Controleert de git-status van alle projectmappen en werkt de dagcache en de
-    /// menulabels bij. Loopt automatisch één keer per dag (poll) en handmatig via
+    /// Laat de git-radar alle repo's peilen en werkt daarna de menulabels en de teller in de
+    /// werkbalk bij. Loopt automatisch één keer per uur (poll) en handmatig via
     /// "Git controleren" in het ▾-menu naast "Nu verversen".
     /// </summary>
     private async Task ControleerGitAsync(bool handmatig)
     {
-        if (_gitControleBezig)
+        if (GitRadar.Bezig)
         {
             if (handmatig)
             {
@@ -9284,42 +9476,24 @@ public class CockpitForm : Form
             }
             return;
         }
-        _gitControleBezig = true;
         try
         {
-            var mappen = _gitMenuItems
-                .Select(g => g.Map)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var metWerk = 0;
-            foreach (var map in mappen)
+            if (!await GitRadar.ScanAsync(_cts.Token))
             {
-                var rapport = await GitStatus.OphalenAsync(map, _cts.Token);
-                _gitCache.PerMap[map] = new GitStatusCache.Stand
-                {
-                    Kort = rapport.Kort,
-                    Achter = rapport.Achter,
-                    Moment = DateTimeOffset.Now,
-                };
-                if (rapport.Fout is not null || rapport.Aantal > 0 || rapport.Achter > 0)
-                {
-                    metWerk++;
-                }
-                foreach (var (item, m, naam) in _gitMenuItems)
-                {
-                    if (string.Equals(m, map, StringComparison.OrdinalIgnoreCase))
-                    {
-                        WerkGitLabelBij(item, m, naam);
-                    }
-                }
+                return;
             }
-            _gitCache.LaatsteControle = DateTimeOffset.Now;
-            GitStatusCache.Save(_gitCache);
-            if (handmatig && !IsDisposed)
+            if (IsDisposed)
             {
+                return;
+            }
+            WerkAlleGitLabelsBij();
+            if (handmatig)
+            {
+                var metWerk = GitRadar.ProjectenMetWerk + GitRadar.ProjectenAchter;
                 Toast.Toon(this, metWerk == 0
-                    ? $"Git gecontroleerd: alle {mappen.Count} projecten schoon en up-to-date"
-                    : $"Git gecontroleerd: {metWerk} van {mappen.Count} projecten met openstaand werk — zie Projecten ▾",
+                    ? $"Git gecontroleerd: alle {GitRadar.Repos.Count} projecten schoon en up-to-date"
+                    : $"Git gecontroleerd: {GitRadar.TotaalOngecommit} ongecommit over " +
+                      $"{GitRadar.ProjectenMetWerk} projecten — zie Git-overzicht",
                     Fluent.Sync);
             }
         }
@@ -9327,10 +9501,47 @@ public class CockpitForm : Form
         {
             // Venster gesloten.
         }
-        finally
+    }
+
+    /// <summary>Zet alle git-menulabels én de werkbalkteller op de verse stand.</summary>
+    private void WerkAlleGitLabelsBij()
+    {
+        foreach (var (item, map, naam) in _gitMenuItems)
         {
-            _gitControleBezig = false;
+            WerkGitLabelBij(item, map, naam);
         }
+        WerkGitKnopBij();
+    }
+
+    /// <summary>
+    /// De git-teller in de werkbalk: hoeveel bestanden er over alle repo's ongecommit staan,
+    /// met ⬇ erbij als er repo's achterlopen. Blijft weg zolang alles schoon is — een nul
+    /// hoeft niemand te zien. Klikken opent het git-overzicht.
+    /// </summary>
+    private void WerkGitKnopBij()
+    {
+        if (_gitKnop is null || IsDisposed)
+        {
+            return;
+        }
+        var totaal = GitRadar.TotaalOngecommit;
+        var achter = GitRadar.ProjectenAchter;
+        _gitKnop.Visible = totaal > 0 || achter > 0;
+        if (!_gitKnop.Visible)
+        {
+            return;
+        }
+        _gitKnop.Text = achter > 0 ? $"◆ {totaal} ⬇{achter}" : $"◆ {totaal}";
+        _gitKnop.KrimpNaarInhoud();
+        var drukste = GitRadar.Standen()
+            .Where(p => p.Value.Aantal > 0)
+            .Take(6)
+            .Select(p => $"{GitRadar.Naam(p.Key)}: {p.Value.Aantal}" +
+                         (p.Value.OudsteDagen >= 7 ? $" (oudste {p.Value.OudsteDagen} d)" : ""))
+            .ToList();
+        _gitTip.SetToolTip(_gitKnop, string.Join(Environment.NewLine, drukste.Count > 0
+            ? drukste.Prepend($"{totaal} ongecommitte bestanden — klik voor het overzicht")
+            : new[] { $"{achter} project(en) lopen achter op de remote" }));
     }
 
     private sealed record TaakRij(
@@ -10948,6 +11159,11 @@ public class CockpitForm : Form
             ContextSwitch.Registreer(rij.Lokaal?.Categorie is { Length: > 0 } cat
                 ? cat : (rij.Bron == "Asana" ? "Aqurat" : null));
             Prestaties.Gebeurtenis(this, "taak-af", rij.Tekst);
+            // Was dit de taak die de dobbelsteen koos? Dan volgde je het lot.
+            if (Dobbel.VolgdeHetLot(rij.Lokaal is { } dobbelTaak ? dobbelTaak.Id.ToString() : rij.AsanaGid))
+            {
+                Prestaties.Gebeurtenis(this, "dobbel");
+            }
             // Timer op deze taak? Stoppen en boeken — zo eindigt de tijd op het echte moment.
             if (TaakTimer.Huidig() is { } timer &&
                 ((rij.Lokaal is { } lt && timer.TaakId == lt.Id) ||

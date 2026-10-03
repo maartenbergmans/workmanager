@@ -51,6 +51,7 @@ public class TrayAppContext : ApplicationContext
     private VoiceSync? _voiceSync;
     private AhWebSync? _ahWebSync;
     private WmWebSync? _wmWebSync;
+    private GitWebSync? _gitWebSync;
     private DubbelCtrlHook? _dubbelCtrl;
 
     [DllImport("user32.dll")]
@@ -215,6 +216,13 @@ public class TrayAppContext : ApplicationContext
                 TrayMelding.Toon("Kennisvoorstellen klaar",
                     $"{n} voorstel(len) voor CLAUDE.md uit je Claude-opdrachten van deze week",
                     () => OpenVenster("kennis"), 12000));
+            // Eerste sneeuwdag van de winter: één keer per winter een melding, en in de
+            // cockpit dwarrelt het seizoensmoment die dag toch al vanzelf.
+            if (Seizoen.EersteSneeuw() is { } sneeuw)
+            {
+                TrayMelding.Toon("❄️ Eerste sneeuw", sneeuw, OpenCockpit, 15000);
+                Prestaties.Gebeurtenis(null, "sneeuw");
+            }
             CheckNachtOnderhoud();
             CheckBackup();
             CheckGeheugen();
@@ -286,6 +294,15 @@ public class TrayAppContext : ApplicationContext
         var wmWebTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
         wmWebTimer.Tick += async (_, _) => await _wmWebSync.PollAsync();
         wmWebTimer.Start();
+
+        // Git-stand online (git.php): de sync beslist zelf of het uur om is, dus hier mag
+        // de timer rustig vaker kloppen — zo komt de stand ook kort na het opstarten omhoog
+        // en niet pas een uur later. Doet niets zolang git-web-settings.json niet compleet is.
+        _gitWebSync = new GitWebSync();
+        var gitWebTimer = new System.Windows.Forms.Timer { Interval = 5 * 60_000 };
+        gitWebTimer.Tick += async (_, _) => await _gitWebSync.PollAsync();
+        gitWebTimer.Start();
+        _ = _gitWebSync.PollAsync();
 
         // Algemene activiteitenlog: elke minuut het voorgrondvenster bijschrijven — het
         // bronmateriaal voor het timesheet-dagvoorstel in de cockpit.
@@ -417,6 +434,10 @@ public class TrayAppContext : ApplicationContext
         mijnTaken.Click += (_, _) => OpenMijnTaken();
         menu.Items.Add(mijnTaken);
 
+        var gitOverzicht = new ToolStripMenuItem("Git-overzicht (alle projecten)…");
+        gitOverzicht.Click += (_, _) => OpenVenster("gitoverzicht");
+        menu.Items.Add(gitOverzicht);
+
         var tasks = new ToolStripMenuItem("Taken team…");
         tasks.Click += (_, _) => OpenTeamTasks();
         menu.Items.Add(tasks);
@@ -465,6 +486,10 @@ public class TrayAppContext : ApplicationContext
         };
         menu.Items.Add(ah);
 
+        var ahArchief = new ToolStripMenuItem("AH-bestelgeschiedenis…");
+        ahArchief.Click += (_, _) => OpenVenster("aharchief");
+        menu.Items.Add(ahArchief);
+
         var portefeuille = new ToolStripMenuItem("Portefeuille…");
         portefeuille.Click += (_, _) => OpenPortefeuille();
         menu.Items.Add(portefeuille);
@@ -476,6 +501,10 @@ public class TrayAppContext : ApplicationContext
         var webversie = new ToolStripMenuItem("WorkManager online…");
         webversie.Click += (_, _) => OpenWebversie();
         menu.Items.Add(webversie);
+
+        var gitOnline = new ToolStripMenuItem("Git online (laten meevolgen)…");
+        gitOnline.Click += (_, _) => OpenVenster("gitonline");
+        menu.Items.Add(gitOnline);
 
         menu.Items.Add(new ToolStripSeparator());
 
@@ -718,6 +747,16 @@ public class TrayAppContext : ApplicationContext
                     bestel.ShowDialog();
                 }
                 break;
+            case "aharchief":
+                if (_ahArchiefForm is { IsDisposed: false })
+                {
+                    _ahArchiefForm.Activate();
+                    break;
+                }
+                _ahArchiefForm = new AhArchiefForm();
+                _ahArchiefForm.FormClosed += (_, _) => _ahArchiefForm = null;
+                _ahArchiefForm.Show();
+                break;
             case "verjaardagen":
                 OpenVerjaardagen();
                 break;
@@ -746,7 +785,48 @@ public class TrayAppContext : ApplicationContext
             case "portefeuille":
                 OpenPortefeuille();
                 break;
+            case "gitoverzicht":
+                OpenGitOverzicht();
+                break;
+            case "gitonline":
+                OpenGitOnline();
+                break;
         }
+    }
+
+    /// <summary>De bestelgeschiedenis; één exemplaar, zodat je er niet vijf van open hebt.</summary>
+    private AhArchiefForm? _ahArchiefForm;
+
+    private GitOverzichtForm? _gitOverzichtForm;
+
+    /// <summary>Het git-overzicht van alle repo's; één exemplaar, want het volgt de radar.</summary>
+    private void OpenGitOverzicht()
+    {
+        if (_gitOverzichtForm is { IsDisposed: false })
+        {
+            _gitOverzichtForm.Activate();
+            return;
+        }
+
+        _gitOverzichtForm = new GitOverzichtForm();
+        _gitOverzichtForm.FormClosed += (_, _) => _gitOverzichtForm = null;
+        _gitOverzichtForm.Show();
+    }
+
+    private GitWebForm? _gitWebForm;
+
+    /// <summary>De instellingen en de deelbare link van de online git-tabel.</summary>
+    private void OpenGitOnline()
+    {
+        if (_gitWebForm is { IsDisposed: false })
+        {
+            _gitWebForm.Activate();
+            return;
+        }
+
+        _gitWebForm = new GitWebForm();
+        _gitWebForm.FormClosed += (_, _) => _gitWebForm = null;
+        _gitWebForm.Show();
     }
 
     private EboxForm? _eboxForm;
@@ -1283,7 +1363,7 @@ public class TrayAppContext : ApplicationContext
     {
         var active = Clients.Where(c => _active.Contains(c.Name)).ToArray();
 
-        if (active.Length == 0 && Theme.AppIcon is not null && !_aanmeldBadge)
+        if (active.Length == 0 && Theme.AppIcon is not null && !_aanmeldBadge && !Seizoen.Kerstmuts)
         {
             // Rustmodus: hetzelfde tegel-icoon als de exe en de vensters.
             _trayIcon.Icon = Theme.AppIcon;
@@ -1302,7 +1382,13 @@ public class TrayAppContext : ApplicationContext
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 
-            if (active.Length == 0)
+            if (active.Length == 0 && Seizoen.Kerstmuts && Theme.AppIcon is { } appIcoon)
+            {
+                // Kerstperiode: het gewone tegel-icoon, maar met een mutsje op. Daarom moet
+                // het hier door de bitmap-tak: een Icon zelf kun je niet bijtekenen.
+                g.DrawIcon(appIcoon, new Rectangle(0, 0, 32, 32));
+            }
+            else if (active.Length == 0)
             {
                 // Rustmodus: accentverloop met een witte W.
                 using var verloop = new LinearGradientBrush(
@@ -1348,6 +1434,19 @@ public class TrayAppContext : ApplicationContext
                         active[i].Name[..1], font, Brushes.White,
                         new RectangleF(center.X - 8f, center.Y - 8f, 16f, 16f), sf);
                 }
+            }
+
+            if (Seizoen.Kerstmuts)
+            {
+                // Een rood mutsje linksboven: punt naar rechts, witte rand en een pompon.
+                using var rood = new SolidBrush(Color.FromArgb(0xC2, 0x1B, 0x25));
+                g.FillPolygon(rood, new[]
+                {
+                    new Point(2, 11), new Point(14, 1), new Point(16, 9),
+                });
+                using var wit = new SolidBrush(Color.White);
+                g.FillRectangle(wit, 1, 10, 16, 4);
+                g.FillEllipse(wit, 13, 0, 6, 6);
             }
 
             if (_aanmeldBadge)

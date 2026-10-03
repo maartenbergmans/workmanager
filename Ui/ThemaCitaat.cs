@@ -66,6 +66,30 @@ public static class ThemaCitaat
         "Kleine kop, volle dag.",
     };
 
+    private static readonly string[] BreakingBad =
+    {
+        "Chemie is verandering — en verandering kost altijd energie.",
+        "No half measures: half af is het gevaarlijkst.",
+        "Een recept dat niemand kan navolgen, is geen recept.",
+        "Zuiverheid komt van geduld, niet van haast.",
+        "Wie het proces kent, hoeft niet te improviseren.",
+        "Tread lightly: de dure fouten maak je als je zeker bent.",
+        "Elke stap die je overslaat, kom je later tegen.",
+        "Say my name — maar zeg eerst wat er af is.",
+    };
+
+    private static readonly string[] Zeilen =
+    {
+        "Je kunt de wind niet kiezen, wel je koers.",
+        "Wie op de perfecte wind wacht, blijft in de haven.",
+        "Hard aan de wind kom je vooruit, maar niet comfortabel.",
+        "Een goede zeiler kijkt vooruit naar het water, niet naar de zeilen.",
+        "Overstag gaan is geen koerswijziging, het is dezelfde koers anders varen.",
+        "Zonder anker drijf je, hoe mooi je zeilen ook staan.",
+        "Rustig water maakt geen ervaren stuurman.",
+        "Koers houden is honderd kleine correcties.",
+    };
+
     private static readonly string[] Zakelijk =
     {
         "Wat je vandaag afwerkt, hoef je morgen niet te bewaken.",
@@ -88,6 +112,8 @@ public static class ThemaCitaat
             "Zomer" => Zomer,
             "Neon" => Neon,
             "Espresso" => Espresso,
+            "Breaking Bad" => BreakingBad,
+            "Zeilen" => Zeilen,
             _ => Zakelijk,
         };
         // Datum + themanaam als index: op dezelfde dag geeft elk thema een ánder citaat,

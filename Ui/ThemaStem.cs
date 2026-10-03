@@ -82,6 +82,26 @@ public static class ThemaStem
             "Nul berichten. Fris begin 🌤️",
             "Leeg! Ga iets leuks doen 🎉",
         },
+        "Breaking Bad" => new[]
+        {
+            "Inbox leeg. Say my name 🧪",
+            "Nul berichten — 99,1 % zuiver opgeruimd 💎",
+            "Alles verwerkt. Yeah, science! ⚗️",
+            "Leeg. I am the one who knocks — en er klopt niemand meer 🚪",
+            "Geen post meer. Hazmatpak mag uit 🥼",
+            "Better call… niemand. Alles is geregeld 📞",
+            "Inbox zero. Los Pollos Hermanos sluit de kassa 🍗",
+            "Niets meer in de camper. Woestijn, stilte, zonsondergang 🏜️",
+        },
+        "Zeilen" => new[]
+        {
+            "Inbox leeg — wind mee en vrije zee ⛵",
+            "Alles verwerkt. Anker uit in een stille baai ⚓",
+            "Nul berichten. Zeilen bol, roer vast 🌊",
+            "Leeg! Tijd om op het voordek te gaan liggen 🌞",
+            "Haven schoon. Niets meer aan dek te doen 🪢",
+            "Kalme zee, lege inbox — zeldzaam en mooi 🧭",
+        },
         _ => new[]
         {
             "Inbox zero! Tijd voor een koffie ☕",
@@ -117,6 +137,18 @@ public static class ThemaStem
         "Neon" => new[] { "Takenwachtrij leeg ⚡", "Niets in de queue 🌃" },
         "Espresso" => new[] { "Niets meer te doen — koffiepauze ☕", "Alles afgewerkt, rustig aan 🛋️" },
         "Daglicht" => new[] { "Geen open taken meer ✨", "Alles afgewerkt 🎉" },
+        "Breaking Bad" => new[]
+        {
+            "Geen taken meer. Het lab is schoon 🧪",
+            "Lege lijst — tijd om de camper te parkeren 🚐",
+            "Niets meer op de planning. Tread lightly 🏜️",
+        },
+        "Zeilen" => new[]
+        {
+            "Geen taken meer — koers vrij ⛵",
+            "Dek opgeruimd, niets meer te doen ⚓",
+            "Lege lijst. Laat de wind het werk doen 🌬️",
+        },
         _ => new[] { "Geen open taken 🎉" },
     });
 
@@ -148,6 +180,19 @@ public static class ThemaStem
         "Neon" => new[] { "Level gehaald. Neon aan 🌆", "Combo compleet ⚡" },
         "Espresso" => new[] { "Verdiend — dubbele espresso ☕", "Goed werk. Koffie erop ☕" },
         "Daglicht" => new[] { "Mooi opgeruimd ✨", "Helemaal bij 🎉" },
+        "Breaking Bad" => new[]
+        {
+            "Zuiverheid: 99,1 %. Netjes 💎",
+            "Say my name — je weet wie dit afwerkte 🧪",
+            "Dat was chemie, geen geluk ⚗️",
+            "Heisenberg zou knikken 🎩",
+        },
+        "Zeilen" => new[]
+        {
+            "Mooi gevaren — alles binnen ⛵",
+            "Haven bereikt. Zeilen netjes gestreken ⚓",
+            "Dat was een strakke koers 🧭",
+        },
         _ => new[] { "Mooi werk 🎉", "Alles bij 🏆" },
     });
 
@@ -178,6 +223,17 @@ public static class ThemaStem
         "Neon" => new[] { "Reboot even: water, rechtstaan, doorgaan ⚡" },
         "Espresso" => new[] { "Koffie? Deze keer met een koekje ☕" },
         "Daglicht" => new[] { "Even opstaan en naar buiten kijken ☀️" },
+        "Breaking Bad" => new[]
+        {
+            "Pauze. Zelfs een chemicus doet het masker af 🥼",
+            "Even de woestijn in: vijf minuten lucht 🏜️",
+            "No half measures — ook niet bij pauzes. Sta recht 💧",
+        },
+        "Zeilen" => new[]
+        {
+            "Even overstag: rechtstaan, water, horizon zoeken 🌊",
+            "Pauze aan dek — vijf minuten wind in het gezicht 🌬️",
+        },
         _ => new[] { "Even pauze — recht staan en water drinken 💧" },
     });
 
@@ -200,6 +256,19 @@ public static class ThemaStem
         "Neon" => "Neon aan — de nacht is van jou 🌃",
         "Espresso" => "Espresso aan — warm en rustig ☕",
         "Daglicht" => "Daglicht aan — fris en helder ☀️",
+        "Breaking Bad" => Kies(new[]
+        {
+            "Breaking Bad aan. Say my name 🧪",
+            "Hazmatpak aan, ventilator op stand drie ⚗️",
+            "I am the one who knocks 🚪",
+            "Welkom in Albuquerque. Tread lightly 🏜️",
+        }),
+        "Zeilen" => Kies(new[]
+        {
+            "Zeilen aan — lijnen los, wind mee ⛵",
+            "Koers gezet. Behouden vaart ⚓",
+            "Zeilen op, motor uit 🌊",
+        }),
         _ => "Middernacht aan — het vertrouwde donker 🌙",
     };
 
@@ -252,6 +321,20 @@ public static class ThemaStem
                 "middag" => "Goedemiddag 🌤️",
                 _ => "Goedenavond ✨",
             },
+            "Breaking Bad" => deel switch
+            {
+                "nacht" => "Nachtshift in het lab 🌙",
+                "ochtend" => "Goedemorgen. De ventilator loopt al ⚗️",
+                "middag" => "Middag in Albuquerque — 38 graden 🏜️",
+                _ => "Avond. Tijd om de camper te sluiten 🚐",
+            },
+            "Zeilen" => deel switch
+            {
+                "nacht" => "Nachtwacht aan het roer 🌙",
+                "ochtend" => "Goeiemorgen — ochtendbriesje ⛵",
+                "middag" => "Middag, halfwind en zon 🌞",
+                _ => "Avondval. Lichten op, koers naar de haven ⚓",
+            },
             _ => deel switch
             {
                 "ochtend" => "Goedemorgen 🌙",
@@ -284,6 +367,8 @@ public static class ThemaStem
             "Zomer" => new[] { "🌱", "🌿", "☘️", "🍀", "🌻", "🌺", "🍹", "🏝️", "🌴", "🥥" },
             "Neon" => new[] { "▪️", "🔹", "🔷", "💠", "⚡", "🌐", "🚀", "🛸", "🌌", "🌠" },
             "Espresso" => new[] { "🫘", "☕", "☕", "🍫", "🥐", "🍰", "🧁", "🏆", "🥇", "👑" },
+            "Breaking Bad" => new[] { "⚗️", "🧪", "🥼", "🚐", "🧫", "💎", "💰", "🎩", "👓", "👑" },
+            "Zeilen" => new[] { "🪢", "🧭", "⛵", "🌬️", "🏝️", "🐬", "🦭", "🏆", "🥇", "👑" },
             _ => new[] { "🌱", "🌿", "☘️", "🍀", "🪴", "🌾", "🌳", "🌸", "🌺", "🌻" },
         };
         return reeks[trap];
@@ -300,6 +385,8 @@ public static class ThemaStem
         "Zomer" => "Cockpit – WorkManager 🌴",
         "Neon" => "Cockpit – WorkManager ⚡",
         "Espresso" => "Cockpit – WorkManager ☕",
+        "Breaking Bad" => "Het lab – WorkManager ⚗️",
+        "Zeilen" => "Aan het roer – WorkManager ⛵",
         _ => "Cockpit – WorkManager",
     };
 
@@ -345,6 +432,20 @@ public static class ThemaStem
             "deadline" => "⏳",
             _ => "☕",
         },
+        "Breaking Bad" => soort switch
+        {
+            "taken" => "🥼",      // hazmatpak aan de haak: niets te doen
+            "meetings" => "🚐",   // camper staat stil
+            "deadline" => "⏳",
+            _ => "⚗️",            // berichten: de kolf
+        },
+        "Zeilen" => soort switch
+        {
+            "taken" => "⚓",      // anker uit
+            "meetings" => "🧭",
+            "deadline" => "🌊",
+            _ => "⛵",
+        },
         _ => "",
     };
 
@@ -378,6 +479,12 @@ public static class ThemaStem
         "Espresso" => vandaag
             ? new[] { "Geen meetings — tijd om rustig door te werken ☕" }
             : new[] { "Geen meetings deze dag ☕" },
+        "Breaking Bad" => vandaag
+            ? new[] { "Geen afspraken. Niemand klopt aan 🚪", "Agenda leeg — het lab is van jou ⚗️" }
+            : new[] { "Geen afspraken deze dag ⚗️" },
+        "Zeilen" => vandaag
+            ? new[] { "Geen afspraken — vrije koers ⛵", "Agenda leeg, wind mee 🌬️" }
+            : new[] { "Geen afspraken deze dag ⛵" },
         _ => vandaag
             ? new[] { "Geen meetings vandaag 🎉" }
             : new[] { "Geen meetings deze dag" },
@@ -401,6 +508,8 @@ public static class ThemaStem
         "Zomer" => new[] { "Niets dringends — rustig aan 🏖️" },
         "Neon" => new[] { "Geen deadlines in de buffer 🎯" },
         "Espresso" => new[] { "Niets dringends. Koffie kan ⏳" },
+        "Breaking Bad" => new[] { "Niets dringends. Tread lightly 🏜️", "Geen haast — no half measures, wel rust ⚗️" },
+        "Zeilen" => new[] { "Niets dringends — rustig doorvaren ⛵" },
         _ => new[] { "Niets binnen deze deadline" },
     });
 
@@ -412,6 +521,8 @@ public static class ThemaStem
         "Zomer" => $"Klaar voor gebruik: {wat} 🌞",
         "Neon" => $"Online: {wat} ⚡",
         "Espresso" => $"Staat te dampen: {wat} ☕",
+        "Breaking Bad" => $"Het lab draait: {wat} ⚗️",
+        "Zeilen" => $"Zeilen op: {wat} ⛵",
         _ => $"Gestart: {wat}",
     };
 
@@ -422,6 +533,8 @@ public static class ThemaStem
         "Godfather" => "familieklok",
         "Neon" => "session timer",
         "Espresso" => "koffieklok",
+        "Breaking Bad" => "kookklok",
+        "Zeilen" => "scheepsklok",
         _ => "timer",
     };
 
@@ -431,6 +544,8 @@ public static class ThemaStem
         "007" => $"Data-extractie — {klant}",
         "Godfather" => $"De boeken van {klant}",
         "Neon" => $"Datastroom — {klant}",
+        "Breaking Bad" => $"Het recept van {klant}",
+        "Zeilen" => $"Ladinglijst — {klant}",
         _ => $"Productie-DB → localhost — {klant}",
     };
 
@@ -442,6 +557,8 @@ public static class ThemaStem
         "Zomer" => "Weekend in zicht 🌴",
         "Neon" => "Week afgesloten ⚡",
         "Espresso" => "Weekafsluiter ☕",
+        "Breaking Bad" => "De week in het logboek ⚗️",
+        "Zeilen" => "Logboek van de week ⛵",
         _ => "Weekoverzicht",
     };
 
@@ -461,6 +578,8 @@ public static class ThemaStem
         "Zomer" => new[] { "Even shaken…", "Ijsblokjes erbij…", "Momentje in de zon…" },
         "Neon" => new[] { "Processing…", "Datastroom binnen…", "Rendering…" },
         "Espresso" => new[] { "Even laten doorlopen…", "Bonen malen…", "Water opwarmen…" },
+        "Breaking Bad" => new[] { "Reactie loopt…", "Even laten koken…", "Kristalliseren…", "Ventilator aan…" },
+        "Zeilen" => new[] { "Koers berekenen…", "Even bijtrimmen…", "Wind zoeken…" },
         _ => new[] { "Bezig…", "Even geduld…" },
     });
 }

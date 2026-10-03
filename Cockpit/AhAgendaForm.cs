@@ -54,7 +54,15 @@ public class AhAgendaForm : Form
     /// <summary>Een maaltijdafspraak duurt altijd een uur; de bereidingstijd staat in de tekst.</summary>
     public static readonly TimeSpan ReceptDuur = TimeSpan.FromHours(1);
 
-    public AhAgendaForm(IReadOnlyList<(string Naam, int Minuten)> gerechten)
+    /// <param name="gerechten">De gerechten in de volgorde waarin ze voorgesteld worden.</param>
+    /// <param name="versDagen">
+    /// Per gerecht het aantal dagen dat het na levering nog goed is (zie
+    /// <see cref="AhHoudbaarheid"/>). Alleen voor de hint achter de naam — de volgorde zelf
+    /// komt van de aanroeper.
+    /// </param>
+    public AhAgendaForm(
+        IReadOnlyList<(string Naam, int Minuten)> gerechten,
+        IReadOnlyDictionary<string, int>? versDagen = null)
     {
         Text = "Gerechten inplannen";
         StartPosition = FormStartPosition.CenterParent;
@@ -69,8 +77,9 @@ public class AhAgendaForm : Form
             Dock = DockStyle.Top,
             Height = 60,
             Padding = new Padding(12, 10, 12, 0),
-            Text = "Kies per gerecht een dag (vanaf morgen). Standaard 's avonds; vink " +
-                   "\"middag\" aan om 12:00 te eten. Vink uit wat je niet in de agenda wil.",
+            Text = "Kies per gerecht een dag (vanaf morgen). De volgorde volgt de " +
+                   "houdbaarheid: verse vis en vlees staan vooraan. Standaard 's avonds; " +
+                   "vink \"middag\" aan om 12:00 te eten. Vink uit wat je niet in de agenda wil.",
         };
 
         var tijdStrook = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(12, 4, 0, 0) };
@@ -92,7 +101,7 @@ public class AhAgendaForm : Form
         var paneel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 5,
+            ColumnCount = 6,
             AutoScroll = true,
             Padding = new Padding(12, 4, 12, 4),
         };
@@ -103,6 +112,7 @@ public class AhAgendaForm : Form
         paneel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // dag
         paneel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // middag
         paneel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // duur
+        paneel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // houdbaarheid
 
         var i = 0;
         foreach (var (naam, minuten) in gerechten)
@@ -153,6 +163,17 @@ public class AhAgendaForm : Form
             paneel.Controls.Add(datum, 2, i);
             paneel.Controls.Add(middag, 3, i);
             paneel.Controls.Add(duur, 4, i);
+            // Waarom staat dit gerecht hier? De hint maakt de volgorde zichtbaar.
+            var vers = new Label
+            {
+                Text = AhHoudbaarheid.Hint(
+                    versDagen?.GetValueOrDefault(naam, AhHoudbaarheid.LangHoudbaar)
+                    ?? AhHoudbaarheid.LangHoudbaar),
+                AutoSize = true,
+                Margin = new Padding(12, 12, 0, 6),
+                ForeColor = Theme.Muted,
+            };
+            paneel.Controls.Add(vers, 5, i);
             _rijen.Add(new Rij
             {
                 Naam = naam, Minuten = minuten, Aan = aan, Datum = datum,
@@ -193,6 +214,31 @@ public class AhAgendaForm : Form
         Theme.Apply(this);
         hint.ForeColor = Theme.Muted;
         tijdLabel.ForeColor = middagUitleg.ForeColor = Theme.Muted;
+    }
+
+    /// <summary>
+    /// Proefopstelling voor <c>--venster ahagenda</c>: vier gerechten met hun ingrediënten,
+    /// gesorteerd zoals de echte bestelflow dat doet — op houdbaarheid, het bederfelijkste
+    /// vooraan.
+    /// </summary>
+    public static AhAgendaForm Proef()
+    {
+        var gerechten = new (string Naam, int Minuten, string[] Ingredienten)[]
+        {
+            ("Zelfgemaakte pizza", 35, new[] { "pizzabodem", "passata", "mozzarella" }),
+            ("Pokébowl met zalm", 20, new[] { "verse zalmfilet", "sushirijst", "avocado" }),
+            ("Pasta bolognese", 30, new[] { "spaghetti", "rundergehakt", "tomatenblokjes" }),
+            ("Rijst met kerrie en kip", 30, new[] { "kipfilet", "rijst", "kerriepasta" }),
+        };
+        var versDagen = gerechten.ToDictionary(
+            g => g.Naam,
+            g => AhHoudbaarheid.VoorGerecht(g.Ingredienten),
+            StringComparer.OrdinalIgnoreCase);
+        var gesorteerd = gerechten
+            .OrderBy(g => versDagen[g.Naam])
+            .Select(g => (g.Naam, g.Minuten))
+            .ToList();
+        return new AhAgendaForm(gesorteerd, versDagen);
     }
 
     /// <summary>

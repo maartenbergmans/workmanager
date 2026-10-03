@@ -169,6 +169,40 @@ Testen (vervang WM_TOKEN):
 > opnieuw voor je gaat zoeken naar een fout die er niet is; `actie=versie` geeft
 > de versiemarkering uit `wm.php`, zodat je zeker weet welke code er draait.
 
+## 7. Online git-tabel (git.php)
+
+Per project (solution) wat er op de pc nog ongecommit openstaat: branch, aantal open,
+hoeveel daarvan gestaged, voor/achter op de remote, en per bestand hoe lang het er al
+ligt. Bedoeld om te laten **meevolgen** — de link mag naar een collega, en heeft daarom
+een eigen token (`git_token` in config.php, los van `wm_token`). De link is:
+
+    https://workmanager.urbanit.be/git.php?t=GIT_TOKEN
+
+Instellen op de pc: tray-menu of cockpit-⋯-menu → **Git online (laten meevolgen)…** —
+daar staan het adres, het token, een QR-code en "Link kopiëren". De instellingen komen in
+`%APPDATA%\WorkManager\git-web-settings.json` (token DPAPI-versleuteld). Met het vinkje
+**Bestandsnamen meesturen** uit gaan alleen de aantallen per project omhoog.
+
+De pc (GitWebSync) zet de stand **elk uur** online; de git-radar in WorkManager peilt
+daarvoor alle repo's die hij op de pc vindt (WSL `~/projecten` en `C:\Data\Projecten`,
+één niveau diep). Elk snapshot wordt ook per uur in een historiek weggeschreven, zodat de
+pagina achter elk project het verloop van de laatste 24 uur als staafjes toont. Tabellen
+`wm_git_snapshot` en `wm_git_historiek` worden automatisch aangemaakt; de historiek wordt
+na 30 dagen opgeruimd.
+
+Staat de pc uit, dan toont de pagina de laatst bekende stand met een balk erboven ("dit is
+de stand van …"). De pagina kan niets terugsturen: alleen lezen.
+
+Testen (vervang GIT_TOKEN):
+
+    curl "https://workmanager.urbanit.be/git.php?actie=versie" -H "X-Wm-Token: GIT_TOKEN"
+    curl "https://workmanager.urbanit.be/git.php?actie=data" -H "X-Wm-Token: GIT_TOKEN"
+
+Zonder het venster koppelen of één keer versturen kan ook van de commandoregel:
+
+    WorkManager.exe --gitweb https://workmanager.urbanit.be/git.php GIT_TOKEN
+    WorkManager.exe --gitscan    (peilt alles en drukt de tabel af)
+
 ## Hoe het werkt
 
     telefoon ──commando/antwoord──▶ api.php + MySQL ◀──poll werk/resultaat── WorkManager (pc)

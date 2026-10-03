@@ -1337,12 +1337,23 @@ public class AhBestelForm : Form
         // Het voorraadgeheugen bijwerken: hieruit leidt de app volgende keer af wat er
         // waarschijnlijk weer op is.
         AhHistoriek.Registreer(ingredienten.Select(i => i.Naam));
+        // En het blijvende archief: dit is de enige plek waar nog bekend is wélke gerechten
+        // tot welk product leidden, dus leggen we het hier volledig vast.
+        var archiefSleutel = AhBestelArchief.Leg("cockpit", gekozen,
+            producten.Select(p => new AhArchiefProduct
+            {
+                Naam = p.Naam,
+                Url = p.Url,
+                Aantal = p.Aantal,
+                Herkomst = herkomst.TryGetValue(p.Naam, out var uit) ? uit : "",
+            }),
+            handmatig);
         Clipboard.SetText("AH-boodschappen:\n" +
             string.Join("\n", ingredienten.Select(i => "- " + i.Naam + (i.Url is null ? "" : " (automatisch)"))));
 
         if (producten.Count > 0)
         {
-            using var winkel = new AhWinkelForm(producten, handmatig);
+            using var winkel = new AhWinkelForm(producten, handmatig, archiefSleutel);
             winkel.ShowDialog(this);
             if (winkel.TerugGevraagd)
             {
@@ -1388,10 +1399,23 @@ public class AhBestelForm : Form
             return;
         }
 
+        // Volgorde op houdbaarheid: wat het snelst bederft (verse vis, dan gevogelte en
+        // gehakt) komt vooraan, want de agendastap stelt de dagen op volgorde voor. Zo eet
+        // je de zalm de eerste avond en de pasta met blik tomaten pas later in de week.
+        var versPerGerecht = maaltijden.ToDictionary(
+            n => n,
+            n => AhHoudbaarheid.VoorGerecht(
+                (_data.Gerechten.TryGetValue(n, out var lijst) ? lijst
+                    : _weekSuggesties.TryGetValue(n, out var sug) ? sug
+                    : new List<AhIngredient>())
+                .Select(i => i.Naam)),
+            StringComparer.OrdinalIgnoreCase);
         var voorKiezer = maaltijden
             .Select(n => (Naam: n, Minuten: _data.Recepten.GetValueOrDefault(n)?.Minuten ?? 0))
+            .OrderBy(x => versPerGerecht.GetValueOrDefault(x.Naam, AhHoudbaarheid.LangHoudbaar))
+            .ThenBy(x => x.Naam, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
-        using var kiezer = new AhAgendaForm(voorKiezer);
+        using var kiezer = new AhAgendaForm(voorKiezer, versPerGerecht);
         if (kiezer.ShowDialog(this) != DialogResult.OK || kiezer.Geplande.Count == 0)
         {
             return;

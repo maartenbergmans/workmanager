@@ -39,6 +39,17 @@ public static class Confetti
                 Theme.Accent, Theme.AccentHover, Theme.Palet.KlantLauryssens,
                 Theme.Mix(Theme.Accent, Color.White, 0.35f), Theme.Warn,
             },
+            // Zuurgroen, hazmatgeel en een vleugje methblauw.
+            "Breaking Bad" => new[]
+            {
+                Theme.Accent, Theme.AccentHover, Theme.Warn,
+                Theme.Palet.KlantCed, Theme.Success,
+            },
+            // Boordlichten en zeildoek: marine, rood, groen en wit.
+            "Zeilen" => new[]
+            {
+                Theme.Accent, Theme.AccentHover, Theme.Danger, Theme.Success, Color.White,
+            },
             "Zomer" => new[]
             {
                 Theme.Accent, Theme.AccentHover, Theme.Warn, Theme.KlantAqurat,

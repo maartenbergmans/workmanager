@@ -75,6 +75,70 @@ static class Program
             return;
         }
 
+        // Diagnose: de Google Cloud-factuurmails in de inbox beoordelen — welke pdf's leest
+        // WorkManager, welk bedrag staat erop, en zou hij archiveren? Archiveert zelf niets.
+        // Gebruik: WorkManager.exe --gcpdiag
+        if (args.Length is 1 or 2 && args[0] == "--gcpdiag")
+        {
+            var settings = MailReplySettings.Load();
+            var mails = GmailClient.FetchAsync(settings, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            var facturen = mails.Where(GoogleCloudFactuur.IsFactuurmail).ToList();
+            Console.WriteLine($"{mails.Count} mails opgehaald, {facturen.Count} Google Cloud-factuurmail(s).");
+            foreach (var mail in facturen)
+            {
+                Console.WriteLine($"- uid {mail.Uid} · {mail.Datum.ToLocalTime():d MMM yyyy} · " +
+                                  $"bijlagen: {string.Join(", ", mail.Bijlagen)}");
+            }
+            // Met een map erachter: de pdf's bewaren en tonen wat de lezer eruit haalt —
+            // onmisbaar als Google de opmaak van de factuur wijzigt.
+            if (args.Length == 2)
+            {
+                Directory.CreateDirectory(args[1]);
+                foreach (var mail in facturen)
+                {
+                    var index = mail.Bijlagen.FindIndex(b =>
+                        b.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+                    if (index < 0)
+                    {
+                        continue;
+                    }
+                    var paden = GmailClient.DownloadBijlagenAsync(settings, mail, args[1],
+                            new[] { (index, mail.Bijlagen[index]) }, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    foreach (var pad in paden)
+                    {
+                        var tekst = PdfTekst.Lees(pad);
+                        var (hoogste, isNul) = GoogleCloudFactuur.Beoordeel(tekst);
+                        Console.WriteLine($"  {pad}: {tekst.Length} tekens tekst, " +
+                                          $"hoogste bedrag {(hoogste is null ? "?" : hoogste)}, " +
+                                          $"nulfactuur: {(isNul ? "ja" : "nee")}");
+                    }
+                }
+            }
+            var nul = GoogleCloudFactuur.NulFacturenAsync(facturen, settings, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Console.WriteLine(nul.Count == 0
+                ? "Geen enkele factuur is met zekerheid een nulfactuur — alles blijft staan."
+                : $"Zou archiveren: uid {string.Join(", ", nul)}");
+            return;
+        }
+
+        // Diagnose: de pdf-lezer en het factuuroordeel uitproberen op een pdf-bestand, zodat
+        // je kunt zien wat WorkManager uit een Google Cloud-factuur haalt (en of hij hem als
+        // nulfactuur zou archiveren). Gebruik: WorkManager.exe --pdflees <bestand.pdf>
+        if (args.Length == 2 && args[0] == "--pdflees")
+        {
+            var tekst = PdfTekst.Lees(args[1]);
+            var (hoogste, nul) = GoogleCloudFactuur.Beoordeel(tekst);
+            Console.WriteLine($"--- tekst ({tekst.Length} tekens) ---");
+            Console.WriteLine(tekst.Length > 4000 ? tekst[..4000] + "…" : tekst);
+            Console.WriteLine("--- oordeel ---");
+            Console.WriteLine($"hoogste bedrag: {(hoogste is null ? "niet gevonden" : hoogste)}");
+            Console.WriteLine($"nulfactuur (dus archiveren): {(nul ? "ja" : "nee")}");
+            return;
+        }
+
         // Diagnose: teken het beeldmerk van elk thema naar een PNG, zodat de tekening zelf
         // te beoordelen is zonder de app te openen.
         // Gebruik: WorkManager.exe --emblemen [map]
@@ -127,6 +191,61 @@ static class Program
                 {
                     Console.WriteLine("  • " + (punt.Length > 110 ? punt[..110] + "…" : punt));
                 }
+            }
+            return;
+        }
+
+        // Diagnose van de git-radar: --gitscan peilt alle repo's en drukt de tabel af, zoals
+        // ze ook in het overzichtsvenster en online staat. Handig om te zien of een nieuw
+        // project gevonden wordt zonder de tray-app te openen.
+        if (args.Length == 1 && args[0] == "--gitscan")
+        {
+            GitRadar.ScanAsync(CancellationToken.None,
+                naam => Console.WriteLine($"  … {naam}")).GetAwaiter().GetResult();
+            Console.WriteLine();
+            Console.WriteLine($"{"Project",-34} {"Branch",-14} {"Open",5} {"Staged",6} " +
+                              $"{"Remote",-12} Oudste");
+            foreach (var (map, stand) in GitRadar.Standen())
+            {
+                var remote =
+                    (stand.Voor > 0 ? $"+{stand.Voor} " : "") +
+                    (stand.Achter > 0 ? $"-{stand.Achter}" : "");
+                Console.WriteLine(
+                    $"{GitRadar.Naam(map),-34} {(stand.Fout.Length > 0 ? "git?" : stand.Branch),-14} " +
+                    $"{stand.Aantal,5} {stand.Staged,6} {remote,-12} " +
+                    (stand.Aantal > 0 ? $"{stand.OudsteDagen} d" : ""));
+                if (stand.Fout.Length > 0)
+                {
+                    Console.WriteLine($"      ! {stand.Fout}");
+                }
+            }
+            Console.WriteLine();
+            Console.WriteLine($"Totaal: {GitRadar.TotaalOngecommit} ongecommit over " +
+                              $"{GitRadar.ProjectenMetWerk} van {GitRadar.Repos.Count} projecten; " +
+                              $"{GitRadar.ProjectenAchter} achter op de remote.");
+            return;
+        }
+
+        // De online git-tabel koppelen zonder het venster: --gitweb <url> <token>.
+        // Zonder token: alleen de huidige stand tonen en één keer versturen.
+        if (args.Length is 1 or 3 && args[0] == "--gitweb")
+        {
+            var settings = GitWebSettings.Load();
+            if (args.Length == 3)
+            {
+                settings.Url = args[1];
+                settings.Token = args[2];
+                settings.Save();
+            }
+            Console.WriteLine($"URL:      {(settings.Url.Length > 0 ? settings.Url : "(leeg)")}");
+            Console.WriteLine($"Token:    {(settings.Token.Length > 0 ? "ingesteld" : "(leeg)")}");
+            Console.WriteLine($"Compleet: {settings.Compleet}");
+            if (settings.Compleet)
+            {
+                new GitWebSync().PollAsync(forceren: true).GetAwaiter().GetResult();
+                Console.WriteLine(GitWebSync.LaatsteUpload is { } u
+                    ? $"Stand online gezet om {u.LocalDateTime:HH:mm:ss}."
+                    : "Versturen mislukt — klopt het adres en het token?");
             }
             return;
         }
@@ -824,6 +943,9 @@ static class Program
                 "timesheetdash" => new TimesheetDashboardForm(),
                 "git" => new GitStatusForm(
                     @"\\wsl.localhost\Ubuntu\home\maarten\projecten\aqurat", "aqurat"),
+                "gitoverzicht" => new GitOverzichtForm(),
+                "gitcommit" => new GitCommitForm(@"C:\Data\Projecten\Workmanager", "Workmanager"),
+                "gitonline" => new GitWebForm(),
                 "vakanties" => new VakantiesForm(),
                 "vakantiesdump" => new VakantiesForm(alleenInspecteren: true),
                 "verlof" => new SdWorxPortaalForm(),
@@ -872,12 +994,8 @@ static class Program
                         },
                     },
                     new List<string> { "fishsticks", "melk" }),
-                "ahagenda" => new AhAgendaForm(new List<(string, int)>
-                {
-                    ("Pokébowl met zalm", 20),
-                    ("Rijst met kerrie en kip", 30),
-                    ("Zelfgemaakte pizza", 35),
-                }),
+                "ahagenda" => AhAgendaForm.Proef(),
+                "aharchief" => new AhArchiefForm(),
                 "thema" => new ThemaProefForm(),
                 "anticipeer" => new AnticipeerForm(),
                 "wadiag" => new WhatsAppDiagnoseForm(),

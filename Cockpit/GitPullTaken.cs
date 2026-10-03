@@ -18,14 +18,12 @@ public static class GitPullTaken
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "WorkManager", "git-pull-check.json");
 
-    /// <summary>Repo's bovenop de vaste projectenlijst van <see cref="GitTaken"/>.</summary>
-    private static readonly string[] ExtraRepos =
-    {
-        @"C:\Data\Projecten\Workmanager",
-        @"\\wsl.localhost\Ubuntu\home\maarten\projecten\urbanadmin",
-    };
-
-    public static IEnumerable<string> Projecten => GitTaken.Projecten.Concat(ExtraRepos);
+    /// <summary>
+    /// Dezelfde repo's als de rest van de radar. Stond hier eerder een eigen lijstje bovenop
+    /// die van <see cref="GitTaken"/>, met als gevolg dat WorkManager en urbanadmin twee keer
+    /// gepeild werden en ook twee keer in de taaktekst konden belanden.
+    /// </summary>
+    public static IReadOnlyList<string> Projecten => GitRadar.Repos;
 
     private static bool _bezig;
 
@@ -56,7 +54,7 @@ public static class GitPullTaken
                 var achter = await AchterstandAsync(map, ct);
                 if (achter > 0)
                 {
-                    achterstand.Add((Naam(map), achter));
+                    achterstand.Add((GitRadar.Naam(map), achter));
                 }
             }
 
@@ -119,7 +117,7 @@ public static class GitPullTaken
         var mislukt = new List<string>();
         foreach (var map in Projecten)
         {
-            var naam = Naam(map);
+            var naam = GitRadar.Naam(map);
             if (!taakTekst.Contains(naam + " ", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -200,19 +198,6 @@ public static class GitPullTaken
             }
         }
         return "";
-    }
-
-    /// <summary>
-    /// Naam voor in de taaktekst. Meestal de mapnaam; heet de map zelf generiek (backend,
-    /// frontend), dan komt de projectnaam erbij zodat namen elkaar niet overlappen.
-    /// </summary>
-    private static string Naam(string map)
-    {
-        var delen = map.TrimEnd('\\', '/').Split('\\', '/');
-        var laatste = delen[^1];
-        return laatste.ToLowerInvariant() is "backend" or "frontend" or "webapp"
-            ? $"{delen[^2]}/{laatste}"
-            : laatste;
     }
 
     private static string LaatsteDag()

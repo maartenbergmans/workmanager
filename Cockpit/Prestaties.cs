@@ -30,6 +30,8 @@ public static class Prestaties
         new("geheim-agent", "🕵️ Geheim agent", "Een geheime missie volbracht"),
         new("feestvarken", "🎂 Feestvarken", "Een verjaardag gevierd in de cockpit"),
         new("paardenfluisteraar", "🏇 Paardenfluisteraar", "Drie keer op het winnende Claude-paard gewed"),
+        new("dobbelaar", "🎲 Fortuinlijk", "Een door de dobbelsteen gekozen taak binnen het uur afgevinkt"),
+        new("eerste-sneeuw", "❄️ Eerste sneeuw", "De eerste sneeuwdag van de winter meegemaakt"),
     };
 
     private static readonly string StateFile = Path.Combine(
@@ -53,7 +55,7 @@ public static class Prestaties
     /// <summary>
     /// Meldt een gebeurtenis; soorten: "taak-af" (met taaktekst als detail), "archief",
     /// "antwoord" (detail = leeftijd in seconden), "snooze", "deploy", "blokjes",
-    /// "inboxzero" (detail = reekslengte), "konami". Nieuwe prestaties worden meteen
+    /// "inboxzero" (detail = reekslengte), "konami", "dobbel", "sneeuw". Nieuwe prestaties worden meteen
     /// gevierd op <paramref name="eigenaar"/>.
     /// </summary>
     public static void Gebeurtenis(Form? eigenaar, string soort, string detail = "")
@@ -139,6 +141,12 @@ public static class Prestaties
                     break;
                 case "race":
                     Ken("paardenfluisteraar");
+                    break;
+                case "dobbel":
+                    Ken("dobbelaar");
+                    break;
+                case "sneeuw":
+                    Ken("eerste-sneeuw");
                     break;
                 case "inboxzero":
                     if (int.TryParse(detail, out var reeks) && reeks >= 5)

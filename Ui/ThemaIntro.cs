@@ -132,6 +132,12 @@ public static class ThemaIntro
                 case "Godfather":
                     TekenMarionet(g, t);
                     break;
+                case "Breaking Bad":
+                    TekenElementen(g, t);
+                    break;
+                case "Zeilen":
+                    TekenZeil(g, t);
+                    break;
             }
         }
 
@@ -236,6 +242,61 @@ public static class ThemaIntro
                 var dx = x + breedte * verhouding;
                 g.DrawLine(draad, dx, top, dx, top + zak);
             }
+        }
+
+        /// <summary>
+        /// Breaking Bad: de twee elementvakjes uit de serietitel (Br en Ba) schuiven van
+        /// buiten naar het midden toe en komen naast elkaar tot stilstand. Alleen de contouren
+        /// en de lettertekens — net als de andere intro's doet de dekking het werk.
+        /// </summary>
+        private void TekenElementen(Graphics g, float t)
+        {
+            var zijde = Math.Min(Width, Height) * 0.11f;
+            var midY = Height / 2f;
+            var rust = zijde * 0.62f; // halve tussenruimte in de eindstand
+            var komBinnen = Soepel(Math.Min(1f, t / 0.6f));
+            using var pen = new Pen(Theme.Accent, 2.2f);
+            using var font = new Font(Theme.BaseFont.FontFamily, zijde * 0.42f, FontStyle.Bold);
+            using var tekst = new SolidBrush(Theme.Accent);
+            using var sf = new StringFormat
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center,
+            };
+            foreach (var (label, kant) in new[] { ("Br", -1f), ("Ba", 1f) })
+            {
+                // Van een halve schermbreedte buiten het midden naar zijn eindplek.
+                var van = kant * Width * 0.42f;
+                var naar = kant * rust;
+                var x = Width / 2f + van + (naar - van) * komBinnen;
+                var vak = new RectangleF(x - zijde / 2f, midY - zijde / 2f, zijde, zijde);
+                g.DrawRectangle(pen, vak.X, vak.Y, vak.Width, vak.Height);
+                g.DrawString(label, font, tekst, vak, sf);
+            }
+        }
+
+        /// <summary>
+        /// Zeilen: de horizon ligt er, en het zeil wordt gehesen — een driehoek die vanaf
+        /// de giek omhoog groeit langs de mast.
+        /// </summary>
+        private void TekenZeil(Graphics g, float t)
+        {
+            var basisY = Height * 0.62f;
+            var mastX = Width * 0.5f;
+            var hoogte = Math.Min(Width, Height) * 0.3f;
+            using var zee = new Pen(Theme.AccentHover, 1.2f);
+            g.DrawLine(zee, Width * 0.2f, basisY, Width * 0.8f, basisY);
+            var hijs = Soepel(Math.Min(1f, t / 0.7f));
+            if (hijs <= 0.02f)
+            {
+                return;
+            }
+            using var pen = new Pen(Theme.Accent, 2.2f);
+            var top = basisY - hoogte * hijs;
+            var voet = mastX + hoogte * 0.62f * hijs;
+            g.DrawLine(pen, mastX, basisY, mastX, top);          // mast
+            g.DrawLine(pen, mastX, top, voet, basisY);            // achterlijk
+            g.DrawLine(pen, mastX, basisY, voet, basisY);         // giek
         }
 
         /// <summary>Ease-out: snel starten, zacht uitlopen.</summary>

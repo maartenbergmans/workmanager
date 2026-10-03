@@ -1,13 +1,15 @@
 namespace WorkManager;
 
 /// <summary>
-/// Toont wat er in een projectmap nog ongecommit is: hoeveel bestanden, welke, en of de branch
-/// voor- of achterloopt op de remote. Dubbelklik opent het bestand in PhpStorm; met "Kopiëren"
-/// gaat de hele lijst naar het klembord (handig als commitbericht-geheugensteun).
+/// Toont wat er in een projectmap nog ongecommit is: hoeveel bestanden, welke, hoe lang ze al
+/// openstaan, en of de branch voor- of achterloopt op de remote. Dubbelklik toont de diff van
+/// het bestand; "Committen…" zet de wijzigingen in een commit (eventueel meteen met push) en
+/// met "Kopiëren" gaat de hele lijst naar het klembord.
 /// </summary>
 public class GitStatusForm : Form
 {
     private readonly string _werkmap;
+    private readonly string _projectNaam;
     private readonly ModernListView _lijst;
     private readonly Label _status;
     private readonly ModernButton _verversKnop;
@@ -16,6 +18,7 @@ public class GitStatusForm : Form
     public GitStatusForm(string werkmap, string projectNaam)
     {
         _werkmap = werkmap;
+        _projectNaam = projectNaam;
         Text = $"Git-status — {projectNaam}";
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(760, 520);
@@ -28,8 +31,9 @@ public class GitStatusForm : Form
             LeegGlyph = Fluent.Check,
         };
         _lijst.Columns.Add("Status", 150);
-        _lijst.Columns.Add("Bestand", 520);
-        _lijst.DoubleClick += (_, _) => OpenGeselecteerd();
+        _lijst.Columns.Add("Bestand", 430);
+        _lijst.Columns.Add("Ligt er", 90);
+        _lijst.DoubleClick += (_, _) => ToonDiff();
 
         _status = new Label
         {
@@ -52,12 +56,29 @@ public class GitStatusForm : Form
         _verversKnop.Click += async (_, _) => await LaadAsync();
         var kopieer = new ModernButton { Text = "Kopiëren", Width = 115 };
         kopieer.Click += (_, _) => KopieerLijst();
+        var commit = new ModernButton { Text = "Committen…", Width = 140, Kind = ButtonKind.Accent };
+        commit.Click += async (_, _) =>
+        {
+            using (var form = new GitCommitForm(_werkmap, _projectNaam))
+            {
+                form.ShowDialog(this);
+            }
+            await LaadAsync();
+        };
+        var diff = new ModernButton { Text = "Diff…", Width = 100 };
+        diff.Click += (_, _) => ToonDiff();
         var phpStorm = new ModernButton { Text = "Openen in PhpStorm", Width = 175 };
         phpStorm.Click += (_, _) =>
         {
             try
             {
-                ClientLauncher.StartPhpStorm(_werkmap);
+                // Met een bestand geselecteerd opent PhpStorm meteen dát bestand; anders het
+                // project. Het pad uit git is relatief aan de repo-root.
+                ClientLauncher.StartPhpStorm(
+                    _lijst.SelectedItems.Count > 0 &&
+                    _lijst.SelectedItems[0].Tag is GitStatus.Wijziging gekozen
+                        ? Path.Combine(_werkmap, gekozen.Pad.Replace('/', '\\'))
+                        : _werkmap);
             }
             catch (Exception ex)
             {
@@ -66,6 +87,8 @@ public class GitStatusForm : Form
         };
         knoppen.Controls.Add(sluit);
         knoppen.Controls.Add(_verversKnop);
+        knoppen.Controls.Add(commit);
+        knoppen.Controls.Add(diff);
         knoppen.Controls.Add(kopieer);
         knoppen.Controls.Add(phpStorm);
         CancelButton = sluit;
@@ -74,6 +97,8 @@ public class GitStatusForm : Form
         Controls.Add(_status);
         Controls.Add(knoppen);
         Theme.Apply(this);
+        Theme.EscSluit(this);
+        VensterGeheugen.Volg(this, "gitstatus");
 
         Shown += async (_, _) => await LaadAsync();
         FormClosed += (_, _) => _cts.Cancel();
@@ -114,6 +139,8 @@ public class GitStatusForm : Form
                 Tag = w,
             };
             item.SubItems.Add(w.Pad);
+            var dagen = GitRadar.DagenOud(_werkmap, w.Pad);
+            item.SubItems.Add(dagen < 0 ? "" : dagen == 0 ? "vandaag" : $"{dagen} d");
             _lijst.Items.Add(item);
         }
         _lijst.EndUpdate();
@@ -130,22 +157,16 @@ public class GitStatusForm : Form
               $"({rapport.Wijzigingen.Count(w => w.Gestaged)} staged){sync}";
     }
 
-    private void OpenGeselecteerd()
+    /// <summary>De diff van het gekozen bestand — sneller dan er PhpStorm voor openen.</summary>
+    private void ToonDiff()
     {
         if (_lijst.SelectedItems.Count == 0 || _lijst.SelectedItems[0].Tag is not GitStatus.Wijziging w)
         {
+            Toast.Toon(this, "Kies eerst een bestand", Fluent.Document);
             return;
         }
-        try
-        {
-            // PhpStorm opent het project met dit bestand actief; het pad uit git is relatief
-            // aan de repo-root, dus vanaf de werkmap samenstellen.
-            ClientLauncher.StartPhpStorm(Path.Combine(_werkmap, w.Pad.Replace('/', '\\')));
-        }
-        catch (Exception ex)
-        {
-            Toast.Toon(this, $"Openen mislukt: {ex.Message}", Fluent.Globe);
-        }
+        using var diff = new GitDiffForm(_werkmap, w.Pad, _projectNaam);
+        diff.ShowDialog(this);
     }
 
     private void KopieerLijst()

@@ -235,6 +235,24 @@ public class AhWebSync
 
             AhHistoriek.Registreer(producten.Select(p => p.Naam).Concat(handmatig));
             var wie = inhoud.TryGetProperty("wie", out var w) ? w.GetString() : null;
+            // Ook de bestellingen van de webpagina gaan in het blijvende archief; de gerechten
+            // staan daar in het agenda-blok (gerecht + dag), dus die halen we daaruit.
+            var webGerechten = inhoud.TryGetProperty("agenda", out var agendaLijst) &&
+                               agendaLijst.ValueKind == JsonValueKind.Array
+                ? agendaLijst.EnumerateArray()
+                    .Select(i => i.TryGetProperty("gerecht", out var g) ? g.GetString() ?? "" : "")
+                    .Where(g => g.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+                : new List<string>();
+            var webSleutel = AhBestelArchief.Leg(
+                string.IsNullOrWhiteSpace(wie) ? "web" : $"web ({wie})",
+                webGerechten,
+                producten.Select(p => new AhArchiefProduct
+                {
+                    Naam = p.Naam, Url = p.Url, Aantal = p.Aantal,
+                }),
+                handmatig);
             BestellingOntvangen?.Invoke(
                 $"Van {(string.IsNullOrWhiteSpace(wie) ? "de gsm" : wie)}: {producten.Count} product(en)" +
                 (handmatig.Count > 0 ? $" + {handmatig.Count} zelf zoeken" : "") +
@@ -242,7 +260,7 @@ public class AhWebSync
             if (producten.Count > 0)
             {
                 // Niet-modaal: de tray-lus moet gewoon doordraaien; vullen start bij Shown.
-                new AhWinkelForm(producten, handmatig).Show();
+                new AhWinkelForm(producten, handmatig, webSleutel).Show();
             }
         }
     }

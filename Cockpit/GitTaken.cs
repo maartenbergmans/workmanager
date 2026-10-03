@@ -26,24 +26,12 @@ public static class GitTaken
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "WorkManager", "git-taken.json");
 
-    private const string WslBasis = @"\\wsl.localhost\Ubuntu\home\maarten\projecten\";
-
-    /// <summary>De projectmappen die meegenomen worden (zelfde set als de dev-menu's).</summary>
-    public static readonly string[] Projecten =
-    {
-        WslBasis + "aqurat",
-        WslBasis + "bloom-datawarehouse",
-        WslBasis + "movaware-backend",
-        WslBasis + "movaware-frontend",
-        WslBasis + "cellaware-backend",
-        WslBasis + "cellaware-frontend",
-        WslBasis + "totalloss-cednl-backend",
-        WslBasis + "totalloss-cednl-frontend",
-        WslBasis + "urbanadmin",
-        // WorkManager zelf: daar bleven wijzigingen van meerdere sessies het langst liggen.
-        @"C:\Data\Projecten\Workmanager",
-        @"C:\Data\Projecten\BloomDataUploader",
-    };
+    /// <summary>
+    /// De projectmappen die meegenomen worden: alles wat de git-radar op deze pc gevonden
+    /// heeft (zie <see cref="GitRadar.Repos"/>), zodat een pas gekloond project meteen
+    /// meegaat zonder dat hier een lijst bijgehouden moet worden.
+    /// </summary>
+    public static IReadOnlyList<string> Projecten => GitRadar.Repos;
 
     private static bool _bezig;
 
@@ -76,22 +64,17 @@ public static class GitTaken
         {
             BewaarDag(vandaag.ToString("yyyy-MM-dd")); // ook bij een mislukking: pas volgende week opnieuw
 
-            var grens = nu.AddDays(-OudNaDagen);
-            var vuil = new List<(string Naam, int Aantal)>();
-            foreach (var map in Projecten)
-            {
-                ct.ThrowIfCancellationRequested();
-                var rapport = await GitStatus.OphalenAsync(map, ct);
-                if (rapport.Fout is not null || rapport.Aantal == 0)
-                {
-                    continue;
-                }
-                var oud = OudeWijzigingen(rapport, map, grens);
-                if (oud > 0)
-                {
-                    vuil.Add((map.TrimEnd('\\', '/').Split('\\', '/').Last(), oud));
-                }
-            }
+            // De radar peilt elk uur alle repo's en bewaart per bestand hoe lang het al
+            // openstaat; die stand hergebruiken we hier. Zelf opnieuw scannen kostte een
+            // halve minuut aan git-calls voor exact hetzelfde antwoord.
+            await GitRadar.ZorgVersAsync(ct);
+            var vuil = GitRadar.Standen()
+                .Where(p => p.Value.Fout.Length == 0)
+                .Select(p => (
+                    Naam: GitRadar.Naam(p.Key),
+                    Aantal: p.Value.Bestanden.Count(b => b.Dagen >= OudNaDagen)))
+                .Where(v => v.Aantal > 0)
+                .ToList();
             if (vuil.Count == 0)
             {
                 return false; // niets dat al een week blijft liggen
@@ -131,68 +114,12 @@ public static class GitTaken
         return false;
     }
 
-    /// <summary>
-    /// Hoeveel van de ongecommitte wijzigingen al vóór <paramref name="grens"/> voor het laatst
-    /// aangeraakt zijn. Verwijderde bestanden tellen niet mee (die hebben geen tijdstempel meer);
-    /// bij een hele map (untracked directory) telt het nieuwste bestand erin.
-    /// </summary>
-    private static int OudeWijzigingen(GitStatus.Rapport rapport, string map, DateTime grens)
-    {
-        var oud = 0;
-        foreach (var w in rapport.Wijzigingen)
-        {
-            try
-            {
-                var pad = Path.Combine(map, w.Pad.Replace('/', '\\'));
-                DateTime tijd;
-                if (File.Exists(pad))
-                {
-                    tijd = File.GetLastWriteTime(pad);
-                }
-                else if (Directory.Exists(pad))
-                {
-                    tijd = NieuwsteIn(pad);
-                }
-                else
-                {
-                    continue; // verwijderd of onbereikbaar
-                }
-                if (tijd <= grens)
-                {
-                    oud++;
-                }
-            }
-            catch
-            {
-                // Onleesbaar pad: dan telt het gewoon niet mee.
-            }
-        }
-        return oud;
-    }
-
-    private static DateTime NieuwsteIn(string map)
-    {
-        try
-        {
-            var bestanden = Directory.EnumerateFiles(map, "*", SearchOption.AllDirectories)
-                .Take(200) // grote mappen niet volledig aflopen
-                .Select(File.GetLastWriteTime)
-                .ToList();
-            return bestanden.Count > 0 ? bestanden.Max() : Directory.GetLastWriteTime(map);
-        }
-        catch
-        {
-            return Directory.GetLastWriteTime(map);
-        }
-    }
-
     /// <summary>Het project met de meeste wijzigingen uit een taaktekst, om er meteen op te klikken.</summary>
     public static string? EersteProjectUit(string taakTekst)
     {
         foreach (var map in Projecten)
         {
-            var naam = map.TrimEnd('\\', '/').Split('\\', '/').Last();
-            if (taakTekst.Contains(naam, StringComparison.OrdinalIgnoreCase))
+            if (taakTekst.Contains(GitRadar.Naam(map), StringComparison.OrdinalIgnoreCase))
             {
                 return map;
             }

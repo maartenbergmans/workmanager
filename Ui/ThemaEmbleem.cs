@@ -51,6 +51,12 @@ public static class ThemaEmbleem
             case "Espresso":
                 Boon(g, pen, midden, straal);
                 break;
+            case "Breaking Bad":
+                Kolf(g, pen, midden, straal);
+                break;
+            case "Zeilen":
+                Zeilboot(g, pen, midden, straal);
+                break;
             default:
                 Maan(g, pen, midden, straal);
                 break;
@@ -217,6 +223,92 @@ public static class ThemaEmbleem
                 new PointF(sx + r * 0.08f, top - r * 0.36f),
                 new PointF(sx - r * 0.04f, top - r * 0.5f),
             });
+        }
+    }
+
+    /// <summary>
+    /// Breaking Bad: de erlenmeyer. Een trapeziumvormige kolf met hals en bovenrand, een
+    /// vloeistofniveau met twee belletjes erboven — het labsilhouet dat de serie opende.
+    /// </summary>
+    private static void Kolf(Graphics g, Pen pen, PointF m, float r)
+    {
+        var bodemY = m.Y + r * 0.78f;
+        var halsY = m.Y - r * 0.42f;
+        var randY = m.Y - r * 0.74f;
+        var halveBodem = r * 0.72f;
+        var halveHals = r * 0.2f;
+        // De kolf zelf: hals, schouders naar de brede bodem, en terug omhoog.
+        g.DrawLines(pen, new[]
+        {
+            new PointF(m.X - halveHals, randY),
+            new PointF(m.X - halveHals, halsY),
+            new PointF(m.X - halveBodem, bodemY),
+            new PointF(m.X + halveBodem, bodemY),
+            new PointF(m.X + halveHals, halsY),
+            new PointF(m.X + halveHals, randY),
+        });
+        // Bovenrand van de hals.
+        g.DrawLine(pen, m.X - halveHals * 1.5f, randY, m.X + halveHals * 1.5f, randY);
+        // Vloeistofniveau: op twee derde van de bodem, dus iets smaller dan de bodem.
+        var vloeistofY = bodemY - r * 0.34f;
+        var halveVloeistof = halveBodem - (halveBodem - halveHals) * 0.32f;
+        g.DrawLine(pen, m.X - halveVloeistof, vloeistofY, m.X + halveVloeistof, vloeistofY);
+        // Twee belletjes die opstijgen in de hals.
+        foreach (var (dx, dy, maat) in new[] { (-0.1f, 0.22f, 0.08f), (0.12f, -0.06f, 0.055f) })
+        {
+            var b = r * maat;
+            g.DrawEllipse(pen, m.X + r * dx - b, vloeistofY - r * dy - b, b * 2, b * 2);
+        }
+    }
+
+    /// <summary>
+    /// Zeilen: een boot op zee. Romp, mast met grootzeil en fok, en twee golflijnen eronder —
+    /// hetzelfde silhouet dat je van ver op het water ziet.
+    /// </summary>
+    private static void Zeilboot(Graphics g, Pen pen, PointF m, float r)
+    {
+        var dek = m.Y + r * 0.34f;
+        var mastTop = m.Y - r * 0.86f;
+        // De romp: de deklijn met daaronder een vloeiende bodem, boeg links iets spitser dan
+        // de spiegel rechts. Eén gesloten vorm, zodat hij niet "openvalt" tegen de golven.
+        using (var romp = new GraphicsPath())
+        {
+            romp.AddLine(m.X - r * 0.72f, dek, m.X + r * 0.76f, dek);
+            romp.AddBezier(
+                m.X + r * 0.76f, dek,
+                m.X + r * 0.55f, dek + r * 0.3f,
+                m.X - r * 0.3f, dek + r * 0.3f,
+                m.X - r * 0.72f, dek);
+            g.DrawPath(pen, romp);
+        }
+        // Mast.
+        g.DrawLine(pen, m.X + r * 0.04f, dek, m.X + r * 0.04f, mastTop);
+        // Grootzeil achter de mast: driehoek met een lichte buik in de achterlijk.
+        var giek = dek - r * 0.06f;
+        g.DrawCurve(pen, new[]
+        {
+            new PointF(m.X + r * 0.1f, mastTop + r * 0.08f),
+            new PointF(m.X + r * 0.4f, m.Y - r * 0.12f),
+            new PointF(m.X + r * 0.5f, giek),
+        });
+        g.DrawLine(pen, m.X + r * 0.1f, mastTop + r * 0.08f, m.X + r * 0.1f, giek);
+        g.DrawLine(pen, m.X + r * 0.1f, giek, m.X + r * 0.5f, giek);
+        // Fok vóór de mast: kleinere driehoek naar de boeg.
+        g.DrawLines(pen, new[]
+        {
+            new PointF(m.X - r * 0.02f, mastTop + r * 0.22f),
+            new PointF(m.X - r * 0.5f, giek),
+            new PointF(m.X - r * 0.02f, giek),
+        });
+        // Twee golven onder de romp, met genoeg lucht ertussen zodat ze de boot niet raken.
+        for (var golf = 0; golf < 2; golf++)
+        {
+            var y = dek + r * (0.52f + golf * 0.28f);
+            var breedte = r * 0.5f;
+            for (var x = m.X - r; x < m.X + r - breedte / 2; x += breedte)
+            {
+                g.DrawArc(pen, x, y - r * 0.08f, breedte, r * 0.22f, 180f, 180f);
+            }
         }
     }
 

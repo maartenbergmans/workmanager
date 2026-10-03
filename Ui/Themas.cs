@@ -130,8 +130,38 @@ public static class Themas
         KlantCed: C("8FA9C9"), KlantAqurat: C("D69A55"), KlantRadiology: C("6FB9A8"),
         KlantUrbanIt: C("BFA26B"), KlantPrive: C("9BB77E"), KlantLauryssens: C("E0BE6C"));
 
+    /// <summary>
+    /// Breaking Bad: de woestijnnacht van New Mexico met het zuurgroen van de serietitel en
+    /// het geel van de hazmatpakken. Donker met een groene zweem in elk grijs — géén bont
+    /// laboratorium, maar een camper in het donker met één lamp aan. Het methblauw van het
+    /// kristal zit bewust alleen in de klantkleuren, als koude tegenhanger van het geel.
+    /// </summary>
+    public static readonly ThemaPalet BreakingBad = new(
+        "Breaking Bad", "Woestijnnacht met hazmatgeel en zuurgroen", true,
+        Bg: C("0D1210"), Surface: C("141B17"), Card: C("1C2521"), CardHover: C("27322C"),
+        Field: C("171F1A"), Border: C("2F3B34"), BorderLight: C("4C5C52"),
+        Text: C("EFF3EC"), Muted: C("ABBCA9"),
+        Accent: C("8CC63F"), AccentHover: C("A6DC5B"), AccentPress: C("6E9E31"),
+        Warn: C("F2C230"), Success: C("63D39A"), Danger: C("F0806B"),
+        KlantCed: C("6FC6E8"), KlantAqurat: C("E8A34F"), KlantRadiology: C("5FD2C4"),
+        KlantUrbanIt: C("B6A6E8"), KlantPrive: C("93C97E"), KlantLauryssens: C("E6CF63"));
+
+    /// <summary>
+    /// Zeilen: zeilwit doek, marineblauw water en de boordlichten rood en groen. Licht, maar
+    /// koeler en contrastrijker dan Daglicht — dat is kantoorwit, dit is zon op zeildoek.
+    /// </summary>
+    public static readonly ThemaPalet Zeilen = new(
+        "Zeilen", "Zeilwit met marineblauw — zee, teak en boordlichten", false,
+        Bg: C("F2F7FB"), Surface: C("FFFFFF"), Card: C("FFFFFF"), CardHover: C("E3EFF8"),
+        Field: C("FFFFFF"), Border: C("B7CDDE"), BorderLight: C("8CACC4"),
+        Text: C("112230"), Muted: C("4E6A7E"),
+        Accent: C("0A5A8C"), AccentHover: C("0C6DA8"), AccentPress: C("07476E"),
+        Warn: C("8A5200"), Success: C("0F6A47"), Danger: C("B22A2A"),
+        KlantCed: C("1F62C4"), KlantAqurat: C("9A4B08"), KlantRadiology: C("0F6259"),
+        KlantUrbanIt: C("6741C8"), KlantPrive: C("15633A"), KlantLauryssens: C("6F540B"));
+
     public static readonly ThemaPalet[] Alle =
-        { Middernacht, Daglicht, Zomer, Bond, Neon, Espresso, Godfather };
+        { Middernacht, Daglicht, Zomer, Bond, Neon, Espresso, Godfather, BreakingBad, Zeilen };
 
     /// <summary>
     /// Alle kleuren van een palet op een rij, in vaste volgorde. Bij een themawissel worden
