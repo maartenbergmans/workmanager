@@ -154,9 +154,17 @@ public static class AgendaClient
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
+    /// <summary>
+    /// Haalt de afspraken binnen het venster op. <paramref name="eigenAgenda"/> staat standaard
+    /// aan: dan worden afspraken die Maarten zelf geweigerd heeft (PARTSTAT=DECLINED op zijn
+    /// eigen deelnemerregel) weggelaten — die zijn voor hem geschrapt, ook al staat de afspraak
+    /// bij de organisator nog op CONFIRMED. Voor andermans agenda's (Hilke, de kinderen) moet
+    /// hij op false: een door Maarten geweigerde afspraak kan daar wél nog doorgaan.
+    /// </summary>
     public static async Task<List<AgendaItem>> OphalenAsync(
-        List<string> urls, DateOnly van, DateOnly tot, CancellationToken ct)
+        List<string> urls, DateOnly van, DateOnly tot, CancellationToken ct, bool eigenAgenda = true)
     {
+        var eigenAdres = eigenAgenda ? MailReplySettings.Load().Email.Trim() : "";
         var items = new List<AgendaItem>();
         foreach (var url in urls)
         {
@@ -167,7 +175,7 @@ public static class AgendaClient
             var ics = url.StartsWith("caldav:", StringComparison.OrdinalIgnoreCase)
                 ? await CalDavIcsAsync(url[7..].Trim(), van, tot, ct)
                 : await Http.GetStringAsync(url, ct);
-            items.AddRange(ParseIcs(ics, van, tot));
+            items.AddRange(ParseIcs(ics, van, tot, eigenAdres));
         }
         return items.OrderBy(i => i.Start).ThenBy(i => !i.HeleDag).ToList();
     }
@@ -237,9 +245,17 @@ public static class AgendaClient
         public string MeetLink = "";
         public readonly List<string> ExDates = new();
         public readonly List<string> Deelnemers = new();
+
+        /// <summary>De mailadressen van de deelnemers met PARTSTAT=DECLINED (zonder "mailto:").</summary>
+        public readonly List<string> GeweigerdDoor = new();
     }
 
-    internal static List<AgendaItem> ParseIcs(string ics, DateOnly van, DateOnly tot)
+    /// <summary>
+    /// <paramref name="eigenAdres"/>: staat dat adres bij de geweigerde deelnemers van een
+    /// afspraak, dan wordt die afspraak overgeslagen. Leeg = niet op weigeringen filteren.
+    /// </summary>
+    internal static List<AgendaItem> ParseIcs(
+        string ics, DateOnly van, DateOnly tot, string eigenAdres = "")
     {
         var events = LeesEvents(ics);
 
@@ -255,8 +271,14 @@ public static class AgendaClient
 
         foreach (var ev in events)
         {
+            // Geschrapt (STATUS:CANCELLED) of door Maarten zelf geweigerd: niet tonen. Een
+            // weigering staat alleen op zijn deelnemerregel — de afspraak zelf blijft bij de
+            // organisator CONFIRMED, dus zonder deze tweede toets bleef een afgezegde
+            // afspraak gewoon in de cockpit staan.
             if (ev.DtStart.Length == 0 ||
-                ev.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase))
+                ev.Status.Equals("CANCELLED", StringComparison.OrdinalIgnoreCase) ||
+                (eigenAdres.Length > 0 &&
+                 ev.GeweigerdDoor.Contains(eigenAdres, StringComparer.OrdinalIgnoreCase)))
             {
                 continue;
             }
@@ -425,6 +447,11 @@ public static class AgendaClient
                         !huidig.Deelnemers.Contains(deelnemer, StringComparer.OrdinalIgnoreCase))
                     {
                         huidig.Deelnemers.Add(deelnemer);
+                    }
+                    if (adres.Length > 0 &&
+                        kop.Contains("PARTSTAT=DECLINED", StringComparison.OrdinalIgnoreCase))
+                    {
+                        huidig.GeweigerdDoor.Add(adres.Trim());
                     }
                     break;
             }

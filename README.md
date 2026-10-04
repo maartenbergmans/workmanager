@@ -67,6 +67,18 @@ Via het tray-menu **"Facturen goedkeuren (ISPnext)…"** opent een venster dat d
 
 Mislukt een stap in de automatisering (knop niet gevonden, tabel gewijzigd), dan meldt het log dit en kan de handeling gewoon handmatig in de ingebedde browser afgemaakt worden.
 
+### Elke werkdag op de achtergrond
+
+`IspRadar` peilt op werkdagen (na 08:00) één keer per dag de facturenlijst in een verborgen WebView2 op hetzelfde profiel, en zet de uitkomst in de tekst van de weektaak — op andere dagen dan woensdag komt er alleen een taak bij **vervallen** facturen. Is de ISPnext-sessie verlopen, dan **meldt de peiler zich zelf aan**: dezelfde login-assistent als het venster, met het CED-wachtwoord en de lokaal uit de TOTP-seed berekende MFA-code.
+
+Omdat dit het CED-account is, wordt er niets herhaald: na een geweigerd wachtwoord (het invullen gaat dan blijvend uit) of na één ingediende MFA-code vult de peiler niets meer in, en lukt het aanmelden niet, dan komt er een melding en gebeurt er **die dag geen tweede poging** meer. Alleen een onleesbare pagina krijgt herkansingen (max. 3/dag, 90 min ertussen). De loginstappen komen in `%APPDATA%\WorkManager\ispnext-radar.log`.
+
+Met het vinkje **"Elke werkdag op de achtergrond klaarzetten wat aan deze regels voldoet en erom vragen"** (in *Regels beheren…*, standaard uit) zet die dagelijkse ronde de goedkeuring klaar: één melding *"5 facturen voldoen aan je regels (€ 14.150,40)"* opent een compact venster met die facturen aangevinkt, en pas bij **Goedkeuren** gaat het de deur uit — dezelfde stappen als de knop in het volledige venster, inclusief het goedkeuringslogboek dat dubbels vangt. **Zonder die klik wordt er nooit iets goedgekeurd.**
+
+Het bevestigde rondje leest de lijst eerst opnieuw en keurt dan precies de facturen goed die op het scherm stonden (op leverancier + factuurnummer): wat er intussen bijkwam, blijft liggen tot de volgende ronde. Twijfel betekent niets doen: wordt niet élke rij teruggevonden, staan er meer dan 30 facturen in de lijst, of ontbreekt een knop, dan gaat er niets de deur uit. Na afloop volgt een melding met aantal en totaal; ligt er daarna niets meer, dan wordt de weektaak afgevinkt.
+
+Diagnose: `WorkManager.exe --isppeil` (alleen lezen), `--isppeil proef` (ook aanvinken, niets versturen — handig na een wijziging van ISPnext), `--isppeil goedkeur` (goedkeuren zonder te vragen, voor een test) en `--ispvraag` (peilen en de goedkeuringsvraag nu tonen).
+
 ## Taken team (weekmail)
 
 Via het tray-menu **"Taken team…"** opent een venster om taken aan teamleden toe te wijzen en daar wekelijks de prioriteitenmail uit te genereren:

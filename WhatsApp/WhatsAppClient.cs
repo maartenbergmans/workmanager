@@ -1741,7 +1741,52 @@ public sealed class WhatsAppClient : IDisposable
             })()
             """);
         await Task.Delay(600, ct);
+        if (await InvoerLeegAsync())
+        {
+            return;
+        }
+
+        // De Enter-toets kwam niet aan (WhatsApp negeert geregeld synthetische events):
+        // tweede route is de verzendknop zelf, met een echte muisklik-reeks.
+        await JsAsync(
+            """
+            (function () {
+                const knop = document.querySelector(
+                    '#main footer button[aria-label], #main footer [data-icon="send"]');
+                const doel = knop?.closest('button') || knop;
+                if (!doel) return 'geen knop';
+                const b = doel.getBoundingClientRect();
+                const opts = { bubbles: true, cancelable: true, view: window,
+                    clientX: b.x + b.width / 2, clientY: b.y + b.height / 2, buttons: 1 };
+                for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+                    doel.dispatchEvent(type.startsWith('pointer')
+                        ? new PointerEvent(type, opts) : new MouseEvent(type, opts));
+                }
+                return 'ok';
+            })()
+            """);
+        await Task.Delay(800, ct);
+        if (!await InvoerLeegAsync())
+        {
+            // Niet stilzwijgend "verstuurd" melden: de tekst staat nog in het invoerveld,
+            // dus het bericht is WhatsApp niet in gegaan.
+            throw new InvalidOperationException(
+                "WhatsApp nam het bericht niet aan — de tekst staat nog in het invoerveld.");
+        }
     }
+
+    /// <summary>
+    /// Is het invoerveld leeg? WhatsApp wist het pas als het bericht echt vertrokken is,
+    /// dus dit is het betrouwbaarste bewijs dat er verstuurd is.
+    /// </summary>
+    private async Task<bool> InvoerLeegAsync() =>
+        await JsAsync(
+            """
+            (function () {
+                const box = document.querySelector('#main footer div[contenteditable="true"]');
+                return !box || (box.textContent || '').trim().length === 0;
+            })()
+            """) == "true";
 
     // ---------- Hulpjes ----------
 

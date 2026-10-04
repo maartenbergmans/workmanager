@@ -876,7 +876,7 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
-    private const string SelectScript = $$"""
+    internal const string SelectScript = $$"""
         (() => {
             {{FindTableJs}}
             const table = findTable();
@@ -902,7 +902,7 @@ public class InvoiceApprovalForm : Form
     // Klikt op het zichtbare element met exact deze tekst (laatste in de DOM — dropdowns en
     // dialogen staan in overlays die achteraan de body hangen). Bewust geen offsetParent-check:
     // die is null voor elementen in een position:fixed overlay, ook als ze zichtbaar zijn.
-    private const string ClickByTextScript = """
+    internal const string ClickByTextScript = """
         (() => {
             const norm = s => (s || '').replace(/\s+/g, ' ').trim();
             const wanted = __TEXT__;
@@ -957,7 +957,7 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
-    private const string LoginAssistScript = $$"""
+    internal const string LoginAssistScript = $$"""
         (() => {
             // Exotische koppeltekens (bv. de non-breaking hyphen in "Sign‑On") worden een
             // gewone '-', zodat de tekstmatch niet stukloopt op typografie.
@@ -1034,7 +1034,7 @@ public class InvoiceApprovalForm : Form
         })()
         """;
 
-    private const string DialogTextScript = """
+    internal const string DialogTextScript = """
         (() => {
             const visible = e => {
                 const r = e.getBoundingClientRect();

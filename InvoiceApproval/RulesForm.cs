@@ -11,6 +11,7 @@ public class RulesForm : Form
 {
     private readonly BindingList<ApprovalRule> _rules;
     private readonly DataGridView _grid;
+    private readonly CheckBox _opAchtergrond;
 
     public RulesForm(string? nieuweLeverancier = null)
     {
@@ -64,6 +65,18 @@ public class RulesForm : Form
                    "De naam moet exact overeenkomen met de leveranciersnaam in ISPnext (hoofdletterongevoelig).",
         };
 
+        // De regels zijn tot nu toe alleen een voorselectie in het venster; met dit vinkje
+        // zet de dagelijkse peiling ze ook zelf klaar en vraagt ze om één klik.
+        _opAchtergrond = new CheckBox
+        {
+            Dock = DockStyle.Bottom,
+            Height = 52,
+            Padding = new Padding(10, 0, 10, 0),
+            Checked = AutoGoedkeuren.Aan,
+            Text = "Elke werkdag op de achtergrond klaarzetten wat aan deze regels voldoet\n" +
+                   "en erom vragen (goedkeuren gebeurt pas na je klik)",
+        };
+
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -81,6 +94,7 @@ public class RulesForm : Form
 
         Controls.Add(_grid);
         Controls.Add(hint);
+        Controls.Add(_opAchtergrond);
         Controls.Add(buttons);
         Theme.Apply(this);
         hint.ForeColor = Theme.Muted;
@@ -108,5 +122,6 @@ public class RulesForm : Form
         ApprovalRules.Save(_rules
             .Where(r => !string.IsNullOrWhiteSpace(r.Leverancier) && r.MaxBedrag > 0)
             .ToList());
+        AutoGoedkeuren.Aan = _opAchtergrond.Checked;
     }
 }

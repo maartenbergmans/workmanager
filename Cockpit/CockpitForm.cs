@@ -1011,6 +1011,10 @@ public class CockpitForm : Form
         var claudeUpdateKnop = _claudeUpdateKnop =
             new ModernButton { Text = "Claude bijwerken", Glyph = Fluent.Sync };
         claudeUpdateKnop.KrimpNaarInhoud();
+        new ToolTip().SetToolTip(
+            claudeUpdateKnop,
+            "Werkt de Claude Code CLI bij via winget. Lopende terminalsessies (en PhpStorm) " +
+            "worden daarvoor gesloten — winget kan claude.exe anders niet vervangen.");
         claudeUpdateKnop.Click += async (_, _) =>
         {
             claudeUpdateKnop.Bezig = true;
@@ -1095,6 +1099,7 @@ public class CockpitForm : Form
         {
             using var form = new ArchiveerRegelsForm();
             form.ShowDialog(this);
+            HervulBerichtenLijst(); // nieuwe regel meteen zichtbaar: de rijen verdwijnen nu al
         };
         meetJanKnop.KrimpNaarInhoud();
         timesheetKnop.KrimpNaarInhoud();
@@ -1484,6 +1489,7 @@ public class CockpitForm : Form
                     b.VanAdres.Length > 0 && b.VanAdres != "CED Outlook" ? b.VanAdres : b.Van,
                     b.Onderwerp == "bericht" ? "" : b.Onderwerp);
                 form.ShowDialog(this);
+                HervulBerichtenLijst(); // het bericht zelf (en zijn soortgenoten) gaan nu weg
             }
         };
         berichtenMenu.Items.Add(regelItem);
@@ -3362,7 +3368,11 @@ public class CockpitForm : Form
                     m.Urgent = bewaard.Urgent;
                 }
             }
-            snapshot.RemoveAll(m => m.IsChat && m.Genegeerd);
+            // Alles wat volgens een regel toch meteen gearchiveerd wordt, hoort hier al weg
+            // te zijn: de CED-regels worden pas verderop toegepast (ná Outlook en
+            // Smartschool), dus zonder deze filter lichtte zo'n mail in de tussenstand nog
+            // even op om er een paar seconden later weer uit te verdwijnen.
+            BerichtFilter.Verberg(snapshot);
             VulBerichtenLijst(snapshot, fouten);
         }
 
@@ -3462,14 +3472,11 @@ public class CockpitForm : Form
                 Toast.Toon(this, "Gmail tijdelijk gepauzeerd na 5 fouten op rij", Fluent.Mail);
             }
         }
-        // Vaste regels: routinemails in Gmail meteen archiveren én als gelezen zetten —
-        // Netflix-bevestigingen, de JAAN bv "SMS credits bijgeschreven"-meldingen
-        // (het aantal in het onderwerp varieert, dus op de vaste kern matchen), de
-        // maandelijkse Apple-factuur van € 0,99 (één per jaar tonen, in januari), de
-        // Seety-bon van gratis parkeersessies (€ 0,00), de Google Cloud-factuur van € 0,00
-        // (bedrag uit de pdf-bijlage) en de AH-bestel- en bezorgmails
-        // (hieronder eerst verwerkt: besteltaak en levermoment).
-        var eigenRegels = ArchiveerRegels.Load(); // zelfgemaakte regels (archiveer-regels.json)
+        // Vaste regels: routinemails in Gmail meteen archiveren én als gelezen zetten. Welke
+        // dat zijn staat in BerichtFilter.GmailVast — op één plek, want diezelfde regels
+        // bepalen ook of een bericht überhaupt in beeld mag komen. Daarbij nog de Google
+        // Cloud-factuur van € 0,00 (bedrag uit de pdf-bijlage, dus hieronder apart beoordeeld).
+        var eigenRegels = ArchiveerRegels.LoadGecached(); // zelfgemaakt (archiveer-regels.json)
         // e-Box Enterprise: de meldingsmail "Nieuw e-Box bericht" zet eerst de cockpitknop
         // aan en wordt daarna meteen mee gearchiveerd — het e-Box-venster logt automatisch
         // in (CSAM + TOTP), dus de knop is de kortste weg naar het bericht zelf.
@@ -3506,16 +3513,8 @@ public class CockpitForm : Form
             // Geen oordeel = niets archiveren; de volgende poll probeert opnieuw.
         }
         var netflix = berichten.Where(m => !m.IsChat && m.Uid > 0 &&
-            (m.VanAdres.Contains("account.netflix.com", StringComparison.OrdinalIgnoreCase) ||
-             EboxForm.IsMeldingsmail(m) ||
-             System.Text.RegularExpressions.Regex.IsMatch(m.Onderwerp,
-                 @"SMS[\s-]*credits zijn bijgeschreven",
-                 System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
-             AlarmMails.Matcht(m) ||
-             AppleFactuur.MoetArchiveren(m) ||
-             SeetyBon.IsGratisBon(m) ||
+            (BerichtFilter.GmailVast(m) ||
              gcpNul.Contains(m.Uid) ||
-             AhLevering.Matcht(m) ||
              ArchiveerRegels.Matcht(m, eigenRegels))).ToList();
         // Storingsmails (MailMobility/MailProperty van IT-support) éérst registreren: dat zet
         // de rode taak en houdt de laatste-mailtijd bij, ook als het archiveren zo mislukt.
@@ -4169,21 +4168,13 @@ public class CockpitForm : Form
         {
             _genegeerdMaarAanwezig.Remove(oud); // echt weg uit het postvak: teller opruimen
         }
-        // Vaste regels: routinemails (CED) meteen archiveren in Outlook en niet in de
-        // cockpit tonen — zelfde idee als de Netflix-regel in Gmail. Nu: "Reactie(s)
-        // dagelijks overzicht", de telefoniestatistieken van NoReply Belgium
-        // ("…;Employee Group Performance by Employee;…") en het maandelijkse
-        // CyberVadis-rapport.
-        var cedRegels = ArchiveerRegels.Load(); // ook de zelfgemaakte regels gelden voor CED
+        // Vaste regels: routinemails (CED) meteen archiveren in Outlook — zelfde idee als in
+        // Gmail hierboven, en welke dat zijn staat in BerichtFilter.CedVast. In de lijst zijn
+        // ze dan al niet meer te zien: de weergavefilter kent dezelfde regels, dus ze hebben
+        // ook in de tussenstanden hierboven niet opgelicht.
+        var cedRegels = ArchiveerRegels.LoadGecached(); // zelfgemaakte regels gelden ook voor CED
         var cedTeArchiveren = berichten.Where(m => m.OutlookMail.Length > 0 && !m.Genegeerd &&
-            (System.Text.RegularExpressions.Regex.IsMatch(m.Onderwerp,
-                 @"reacties?\s+dagelijks\s+overzicht",
-                 System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
-             (m.Van.Contains("NoReply Belgium", StringComparison.OrdinalIgnoreCase) &&
-              m.Onderwerp.Contains("Employee Group Performance", StringComparison.OrdinalIgnoreCase)) ||
-             m.Onderwerp.Contains("monthly CyberVadis report", StringComparison.OrdinalIgnoreCase) ||
-             AlarmMails.Matcht(m) ||
-             ArchiveerRegels.Matcht(m, cedRegels)))
+            (BerichtFilter.CedVast(m) || ArchiveerRegels.Matcht(m, cedRegels)))
             .ToList();
         // Storingsmails ook hier eerst registreren (rode taak + laatste-mailtijd).
         AlarmMails.Registreer(cedTeArchiveren);
@@ -4246,7 +4237,11 @@ public class CockpitForm : Form
             _dockerKnop.Visible = DockerStatus.Geinstalleerd && !DockerStatus.Draait;
         }
 
-        berichten.RemoveAll(m => m.IsChat && m.Genegeerd);
+        // Vanaf hier is elk bericht in de lijst ook echt bedoeld om te zien: de verborgen
+        // rijen gaan er nu uit, dus ze leveren geen mention- of Billit-taak op, komen niet in
+        // de cache (en dus niet in de webversie, de pushmeldingen of de dagbriefing) en
+        // kunnen bij een volgende ophaalbeurt niet alsnog vanuit die cache opduiken.
+        BerichtFilter.Verberg(berichten);
 
         // @maarten in een Teams-chat of CED-mail: rood + automatische reageer-taak.
         try
@@ -4414,6 +4409,10 @@ public class CockpitForm : Form
 
     private void VulBerichtenLijst(List<MailBericht> berichten, List<string>? fouten)
     {
+        // Laatste zeef vóór de lijst: wat een archiveerregel raakt komt hier nooit door. Dit
+        // geldt dus ook voor de lijst uit de cache bij het openen van de cockpit, en voor de
+        // tellingen die eronder hangen (inbox zero, VIP-meldingen, het dagplan).
+        BerichtFilter.Verberg(berichten);
         berichten.RemoveAll(m => _zojuistGearchiveerd.Contains(m.MessageId));
         var wasGevuld = _laatsteBerichten.Count > 0;
         _laatsteBerichten = berichten;
@@ -4626,8 +4625,14 @@ public class CockpitForm : Form
         // hier weg: archiveren haalt ze wel uit de ListView maar niet uit _laatsteBerichten,
         // dus zonder dit filter zette elke herbouw (themawissel, VIP-wijziging, filter- of
         // zoekactie) een gearchiveerde chat weer terug in de lijst.
+        //
+        // En de archiveerregels worden hier opnieuw getoetst, niet alleen bij het ophalen:
+        // maak je via "Regel maken van dit bericht…" een regel aan, dan verdwijnt de rij
+        // meteen in plaats van pas bij de volgende ophaalbeurt.
+        var verbergRegels = ArchiveerRegels.LoadGecached();
         IEnumerable<MailBericht> berichten = _laatsteBerichten
-            .Where(m => !_zojuistGearchiveerd.Contains(m.MessageId));
+            .Where(m => !_zojuistGearchiveerd.Contains(m.MessageId) &&
+                        !BerichtFilter.Verbergen(m, verbergRegels));
         berichten = _bronFilter.SelectedIndex switch
         {
             1 => berichten.Where(m => !m.IsChat),
@@ -8148,6 +8153,22 @@ public class CockpitForm : Form
                 await OpenChatJanAsync();
                 return;
             }
+            // Beantwoord is afgehandeld: dezelfde markering als bij archiveren. Zonder dit
+            // haalt de eerstvolgende poll de rij gewoon terug (chats blijven in het
+            // vers-register staan en de conceptcache filtert alleen op "genegeerd").
+            if (bericht.MessageId.Length > 0)
+            {
+                _zojuistGearchiveerd.Add(bericht.MessageId);
+                if (bericht.IsChat)
+                {
+                    bericht.Genegeerd = true;
+                    SchrijfConceptCache(bericht);
+                }
+                if (bericht.WhatsAppChat.Length > 0)
+                {
+                    VersRegister.WaVers.Verwijder(bericht.MessageId);
+                }
+            }
             VerwijderRijEnSelecteerVolgende(_berichten.Items.Cast<ListViewItem>()
                 .FirstOrDefault(i => ReferenceEquals(i.Tag, bericht)));
             Toast.Toon(this, "Antwoord verstuurd", Fluent.Send);
@@ -9555,9 +9576,11 @@ public class CockpitForm : Form
     /// </summary>
     private void WerkClaudeUpdateKnopBij()
     {
-        // Alleen in beeld als er geen Claude-CLI-sessies draaien: winget kan de exe toch
-        // niet vervangen zolang er één open staat, dus tot die tijd is de knop alleen ruis.
-        _claudeUpdateKnop.Visible = LopendeClaudeCliSessies() == 0;
+        // De knop staat altijd in beeld. Hij was eerder verborgen zolang er een Claude-sessie
+        // draaide (winget kan de exe dan niet vervangen), maar daardoor kwam hij in de praktijk
+        // nooit in beeld — er staat bijna altijd een sessie open — en liep de CLI wekenlang
+        // achter. De klik sluit de lopende sessies nu zelf voor hij bijwerkt.
+        _claudeUpdateKnop.Visible = true;
         var taak = UpdateCheck.OpenUpdateTaak("Claude bijwerken");
         _claudeUpdateKnop.Kind = taak is null ? ButtonKind.Normal : ButtonKind.Accent;
         _claudeUpdateKnop.Text = taak ?? "Claude bijwerken";
@@ -10138,7 +10161,8 @@ public class CockpitForm : Form
                 {
                     try
                     {
-                        _agendaHilke = await AgendaClient.OphalenAsync(agenda.HilkeUrls, vandaag, tot, _cts.Token);
+                        _agendaHilke = await AgendaClient.OphalenAsync(
+                            agenda.HilkeUrls, vandaag, tot, _cts.Token, eigenAgenda: false);
                     }
                     catch
                     {
@@ -10149,7 +10173,8 @@ public class CockpitForm : Form
                 {
                     try
                     {
-                        _agendaKids = await AgendaClient.OphalenAsync(agenda.KidsUrls, vandaag, tot, _cts.Token);
+                        _agendaKids = await AgendaClient.OphalenAsync(
+                            agenda.KidsUrls, vandaag, tot, _cts.Token, eigenAgenda: false);
                     }
                     catch
                     {

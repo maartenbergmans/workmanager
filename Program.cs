@@ -389,27 +389,70 @@ static class Program
             return;
         }
 
-        // Diagnose: stille ISPnext-peiling (zonder aanmelden) en de samenvatting afdrukken.
-        if (args.Length == 1 && args[0] == "--isppeil")
+        // De goedkeuringsvraag van de dagronde nu opvragen: verse peiling (met zo nodig een
+        // stille aanmelding) en dan het bevestigingsvenster. Versturen gebeurt pas na een klik.
+        if (args.Length == 1 && args[0] == "--ispvraag")
         {
             ApplicationConfiguration.Initialize();
             Application.SetDefaultFont(Theme.BaseFont);
+            var pompVraag = new System.Windows.Forms.Timer { Interval = 50 };
+            pompVraag.Tick += async (_, _) =>
+            {
+                pompVraag.Stop();
+                var p = await IspNextClient.Instance.PeilAsync(CancellationToken.None);
+                if (p is not { Aangemeld: true } || p.AantalAuto == 0)
+                {
+                    MessageBox.Show(p is null
+                            ? "De facturenpagina was niet te lezen."
+                            : p.Aangemeld
+                                ? "Geen enkele factuur voldoet aan de regels."
+                                : "De ISPnext-sessie is verlopen en stil aanmelden lukte niet.",
+                        "WorkManager", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Application.ExitThread();
+                    return;
+                }
+                AutoGoedkeurForm.Toon(p);
+                // Het venster houdt de boodschappenlus open; sluit het en dit proces stopt.
+                foreach (Form f in Application.OpenForms)
+                {
+                    f.FormClosed += (_, _) => Application.ExitThread();
+                }
+            };
+            pompVraag.Start();
+            Application.Run();
+            return;
+        }
+
+        // Diagnose: stille ISPnext-peiling (meldt zich zo nodig zelf aan) + samenvatting afdrukken.
+        // "--isppeil proef": ook het aanvinken proberen, maar niets versturen.
+        // "--isppeil goedkeur": echt goedkeuren wat aan de regels voldoet (zoals de radar doet).
+        if (args.Length is 1 or 2 && args[0] == "--isppeil")
+        {
+            var ispProef = args.Length == 2 && args[1] == "proef";
+            var ispGoedkeur = args.Length == 2 && args[1] == "goedkeur";
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
             var klaarIsp = new TaskCompletionSource<string>();
+            var ispLog = new System.Text.StringBuilder();
             var pompIsp = new System.Windows.Forms.Timer { Interval = 50 };
             pompIsp.Tick += async (_, _) =>
             {
                 pompIsp.Stop();
                 try
                 {
-                    var p = await IspNextClient.Instance.PeilAsync(CancellationToken.None);
-                    klaarIsp.SetResult(p is null ? "geen uitkomst (venster open of pagina onleesbaar)"
+                    void Logregel(string r) => ispLog.AppendLine($"[{DateTime.Now:HH:mm:ss}] {r}");
+                    var p = ispProef || ispGoedkeur
+                        ? (await IspNextClient.Instance.PeilEnGoedkeurAsync(
+                            CancellationToken.None, Logregel, ispProef)).Peiling
+                        : await IspNextClient.Instance.PeilAsync(CancellationToken.None, Logregel);
+                    klaarIsp.SetResult(ispLog + (p is null ? "geen uitkomst (venster open of pagina onleesbaar)"
                         : IspRadar.Samenvatting(p) + Environment.NewLine + string.Join(Environment.NewLine,
                             p.Facturen.Select(f => $"  {f.Leverancier} | {f.Factuurnummer} | {f.BedragText} {f.Valuta} | " +
-                                $"verval {f.Vervaldatum}{(f.Vervallen ? " ⚠" : "")} | {(f.Auto ? "AUTO" : "handmatig")}: {f.Reden}")));
+                                $"verval {f.Vervaldatum}{(f.Vervallen ? " ⚠" : "")} | {(f.Auto ? "AUTO" : "handmatig")}: {f.Reden}"))));
                 }
                 catch (Exception ex)
                 {
-                    klaarIsp.SetResult("FOUT: " + ex.Message);
+                    klaarIsp.SetResult(ispLog + "FOUT: " + ex.Message);
                 }
                 Application.ExitThread();
             };
@@ -898,7 +941,11 @@ static class Program
         {
             var dagen = args.Length == 3 && int.TryParse(args[2], out var d) ? d : 1;
             var vandaag = DateOnly.FromDateTime(DateTime.Now);
-            var items = AgendaClient.ParseIcs(File.ReadAllText(args[1]), vandaag, vandaag.AddDays(dagen));
+            // Mét het eigen mailadres, zodat de test exact hetzelfde filtert als de app:
+            // door Maarten geweigerde afspraken horen niet in het resultaat.
+            var items = AgendaClient.ParseIcs(
+                File.ReadAllText(args[1]), vandaag, vandaag.AddDays(dagen),
+                MailReplySettings.Load().Email.Trim());
             File.WriteAllLines(args[1] + ".out.txt", items.Select(i =>
                 $"{i.Start:yyyy-MM-dd HH:mm} - {i.Einde:HH:mm} heledag={i.HeleDag} | {i.Titel}"));
             return;

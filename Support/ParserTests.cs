@@ -24,6 +24,7 @@ public static class ParserTests
         OwaAgendaTests();
         MailKopTests();
         O365DetailsTests();
+        BerichtFilterTests();
 
         Verslag.AppendLine();
         Verslag.AppendLine($"{_totaal - _fouten}/{_totaal} geslaagd, {_fouten} fout(en).");
@@ -195,5 +196,107 @@ public static class ParserTests
         CheckBevat("omschrijving blijft staan", "cijfers Q3", details);
         CheckBevat("Copilot-ruis verdwijnt", "Copilot", details, moetBevatten: false);
         CheckBevat("losse RSVP-knop verdwijnt", "RSVP", details, moetBevatten: false);
+    }
+
+    /// <summary>
+    /// De weergavefilter: wat onder een archiveerregel valt mag nooit in de lijst komen —
+    /// ook niet even. Hier wordt met expliciete regels getest (niet met archiveer-regels.json),
+    /// zodat de uitkomst niet van de eigen regels van de gebruiker afhangt.
+    /// </summary>
+    private static void BerichtFilterTests()
+    {
+        Verslag.AppendLine("— Weergavefilter berichten —");
+        var regels = new List<ArchiveerRegel>
+        {
+            new() { Afzender = "SharePoint Online", Onderwerp = "Nieuws dat je mogelijk hebt gemist" },
+            new() { Afzender = "nieuwsbrief@voorbeeld.be" },
+            new() { Onderwerp = "Weekoverzicht van je saldo" },
+            new() { }, // lege regel: mag niets raken
+        };
+
+        static MailBericht Mail(string van, string onderwerp, string vanAdres = "") => new()
+        {
+            Uid = 42,
+            Van = van,
+            VanAdres = vanAdres.Length > 0 ? vanAdres : van,
+            Onderwerp = onderwerp,
+            MessageId = $"<{van}/{onderwerp}>",
+        };
+
+        static MailBericht Ced(string van, string onderwerp) => new()
+        {
+            Van = van,
+            VanAdres = "CED Outlook",
+            Onderwerp = onderwerp,
+            OutlookMail = $"{van}|{onderwerp}",
+            MessageId = $"owa:{van}/{onderwerp}",
+        };
+
+        bool Verborgen(MailBericht m) => BerichtFilter.Verbergen(m, regels);
+
+        // Vaste Gmail-regels.
+        Check("Netflix-bevestiging", true,
+            Verborgen(Mail("Netflix", "Je abonnement", "info@account.netflix.com")));
+        Check("SMS-credits bijgeschreven", true,
+            Verborgen(Mail("JAAN bv", "500 SMS credits zijn bijgeschreven")));
+        Check("Storingsmail MailMobility", true,
+            Verborgen(Mail("IT Support", "MailMobility onbereikbaar", "it-support@ced.group")));
+        Check("Gewone mail blijft staan", false,
+            Verborgen(Mail("Jan Peeters", "Vraag over het dossier", "jan@klant.be")));
+
+        // Zelfgemaakte regels, op afzender én onderwerp / alleen afzender / alleen onderwerp.
+        Check("Eigen regel: afzender + onderwerp", true,
+            Verborgen(Mail("SharePoint Online", "Nieuws dat je mogelijk hebt gemist")));
+        Check("Eigen regel: zelfde afzender, ander onderwerp", false,
+            Verborgen(Mail("SharePoint Online", "Je bent toegevoegd aan een site")));
+        Check("Eigen regel: alleen afzender", true,
+            Verborgen(Mail("Voorbeeld bv", "Wat dan ook", "nieuwsbrief@voorbeeld.be")));
+        Check("Eigen regel: alleen onderwerp", true,
+            Verborgen(Mail("Wie dan ook", "JAAN bv - Weekoverzicht van je saldo")));
+        Check("Lege regel raakt niets", false,
+            Verborgen(Mail("Onbekend", "Zonder trefwoord")));
+
+        // CED-mails (Outlook): vaste regels én dezelfde zelfgemaakte regels.
+        Check("CED: reacties dagelijks overzicht", true,
+            Verborgen(Ced("CED Belgium", "Reacties dagelijks overzicht 3/10")));
+        Check("CED: telefoniestatistiek", true,
+            Verborgen(Ced("NoReply Belgium", "Rapport;Employee Group Performance by Employee;okt")));
+        Check("CED: NoReply met ander onderwerp", false,
+            Verborgen(Ced("NoReply Belgium", "Wachtwoord verloopt binnenkort")));
+        Check("CED: CyberVadis-rapport", true,
+            Verborgen(Ced("CyberVadis", "Your monthly CyberVadis report")));
+        Check("CED: eigen regel geldt ook hier", true,
+            Verborgen(Ced("SharePoint Online", "Nieuws dat je mogelijk hebt gemist")));
+        Check("CED: gewone mail blijft staan", false,
+            Verborgen(Ced("Collega", "Planning volgende week")));
+
+        // Afgehandelde chats blijven weg; een openstaande chat niet. En de CC-overzichtsrij
+        // is geen echte mail: die heeft zijn eigen afhandeling en mag nooit wegvallen.
+        var chat = new MailBericht
+        {
+            TeamsChat = "Collega",
+            Van = "Collega",
+            Onderwerp = "ok dan",
+            MessageId = "teams:Collega|ok dan",
+        };
+        Check("Chat openstaand", false, Verborgen(chat));
+        chat.Genegeerd = true;
+        Check("Chat afgehandeld", true, Verborgen(chat));
+        Check("CC-overzichtsrij blijft staan", false,
+            Verborgen(Mail("SharePoint Online", "Nieuws dat je mogelijk hebt gemist", "CC-map")));
+
+        // En de lijstvariant: alleen de zichtbare rijen blijven over.
+        var lijst = new List<MailBericht>
+        {
+            Mail("Jan Peeters", "Vraag over het dossier", "jan@klant.be"),
+            Mail("Netflix", "Je abonnement", "info@account.netflix.com"),
+            Ced("CED Belgium", "Reacties dagelijks overzicht 3/10"),
+            Ced("Collega", "Planning volgende week"),
+        };
+        lijst.RemoveAll(m => BerichtFilter.Verbergen(m, regels));
+        Check("Lijst: aantal zichtbaar", 2, lijst.Count);
+        CheckBevat("Lijst: klantmail blijft", "Jan Peeters", string.Join(", ", lijst.Select(m => m.Van)));
+        CheckBevat("Lijst: Netflix weg", "Netflix",
+            string.Join(", ", lijst.Select(m => m.Van)), moetBevatten: false);
     }
 }

@@ -78,6 +78,9 @@ public sealed class GitOverzichtForm : Form
             Padding = new Padding(10),
         };
         var sluit = new ModernButton { Text = "Sluiten", DialogResult = DialogResult.Cancel, Width = 100 };
+        // Dit venster staat niet-modaal open (TrayAppContext.Show()), en dan sluit een
+        // DialogResult op zichzelf niets: de knop moet het zelf doen.
+        sluit.Click += (_, _) => Close();
         _verversKnop = new ModernButton { Text = "Verversen", Width = 120, Glyph = Fluent.Sync };
         _verversKnop.Click += async (_, _) => await ScanAsync();
         var statusKnop = new ModernButton { Text = "Bestandslijst…", Width = 150 };

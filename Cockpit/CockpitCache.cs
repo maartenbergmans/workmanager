@@ -20,6 +20,13 @@ public static class CockpitCache
         IncludeFields = true,
     };
 
+    /// <summary>
+    /// De laatst bekende lijst. Berichten die intussen onder een archiveerregel vallen komen
+    /// er niet meer uit: de cache wordt op veel plaatsen gelezen (de tussenstanden van de
+    /// pollronde, de webversie, de pushmeldingen, de dagbriefing en het dagplan), en een
+    /// regel die net is toegevoegd of nog niet uitgevoerd kon worden mag nergens nog even
+    /// een rij opleveren.
+    /// </summary>
     public static List<MailBericht> Load()
     {
         try
@@ -28,6 +35,7 @@ public static class CockpitCache
                 JsonSerializer.Deserialize<List<MailBericht>>(
                     File.ReadAllText(CacheFile), JsonOpts) is { } berichten)
             {
+                BerichtFilter.Verberg(berichten);
                 return berichten;
             }
         }
@@ -43,7 +51,11 @@ public static class CockpitCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(CacheFile)!);
-            File.WriteAllText(CacheFile, JsonSerializer.Serialize(berichten, JsonOpts));
+            // Alleen wat zichtbaar mag zijn gaat de cache in; de lijst van de aanroeper
+            // blijft ongemoeid (die heeft de rest nog nodig, bv. voor het zelfherstel van
+            // Outlook-mails die niet verplaatst bleken).
+            var zichtbaar = berichten.Where(m => !BerichtFilter.Verbergen(m)).ToList();
+            File.WriteAllText(CacheFile, JsonSerializer.Serialize(zichtbaar, JsonOpts));
         }
         catch
         {

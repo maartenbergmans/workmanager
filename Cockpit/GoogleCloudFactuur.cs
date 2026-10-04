@@ -48,6 +48,15 @@ public static class GoogleCloudFactuur
         m.Bijlagen.Any(b => b.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// Is van deze factuurmail bij een eerdere beurt al vastgesteld dat er niets te betalen
+    /// valt? Dit leest alleen het bewaarde oordeel en downloadt dus niets — zo kan de
+    /// weergavefilter een nulfactuur ook verbergen als het archiveren zelf niet lukte.
+    /// Zonder oordeel (nog niet gelezen, pdf onleesbaar) blijft de mail gewoon staan.
+    /// </summary>
+    public static bool IsBekendeNulfactuur(MailBericht m) =>
+        IsFactuurmail(m) && Laad().TryGetValue(Sleutel(m), out var oordeel) && oordeel.Nulfactuur;
+
+    /// <summary>
     /// Bekijkt de Google Cloud-factuurmails in de lijst en geeft de uid's terug van de
     /// facturen waarop niets te betalen staat — die mogen gearchiveerd worden. Alles wat niet
     /// met zekerheid nul is (bedrag erop, pdf onleesbaar, download mislukt) blijft eruit.

@@ -64,6 +64,40 @@ public static class ArchiveerRegels
         return new List<ArchiveerRegel>();
     }
 
+    private static readonly object CacheSlot = new();
+
+    private static List<ArchiveerRegel>? _cache;
+
+    private static DateTime _cacheTijd;
+
+    /// <summary>
+    /// Zelfde als <see cref="Load"/>, maar leest het bestand alleen opnieuw als het echt
+    /// gewijzigd is. De weergavefilter (<see cref="BerichtFilter"/>) draait bij elke herbouw
+    /// van de berichtenlijst — ook per toetsaanslag in het zoekveld — en dat hoeft geen
+    /// schijfactie te zijn. Een regel die net is toegevoegd komt er wel meteen door, want
+    /// het tijdstempel van het bestand verandert dan.
+    /// </summary>
+    public static List<ArchiveerRegel> LoadGecached()
+    {
+        lock (CacheSlot)
+        {
+            try
+            {
+                var tijd = File.Exists(Bestand) ? File.GetLastWriteTimeUtc(Bestand) : DateTime.MinValue;
+                if (_cache is not null && tijd == _cacheTijd)
+                {
+                    return _cache;
+                }
+                _cacheTijd = tijd;
+                return _cache = Load();
+            }
+            catch
+            {
+                return _cache ?? new List<ArchiveerRegel>();
+            }
+        }
+    }
+
     public static void Save(List<ArchiveerRegel> regels)
     {
         try
@@ -74,6 +108,10 @@ public static class ArchiveerRegels
         catch
         {
             // Best effort.
+        }
+        lock (CacheSlot)
+        {
+            _cache = null; // volgende weergave leest de nieuwe regels
         }
     }
 
