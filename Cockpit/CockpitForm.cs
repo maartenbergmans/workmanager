@@ -2790,6 +2790,10 @@ public class CockpitForm : Form
 
         _timer.Tick += async (_, _) =>
         {
+            // Tweede kans voor een aanwijzer die een WebView2 heeft weggenomen: de cockpit
+            // blijft vaak uren actief, dus wachten tot een venster opnieuw geactiveerd wordt
+            // kan lang duren.
+            CursorWacht.Herstel();
             // Eén automatische git-ronde per uur, meeliftend op de poll (los van de
             // typen-guard hieronder: de controle raakt het antwoordvak niet). Dezelfde ronde
             // voedt de online tabel, dus hier niets vaker dan dat.

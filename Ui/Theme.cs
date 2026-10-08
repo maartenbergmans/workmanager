@@ -308,6 +308,9 @@ public static class Theme
         }
         DonkereTitelbalk(form);
         StyleChildren(form.Controls);
+        // Vangnet voor een aanwijzer die een WebView2 heeft weggenomen: bij het terugkomen
+        // in een WorkManager-venster hoort hij er gewoon te zijn (zie CursorWacht).
+        form.Activated += (_, _) => CursorWacht.Herstel();
         if (fade)
         {
             FadeIn(form);
