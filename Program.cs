@@ -302,6 +302,34 @@ static class Program
             return;
         }
 
+        // Diagnose: één mail archiveren zoals de cockpit dat doet (van, onderwerp, optioneel
+        // de directe link) en de uitkomst afdrukken. Tray-app moet afgesloten zijn.
+        if (args.Length is 3 or 4 && args[0] == "--owaarchief")
+        {
+            ApplicationConfiguration.Initialize();
+            Application.SetDefaultFont(Theme.BaseFont);
+            var klaar = new TaskCompletionSource<string>();
+            var pomp = new System.Windows.Forms.Timer { Interval = 50 };
+            pomp.Tick += async (_, _) =>
+            {
+                pomp.Stop();
+                try
+                {
+                    klaar.SetResult(await OutlookClient.Instance.ArchiveerAsync(
+                        args[1], args[2], CancellationToken.None, args.Length == 4 ? args[3] : ""));
+                }
+                catch (Exception ex)
+                {
+                    klaar.SetResult("FOUT: " + ex.Message);
+                }
+                Application.ExitThread();
+            };
+            pomp.Start();
+            Application.Run();
+            Console.WriteLine(klaar.Task.Result);
+            return;
+        }
+
         // Zelfde als --owajs, maar dan in de verborgen Smartschool-sessie.
         if (args.Length == 2 && args[0] == "--smsjs")
         {

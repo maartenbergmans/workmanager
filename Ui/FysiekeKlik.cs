@@ -60,6 +60,9 @@ public static class FysiekeKlik
     /// <summary>Enter (VK 0x0D). </summary>
     public const int VkReturn = 0x0D;
 
+    /// <summary>Escape (VK 0x1B), bv. om een contextmenu weer te sluiten.</summary>
+    public const int VkEscape = 0x1B;
+
     /// <summary>
     /// Stuurt een echte toetsaanslag naar het element met focus in de pagina — ook
     /// toetsen als Enter in de zoekbalk negeert OWA als ze synthetisch (JS) zijn.
@@ -71,9 +74,11 @@ public static class FysiekeKlik
         {
             return false;
         }
-        // lParam: herhaal=1 + scancode 0x1C (Enter); keyup met transition/previous-flags.
-        PostMessage(doel, WmKeyDown, (IntPtr)virtualKey, (IntPtr)0x001C0001);
-        PostMessage(doel, WmKeyUp, (IntPtr)virtualKey, unchecked((IntPtr)(long)0xC01C0001));
+        // lParam: herhaal=1 + scancode (0x1C Enter, 0x01 Escape); keyup met
+        // transition/previous-flags.
+        long scan = virtualKey == VkEscape ? 0x01 : 0x1C;
+        PostMessage(doel, WmKeyDown, (IntPtr)virtualKey, (IntPtr)((scan << 16) | 1));
+        PostMessage(doel, WmKeyUp, (IntPtr)virtualKey, unchecked((IntPtr)(0xC0000001L | (scan << 16))));
         return true;
     }
 

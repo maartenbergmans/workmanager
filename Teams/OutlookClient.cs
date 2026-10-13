@@ -648,7 +648,7 @@ public sealed class OutlookClient : IDisposable
             // dat maakte iedere verversronde ~45 s traag (2 sep 2026). Hooguit één poging
             // per kwartier; een echte mail doorbreekt de teller meteen via de snelle leesweg.
             if (rijen.Count == 0 && !LaatsteScrapeEchtLeeg &&
-                (_leegNaHerladen < 2 ||
+                (_leegNaHerladen < 2 || LaatsteMapTeller > 0 ||
                  DateTimeOffset.Now - _laatsteLegeHerlaadPoging > TimeSpan.FromMinutes(15)))
             {
                 _laatsteLegeHerlaadPoging = DateTimeOffset.Now;
@@ -659,6 +659,17 @@ public sealed class OutlookClient : IDisposable
             else if (rijen.Count > 0)
             {
                 _leegNaHerladen = 0;
+            }
+            if (rijen.Count == 0 && LaatsteMapTeller > 0)
+            {
+                // De mappenboom telt mail, de lijst toont niets — ook niet na herladen. Dan
+                // is de pagina zelf de weg kwijt: geen lege inbox doorgeven (dat liet de
+                // cockpit alle CED-mails vergeten), maar een fout, en de volgende poll
+                // begint met een verse sessie. Cookies blijven, dus geen nieuwe MFA.
+                MarkeerVoorVerseStart();
+                throw new InvalidOperationException(
+                    $"maillijst niet gerenderd (Postvak IN telt {LaatsteMapTeller} items) — " +
+                    "volgende poll start een verse sessie");
             }
             return rijen;
         }
@@ -887,17 +898,46 @@ public sealed class OutlookClient : IDisposable
             // de toets was altijd onwaar: een leeggewerkte Postvak IN gold als "mislukte
             // scrape" en de cockpit zette de gearchiveerde mails elke ronde weer terug.
             // Nu op structuur: mappenboom gerenderd + lijstcontainer aanwezig + geen rijen.
-            LaatsteScrapeEchtLeeg = berichten.Count == 0 && await JsAsync(
-                """
-                (function () {
-                    const mappen = document.querySelectorAll('[role="treeitem"]').length;
-                    const lijst = document.getElementById('MailList') ||
-                        document.querySelector('[id^="MailList"], [aria-label*="Berichtenlijst"], ' +
-                            '[aria-label*="Message list"]');
-                    return mappen > 0 && !!lijst &&
-                        document.querySelectorAll('[data-convid], [role="option"]').length === 0;
-                })()
-                """) == "true";
+            //
+            // Tweede toets: de mappenboom zelf. OWA zet het aantal items in de title van de
+            // map ("Postvak IN - 13 items (0 ongelezen)"). Zegt die teller dat er mail staat,
+            // dan is een lege scrape een niet-gerenderde lijst en géén lege map — op 8 oktober
+            // 2026 las de langlopende sessie zo twee keer niets, en verdwenen alle CED-mails
+            // uit de cockpit terwijl Postvak IN er dertien telde.
+            LaatsteMapTeller = -1;
+            LaatsteScrapeEchtLeeg = false;
+            if (berichten.Count == 0)
+            {
+                var stand = await JsAsync(
+                    """
+                    (function () {
+                        const mappen = document.querySelectorAll('[role="treeitem"]').length;
+                        const lijst = document.getElementById('MailList') ||
+                            document.querySelector('[id^="MailList"], [aria-label*="Berichtenlijst"], ' +
+                                '[aria-label*="Message list"]');
+                        const gekozen = [...document.querySelectorAll('[role="treeitem"]')]
+                            .filter(x => x.getAttribute('aria-selected') === 'true');
+                        const titel = gekozen.length === 1 ? (gekozen[0].getAttribute('title') || '') : '';
+                        const m = titel.match(/[-–]\s*([\d.,\s]+)\s*items?/i);
+                        return JSON.stringify({
+                            leeg: mappen > 0 && !!lijst &&
+                                document.querySelectorAll('[data-convid], [role="option"]').length === 0,
+                            teller: m ? parseInt(m[1].replace(/[^\d]/g, ''), 10) : -1,
+                        });
+                    })()
+                    """);
+                try
+                {
+                    using var s = JsonDocument.Parse(JsonSerializer.Deserialize<string>(stand) ?? stand);
+                    LaatsteMapTeller = s.RootElement.GetProperty("teller").GetInt32();
+                    LaatsteScrapeEchtLeeg = s.RootElement.GetProperty("leeg").GetBoolean() &&
+                        LaatsteMapTeller <= 0;
+                }
+                catch
+                {
+                    // Pagina in een rare toestand: dan in elk geval niet "echt leeg".
+                }
+            }
             return berichten;
         }
     }
@@ -950,6 +990,12 @@ public sealed class OutlookClient : IDisposable
 
     /// <summary>True als de laatste lijstscrape een volledig geladen maar lege map zag.</summary>
     public bool LaatsteScrapeEchtLeeg { get; private set; }
+
+    /// <summary>
+    /// Aantal items dat de mappenboom bij de geopende map vermeldt na een lege scrape, of -1
+    /// als dat niet te lezen viel. Groter dan nul = de lijst is niet gerenderd, niet leeg.
+    /// </summary>
+    public int LaatsteMapTeller { get; private set; } = -1;
 
     /// <summary>Uitkomst van <see cref="DiagnoseAsync"/>: pad naar de schermafdruk, of leeg.</summary>
     public sealed record OutlookDiagnose(string Schermafdruk);
@@ -1374,7 +1420,7 @@ public sealed class OutlookClient : IDisposable
             // bij een willekeurige mail, en ernaast zit de prullenbak.
             const b = [...document.querySelectorAll('button, [role="button"], [role="menuitem"]')]
                 .filter(x => !x.closest('[data-convid], [role="option"], [role="listbox"], #MailList'))
-                .find(x => /als gelezen markeren|mark as read|marquer comme lu/i.test(tekst(x)) &&
+                .find(x => /als gelezen markeren|markeren als gelezen|mark as read|marquer comme lu/i.test(tekst(x)) &&
                     !/alles|\ball\b|tout/i.test(tekst(x)));
             if (!b || b.getAttribute('aria-disabled') === 'true' || b.disabled) return null;
             return b.matches('button') ? b : (b.querySelector('button') || b);
@@ -1445,13 +1491,7 @@ public sealed class OutlookClient : IDisposable
                 return "rij-niet-gevonden";
             }
             await Task.Delay(1500, ct); // leesvenster laten openen (markeert doorgaans al als gelezen)
-
-            // Expliciet als gelezen markeren als die knop ergens staat (dan was hij nog
-            // ongelezen). Fysiek klikken: het lint negeert synthetische JS-kliks.
-            if (await KlikFysiekAsync(GelezenKnopExpr))
-            {
-                await Task.Delay(600, ct);
-            }
+            // Het expliciet als gelezen markeren gebeurt per exemplaar in de lus hieronder.
 
             // Archiveren met échte muiskliks (de ribbon negeert synthetische JS-kliks) en
             // verificatie dat de rij daarna echt uit het postvak is. Voorkeur: de Quick
@@ -1516,6 +1556,7 @@ public sealed class OutlookClient : IDisposable
             // niet-reagerende lijst niet twaalf keer voor niets geklikt wordt.
             var vorigeTel = int.MaxValue;
             var zonderVooruitgang = 0;
+            var stappen = new List<string>(); // per klik wat er gebeurde, voor de debugfile
             for (var klik = 0; klik < 12; klik++)
             {
                 // Klaar? (rij weg, of in zoekresultaten verhuisd naar Verwerkt/Archief)
@@ -1534,6 +1575,7 @@ public sealed class OutlookClient : IDisposable
                     break; // drie kliks zonder dat er een rij verdween: opgeven
                 }
                 vorigeTel = tel;
+                stappen.Add($"rijen={tel}");
                 // Rij selecteren (JS-klik werkt prima op rijen) zodat de werkbalk actief is.
                 // Geen rij = niets aanklikken: de lintknoppen werken op wat er toevallig
                 // geselecteerd staat, en dat is dan een andere mail.
@@ -1555,12 +1597,10 @@ public sealed class OutlookClient : IDisposable
                 // Elk exemplaar van de reeks ook echt als gelezen markeren vóór het naar
                 // Verwerkt gaat — anders bleef alles behalve de eerst geopende mail
                 // ongelezen in die map achter (storingsreeksen van IT-support).
-                if (await KlikFysiekAsync(GelezenKnopExpr))
-                {
-                    await Task.Delay(600, ct);
-                }
+                await MarkeerRijGelezenAsync(vindRijExpr, ct);
                 if (!await KlikFysiekAsync(KnopExpr))
                 {
+                    stappen.Add("knop-niet-gevonden");
                     stand = "knop-niet-gevonden";
                     continue; // knop kan bij de volgende poging alsnog verschijnen
                 }
@@ -1593,12 +1633,13 @@ public sealed class OutlookClient : IDisposable
                     ? "niet-verdwenen" : "ok";
                 _laatstHerladen = DateTimeOffset.Now;
             }
-            stand = $"{{\"stap\":\"{stand}\",\"van\":{vanJs}}}";
             try
             {
                 // Altijd wegschrijven (ook bij succes): welke knop is geklikt en wat het
                 // resultaat was — onmisbaar als OWA weer eens van DOM verandert.
-                File.WriteAllText(Path.Combine(DataDir, "outlook-archief-debug.json"), stand);
+                File.WriteAllText(Path.Combine(DataDir, "outlook-archief-debug.json"),
+                    $"{{\"stap\":\"{stand}\",\"van\":{vanJs}," +
+                    $"\"stappen\":{JsonSerializer.Serialize(string.Join("; ", stappen))}}}");
             }
             catch
             {
@@ -1607,17 +1648,43 @@ public sealed class OutlookClient : IDisposable
             // Was de mail via het zoekveld gevonden, dan de zoekweergave weer sluiten zodat
             // de sessie terugkeert naar het gewone Postvak IN (voor de volgende poll).
             await SluitZoekweergaveAsync();
-            var genormaliseerd = stand.Replace("\\\"", "\"");
-            if (genormaliseerd.Contains("\"stap\":\"ok\""))
-            {
-                return "ok";
-            }
-            return genormaliseerd.Contains("knop-niet-gevonden")
-                ? "knop-niet-gevonden" : "niet-verdwenen";
+            return stand is "ok" or "knop-niet-gevonden" ? stand : "niet-verdwenen";
         }
         finally
         {
             _slot.Release();
+        }
+    }
+
+    /// <summary>
+    /// Zet de geselecteerde rij op gelezen vóór hij naar Verwerkt gaat. Eerst via de
+    /// lintknop "Als gelezen markeren"; staat die er niet (het vereenvoudigde lint stopt hem
+    /// in het ⋯-overloopmenu), dan via een fysieke rechtsklik op de rij en "Als gelezen
+    /// markeren" in het contextmenu. Zonder die terugval gingen op 12 oktober 2026 elf
+    /// "AXA Monitor"-mails van IT-support wél naar Verwerkt, maar ongelezen. Toont het
+    /// contextmenu alleen "Als ongelezen markeren", dan was de rij al gelezen: menu dicht.
+    /// </summary>
+    private async Task MarkeerRijGelezenAsync(string vindRijExpr, CancellationToken ct)
+    {
+        if (await KlikFysiekAsync(GelezenKnopExpr))
+        {
+            await Task.Delay(600, ct);
+            return;
+        }
+        if (!await KlikFysiekAsync(vindRijExpr, rechts: true))
+        {
+            return;
+        }
+        await Task.Delay(700, ct); // contextmenu laten openen
+        if (await KlikFysiekAsync(GelezenKnopExpr))
+        {
+            await Task.Delay(600, ct);
+            return;
+        }
+        if (_web is not null)
+        {
+            FysiekeKlik.Toets(_web, FysiekeKlik.VkEscape);
+            await Task.Delay(300, ct);
         }
     }
 
