@@ -172,7 +172,7 @@ public static class GitPullTaken
         {
             return 0; // geen repo of geen remote
         }
-        await GitStatus.KaleUitvoerAsync(map, "fetch --quiet", ct);
+        await GitStatus.KaleUitvoerAsync(map, $"{GitStatus.StilleCredentials} fetch --quiet", ct);
         var telling = await GitStatus.KaleUitvoerAsync(map,
             $"rev-list --count {branch}..origin/{branch}", ct);
         return int.TryParse(telling, out var n) ? n : 0;

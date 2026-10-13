@@ -139,6 +139,13 @@ public static class GitStatus
         return code == 0 ? uit.Trim() : "";
     }
 
+    /// <summary>
+    /// Git-opties voor achtergrond-fetches: Git Credential Manager mag nooit een loginvenster
+    /// openen (bv. de accountkiezer voor een Azure DevOps-remote). Is er geen geldig token,
+    /// dan faalt de fetch gewoon stil en blijft de laatst bekende stand staan.
+    /// </summary>
+    public const string StilleCredentials = "-c credential.interactive=false";
+
     /// <summary>Wanneer er voor deze repo voor het laatst opgehaald is (throttling).</summary>
     private static readonly Dictionary<string, DateTimeOffset> LaatsteFetch =
         new(StringComparer.OrdinalIgnoreCase);
@@ -162,8 +169,8 @@ public static class GitStatus
         try
         {
             var (exe, args) = ClientLauncher.TryWslPad(werkmap, out var distro, out var linux)
-                ? ("wsl.exe", $"-d {distro} --cd \"{linux}\" -- git fetch --quiet")
-                : ("git.exe", $"-C \"{werkmap}\" fetch --quiet");
+                ? ("wsl.exe", $"-d {distro} --cd \"{linux}\" -- git {StilleCredentials} fetch --quiet")
+                : ("git.exe", $"-C \"{werkmap}\" {StilleCredentials} fetch --quiet");
             await DraaiAsync(exe, args, ct);
         }
         catch
